@@ -30,6 +30,10 @@ impl Document {
         &self.buffer
     }
 
+    pub fn buffer_mut(&mut self) -> &mut Buffer {
+        &mut self.buffer
+    }
+
     /// The name to show for this document, e.g. in the window title.
     pub fn display_name(&self) -> String {
         display_name(&self.path)

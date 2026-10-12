@@ -174,6 +174,59 @@ impl Blocks {
     }
 }
 
+/// The source range each list item covers when shown, one per block.
+///
+/// Unlike block ranges, these cover the whole document, so every offset
+/// belongs to an item and can hold the caret:
+/// - The first item starts at offset 0, including leading blank lines.
+/// - Each item extends over the blank lines after its block, up to (but not
+///   including) the line ending just before the next block.
+/// - The last item extends to the end of the document.
+///
+/// A document with no blocks (empty, or only blank lines) has one item
+/// covering all of it.
+///
+/// An offset belongs to the last item starting at or before it; see
+/// [`item_at`].
+pub fn item_ranges(text: &str, blocks: &Blocks) -> Vec<Range<usize>> {
+    let blocks = blocks.as_slice();
+    if blocks.is_empty() {
+        return vec![0..text.len()];
+    }
+    let bytes = text.as_bytes();
+    (0..blocks.len())
+        .map(|index| {
+            let start = if index == 0 {
+                0
+            } else {
+                blocks[index].range.start
+            };
+            let end = match blocks.get(index + 1) {
+                Some(next) => {
+                    let mut end = next.range.start;
+                    if end > 0 && bytes[end - 1] == b'\n' {
+                        end -= 1;
+                    }
+                    if end > 0 && bytes[end - 1] == b'\r' {
+                        end -= 1;
+                    }
+                    end.max(blocks[index].range.end)
+                }
+                None => text.len(),
+            };
+            start..end
+        })
+        .collect()
+}
+
+/// The index of the item containing `offset`: the last one starting at or
+/// before it.
+pub fn item_at(items: &[Range<usize>], offset: usize) -> usize {
+    items
+        .partition_point(|item| item.start <= offset)
+        .saturating_sub(1)
+}
+
 fn block_kind(tag: &Tag) -> Option<BlockKind> {
     Some(match tag {
         Tag::Paragraph => BlockKind::Paragraph,
@@ -603,6 +656,64 @@ title: x
         assert_eq!(blocks.index_at(6), Some(0));
         assert_eq!(blocks.index_at(7), Some(1));
         assert_eq!(blocks.at(9).map(|block| block.kind), Some(Paragraph));
+    }
+
+    fn items(text: &str) -> Vec<&str> {
+        item_ranges(text, &Blocks::parse(text))
+            .into_iter()
+            .map(|range| &text[range])
+            .collect()
+    }
+
+    #[test]
+    fn items_include_following_blank_lines() {
+        assert_eq!(items("A\n\nB\n"), ["A\n", "B\n"]);
+        assert_eq!(items("A\n\n\n\nB"), ["A\n\n\n", "B"]);
+        assert_eq!(items("# H\nPara"), ["# H", "Para"]);
+    }
+
+    #[test]
+    fn first_item_includes_leading_blank_lines() {
+        assert_eq!(items("\n\nA\n\nB"), ["\n\nA\n", "B"]);
+    }
+
+    #[test]
+    fn items_with_crlf() {
+        assert_eq!(items("A\r\n\r\nB\r\n"), ["A\r\n", "B\r\n"]);
+    }
+
+    #[test]
+    fn document_without_blocks_is_one_item() {
+        assert_eq!(items(""), [""]);
+        assert_eq!(items("\n\n"), ["\n\n"]);
+    }
+
+    #[test]
+    fn items_cover_every_offset() {
+        let text = "\n# H\n\n- a\n- b\n\n\n```\nx\n```\ntext\n";
+        let ranges = item_ranges(text, &Blocks::parse(text));
+        assert_eq!(ranges[0].start, 0);
+        assert_eq!(ranges.last().unwrap().end, text.len());
+        for pair in ranges.windows(2) {
+            // Only the single line ending before the next block is uncovered,
+            // and the previous item's inclusive end reaches it.
+            assert_eq!(pair[0].end + 1, pair[1].start, "{ranges:?}");
+        }
+    }
+
+    #[test]
+    fn item_at_finds_item() {
+        let text = "A\n\nB";
+        let ranges = item_ranges(text, &Blocks::parse(text));
+        // "A\n" is 0..2, "B" is 3..4.
+        assert_eq!(item_at(&ranges, 0), 0);
+        assert_eq!(
+            item_at(&ranges, 2),
+            0,
+            "blank line belongs to the item above"
+        );
+        assert_eq!(item_at(&ranges, 3), 1);
+        assert_eq!(item_at(&ranges, 4), 1);
     }
 
     #[test]

@@ -1,17 +1,13 @@
 //! Caret movement and selection over a document's source.
 //!
-//! These are pure functions of the source text and its blocks. Movement that
-//! depends on layout (visual lines, Up/Down) lives in the view.
-//!
-//! The caret only ever sits inside a block (see
-//! `docs/planning/caret-and-reveal.md`): moving past a block's edge jumps
-//! over the blank lines to the neighboring block.
+//! These are pure functions of the source text. Movement that depends on
+//! layout (visual lines, Up/Down) lives in the view. Every offset can hold
+//! the caret, including blank lines between blocks (see
+//! [`crate::blocks::item_ranges`]).
 
 use std::ops::Range;
 
 use unicode_segmentation::UnicodeSegmentation;
-
-use crate::blocks::Blocks;
 
 /// A selection in source byte offsets. The caret is at `head`; `anchor` is
 /// where the selection started. They're equal when nothing is selected.
@@ -89,80 +85,6 @@ fn is_word(segment: &str) -> bool {
     segment.chars().any(char::is_alphanumeric)
 }
 
-/// Moves one grapheme right, or to the start of the next block from the
-/// end of a block.
-pub fn move_right(text: &str, blocks: &Blocks, offset: usize) -> usize {
-    match block_range(blocks, offset) {
-        Some(range) if offset < range.end => next_grapheme(text, offset).min(range.end),
-        _ => next_block_start(blocks, offset).unwrap_or(offset),
-    }
-}
-
-/// Moves one grapheme left, or to the end of the previous block from the
-/// start of a block.
-pub fn move_left(text: &str, blocks: &Blocks, offset: usize) -> usize {
-    match block_range(blocks, offset) {
-        Some(range) if offset > range.start => prev_grapheme(text, offset).max(range.start),
-        _ => prev_block_end(blocks, offset).unwrap_or(offset),
-    }
-}
-
-/// Moves to the end of the next word in the block, or to the start of the
-/// next block from the end of a block.
-pub fn move_word_right(text: &str, blocks: &Blocks, offset: usize) -> usize {
-    match block_range(blocks, offset) {
-        Some(range) if offset < range.end => next_word_end(text, offset).min(range.end),
-        _ => next_block_start(blocks, offset).unwrap_or(offset),
-    }
-}
-
-/// Moves to the start of the previous word in the block, or to the end of
-/// the previous block from the start of a block.
-pub fn move_word_left(text: &str, blocks: &Blocks, offset: usize) -> usize {
-    match block_range(blocks, offset) {
-        Some(range) if offset > range.start => prev_word_start(text, offset).max(range.start),
-        _ => prev_block_end(blocks, offset).unwrap_or(offset),
-    }
-}
-
-/// The first caret position in the document.
-pub fn document_start(blocks: &Blocks) -> usize {
-    blocks
-        .as_slice()
-        .first()
-        .map_or(0, |block| block.range.start)
-}
-
-/// The last caret position in the document.
-pub fn document_end(blocks: &Blocks) -> usize {
-    blocks.as_slice().last().map_or(0, |block| block.range.end)
-}
-
-/// The start of the first block after `offset`'s block (or after `offset`,
-/// if it's between blocks).
-pub fn next_block_start(blocks: &Blocks, offset: usize) -> Option<usize> {
-    blocks
-        .as_slice()
-        .iter()
-        .find(|block| block.range.start > offset)
-        .map(|block| block.range.start)
-}
-
-/// The end of the last block before `offset`'s block (or before `offset`,
-/// if it's between blocks).
-pub fn prev_block_end(blocks: &Blocks, offset: usize) -> Option<usize> {
-    blocks
-        .as_slice()
-        .iter()
-        .rev()
-        .find(|block| block.range.end < offset)
-        .map(|block| block.range.end)
-}
-
-fn block_range(blocks: &Blocks, offset: usize) -> Option<Range<usize>> {
-    blocks.at(offset).map(|block| block.range.clone())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,64 +136,10 @@ mod tests {
         assert_eq!(prev_word_start(text, text.len()), "café ".len());
     }
 
-    /// "# Head" is 0..6, "Para one" is 8..16, "- item" is 18..24.
-    const DOC: &str = "# Head\n\nPara one\n\n- item\n";
-
     #[test]
-    fn right_moves_within_block_then_jumps_gap() {
-        let blocks = Blocks::parse(DOC);
-        assert_eq!(move_right(DOC, &blocks, 0), 1);
-        assert_eq!(move_right(DOC, &blocks, 5), 6);
-        assert_eq!(move_right(DOC, &blocks, 6), 8, "end of block jumps to next");
-        assert_eq!(move_right(DOC, &blocks, 24), 24, "stays at document end");
-    }
-
-    #[test]
-    fn left_moves_within_block_then_jumps_gap() {
-        let blocks = Blocks::parse(DOC);
-        assert_eq!(move_left(DOC, &blocks, 9), 8);
-        assert_eq!(
-            move_left(DOC, &blocks, 8),
-            6,
-            "start of block jumps to previous"
-        );
-        assert_eq!(move_left(DOC, &blocks, 0), 0, "stays at document start");
-    }
-
-    #[test]
-    fn movement_from_a_gap_lands_in_a_block() {
-        let blocks = Blocks::parse(DOC);
-        assert_eq!(move_right(DOC, &blocks, 7), 8);
-        assert_eq!(move_left(DOC, &blocks, 7), 6);
-    }
-
-    #[test]
-    fn word_movement_stays_in_block_then_jumps() {
-        let blocks = Blocks::parse(DOC);
-        assert_eq!(move_word_right(DOC, &blocks, 8), 12);
-        assert_eq!(move_word_right(DOC, &blocks, 12), 16);
-        assert_eq!(move_word_right(DOC, &blocks, 16), 18);
-        assert_eq!(move_word_left(DOC, &blocks, 18), 16);
-        assert_eq!(move_word_left(DOC, &blocks, 16), 13);
-        assert_eq!(move_word_left(DOC, &blocks, 2), 0, "`#` isn't a word");
-    }
-
-    #[test]
-    fn document_bounds() {
-        let blocks = Blocks::parse("\n\n# Head\n\nlast\n\n");
-        assert_eq!(document_start(&blocks), 2);
-        assert_eq!(document_end(&blocks), 14);
-        let empty = Blocks::parse("");
-        assert_eq!(document_start(&empty), 0);
-        assert_eq!(document_end(&empty), 0);
-    }
-
-    #[test]
-    fn adjacent_blocks_without_blank_line() {
-        // "# Head" is 0..6, "Para" is 7..11.
-        let text = "# Head\nPara";
-        let blocks = Blocks::parse(text);
-        assert_eq!(move_right(text, &blocks, 6), 7);
-        assert_eq!(move_left(text, &blocks, 7), 6);
+    fn crossing_blank_lines_by_word() {
+        let text = "end.\n\nNext";
+        assert_eq!(next_word_end(text, 3), 10, "skips the blank line to `Next`");
+        assert_eq!(prev_word_start(text, 6), 0);
     }
 }

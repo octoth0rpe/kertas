@@ -6,6 +6,7 @@
 
 use std::fmt;
 use std::io::{self, Write};
+use std::ops::Range;
 use std::path::Path;
 
 use ropey::Rope;
@@ -58,6 +59,20 @@ impl Buffer {
     /// The underlying rope.
     pub fn rope(&self) -> &Rope {
         &self.rope
+    }
+
+    /// The text in a byte range.
+    pub fn slice(&self, range: Range<usize>) -> String {
+        self.rope.byte_slice(range).to_string()
+    }
+
+    /// Replaces the text in a byte range. Both ends must be on character
+    /// boundaries.
+    pub fn replace(&mut self, range: Range<usize>, text: &str) {
+        let start = self.rope.byte_to_char(range.start);
+        let end = self.rope.byte_to_char(range.end);
+        self.rope.remove(start..end);
+        self.rope.insert(start, text);
     }
 }
 
@@ -168,6 +183,16 @@ mod tests {
             .map(|i| format!("Line {i} with some text, ünïcödé\r\n"))
             .collect();
         assert_round_trips(input.as_bytes());
+    }
+
+    #[test]
+    fn replace_edits_by_byte_range() {
+        let mut buffer = Buffer::from_bytes("café 🦀 text".as_bytes()).unwrap();
+        buffer.replace(6..10, "crab");
+        assert_eq!(buffer.slice(0..buffer.len_bytes()), "café crab text");
+        buffer.replace(0..0, "> ");
+        buffer.replace(buffer.len_bytes()..buffer.len_bytes(), "\n");
+        assert_eq!(buffer.slice(0..buffer.len_bytes()), "> café crab text\n");
     }
 
     #[test]
