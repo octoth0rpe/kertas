@@ -23,7 +23,17 @@ Most Markdown tools split the screen: raw source on one side, rendered preview o
 
 ## Getting started
 
-_TBD once the platform and stack are chosen._
+kami currently builds on macOS only. Windows and Linux support is planned for a later milestone.
+
+Requirements:
+- Rust 1.98 or newer. `rust-toolchain.toml` pins the exact version for `rustup` users.
+- Xcode Command Line Tools (`xcode-select --install`). Full Xcode is not required, because GPUI compiles its Metal shaders at runtime.
+
+```sh
+cargo run
+```
+
+The first build downloads GPUI from the Zed repository and takes a few minutes.
 
 ## License
 

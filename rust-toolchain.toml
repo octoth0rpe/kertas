@@ -1,0 +1,4 @@
+[toolchain]
+# Matches the toolchain of the pinned Zed commit.
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]
