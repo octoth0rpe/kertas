@@ -12,8 +12,9 @@ use std::time::Duration;
 use gpui::{Action, App, EntityInputHandler, WindowHandle};
 
 use crate::document_view::{
-    Backspace, Delete, DeleteWordLeft, DocumentView, MoveDocumentEnd, MoveDocumentStart, MoveDown,
-    MoveLeft, MoveRight, MoveUp, Newline, Redo, Save, SelectAll, SelectDown, SelectUp, Undo,
+    Backspace, CloseWindow, Delete, DeleteWordLeft, DocumentView, MoveDocumentEnd,
+    MoveDocumentStart, MoveDown, MoveLeft, MoveRight, MoveUp, New, Newline, Redo, Save, SelectAll,
+    SelectDown, SelectUp, Undo,
 };
 
 const STEP: Duration = Duration::from_millis(16);
@@ -25,8 +26,10 @@ enum Step {
 
 /// Starts the smoke test if `KAMI_SMOKE` is set.
 pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
-    if std::env::var_os("KAMI_SMOKE").is_none() {
-        return;
+    match std::env::var("KAMI_SMOKE").as_deref() {
+        Err(_) => return,
+        Ok("tabs") => return smoke_tabs(window, cx),
+        Ok(_) => {}
     }
     let mut steps: Vec<Step> = Vec::new();
     let steps_ref = &mut steps;
@@ -91,6 +94,38 @@ pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
                 .ok();
         }
         println!("SMOKE OK ({total} steps)");
+        cx.update(|cx| cx.quit());
+    })
+    .detach();
+}
+
+/// `KAMI_SMOKE=tabs`: New opens windows (tabs), and they close again.
+fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        for _ in 0..3 {
+            cx.background_executor().timer(STEP * 10).await;
+            window
+                .update(cx, |_, window, cx| {
+                    window.dispatch_action(Box::new(New), cx)
+                })
+                .ok();
+        }
+        cx.background_executor().timer(STEP * 10).await;
+        let opened = cx.update(|cx| cx.windows().len());
+        println!("windows after 3 x New: {opened}");
+        let windows = cx.update(|cx| cx.windows());
+        for other in windows.into_iter().filter(|other| *other != *window) {
+            other
+                .update(cx, |_, window, cx| {
+                    window.dispatch_action(Box::new(CloseWindow), cx)
+                })
+                .ok();
+            cx.background_executor().timer(STEP * 10).await;
+        }
+        let remaining = cx.update(|cx| cx.windows().len());
+        println!("windows after closing them: {remaining}");
+        let ok = opened == 4 && remaining == 1;
+        println!("SMOKE {}", if ok { "OK" } else { "FAILED" });
         cx.update(|cx| cx.quit());
     })
     .detach();

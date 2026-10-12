@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     Bounds, ClipboardItem, Context, EntityInputHandler, FocusHandle, KeyBinding, ListAlignment,
-    ListState, PathPromptOptions, Pixels, Point, PromptLevel, Subscription, Task, TextLayout,
-    UTF16Selection, Window, actions, div, list, point, prelude::*, px, relative, size,
+    ListState, Pixels, Point, PromptLevel, Subscription, Task, TextLayout, UTF16Selection, Window,
+    actions, div, list, point, prelude::*, px, relative, size,
 };
 use kami::document::{Document, OpenError, SaveError};
 use kami::history::{EditKind, History};
@@ -238,19 +238,24 @@ impl DocumentView {
 
     // Files
 
-    fn new_document(&mut self, _: &New, window: &mut Window, cx: &mut Context<Self>) {
-        let confirmed = self.confirm_discard(window, cx);
-        cx.spawn_in(window, async move |this, cx| {
-            if confirmed.await {
-                this.update_in(cx, |this, window, cx| {
-                    this.load(Document::untitled(), window, cx);
-                    // Start typing straight away.
-                    this.move_caret(0, false, cx);
-                })
-                .ok();
-            }
-        })
-        .detach();
+    /// Starts a new untitled document, ready for typing.
+    pub fn start_untitled(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.load(Document::untitled(), window, cx);
+        self.move_caret(0, false, cx);
+    }
+
+    /// The open document's file, if it has one.
+    pub fn document_path(&self) -> Option<&Path> {
+        self.open.as_ref()?.document.path()
+    }
+
+    /// Whether the window holds nothing worth keeping: no document, or an
+    /// untitled one that's still empty. Opening a file reuses such a window
+    /// instead of adding a tab.
+    pub fn is_pristine(&self) -> bool {
+        self.open
+            .as_ref()
+            .is_none_or(|open| open.document.path().is_none() && open.document.buffer().is_empty())
     }
 
     fn save(&mut self, _: &Save, window: &mut Window, cx: &mut Context<Self>) {
@@ -404,36 +409,6 @@ impl DocumentView {
             Ok(document) => self.load(document, window, cx),
             Err(err) => show_open_error(&err, window, cx),
         }
-    }
-
-    fn open(&mut self, _: &Open, window: &mut Window, cx: &mut Context<Self>) {
-        let confirmed = self.confirm_discard(window, cx);
-        cx.spawn_in(window, async move |this, cx| {
-            if !confirmed.await {
-                return;
-            }
-            let Ok(paths) = this.update(cx, |_, cx| {
-                cx.prompt_for_paths(PathPromptOptions {
-                    files: true,
-                    directories: false,
-                    multiple: false,
-                    prompt: None,
-                })
-            }) else {
-                return;
-            };
-            // The outer error means the dialog was dropped, the inner one that
-            // the platform couldn't show it; `None` means the user cancelled.
-            let Ok(Ok(Some(paths))) = paths.await else {
-                return;
-            };
-            let Some(path) = paths.into_iter().next() else {
-                return;
-            };
-            this.update_in(cx, |this, window, cx| this.open_path(path, window, cx))
-                .ok();
-        })
-        .detach();
     }
 
     /// Places the caret at document `offset` after a click.
@@ -1142,8 +1117,6 @@ impl Render for DocumentView {
 
         div()
             .track_focus(&self.focus_handle)
-            .on_action(cx.listener(Self::new_document))
-            .on_action(cx.listener(Self::open))
             .on_action(cx.listener(Self::save))
             .on_action(cx.listener(Self::save_as))
             .on_action(cx.listener(Self::close_window))
