@@ -55,50 +55,56 @@ pub fn render_inline(source: &str, definitions: &str) -> InlineText {
         &full
     };
 
-    let mut builder = Builder::default();
+    let mut builder = InlineBuilder::default();
     for (event, range) in Parser::new_ext(parse_text, parser_options()).into_offset_iter() {
-        if range.start >= source.len() && !source.is_empty() {
+        if range.start > source.len() {
             break;
         }
-        match event {
-            Event::Text(text) | Event::InlineHtml(text) | Event::Html(text) => {
-                builder.push(&text, range)
-            }
-            Event::Code(text) => {
-                builder.style.code = true;
-                builder.push(&text, range);
-                builder.style.code = false;
-            }
-            Event::SoftBreak => builder.push(" ", range),
-            Event::HardBreak => builder.push("\n", range),
-            Event::Start(Tag::Emphasis) => builder.emphasis += 1,
-            Event::End(TagEnd::Emphasis) => builder.emphasis -= 1,
-            Event::Start(Tag::Strong) => builder.strong += 1,
-            Event::End(TagEnd::Strong) => builder.strong -= 1,
-            Event::Start(Tag::Strikethrough) => builder.strikethrough += 1,
-            Event::End(TagEnd::Strikethrough) => builder.strikethrough -= 1,
-            Event::Start(Tag::Link { .. }) => builder.link += 1,
-            Event::End(TagEnd::Link) => builder.link -= 1,
-            // Paragraph and heading tags, and image alt text (shown as plain
-            // text until images are supported).
-            _ => {}
-        }
+        builder.handle(&event, range);
     }
     builder.finish()
 }
 
-#[derive(Default)]
-struct Builder {
+/// Accumulates inline events into an [`InlineText`].
+#[derive(Debug, Default)]
+pub(crate) struct InlineBuilder {
     output: InlineText,
-    style: InlineStyle,
     strong: usize,
     emphasis: usize,
     strikethrough: usize,
     link: usize,
 }
 
-impl Builder {
-    fn push(&mut self, text: &str, source: Range<usize>) {
+impl InlineBuilder {
+    /// Applies an inline event. Returns false for events that aren't
+    /// inline, which the caller should handle.
+    pub(crate) fn handle(&mut self, event: &Event, range: Range<usize>) -> bool {
+        match event {
+            Event::Text(text) | Event::InlineHtml(text) => self.push(text, range, false),
+            Event::Code(text) => self.push(text, range, true),
+            Event::SoftBreak => self.push(" ", range, false),
+            Event::HardBreak => self.push("\n", range, false),
+            Event::Start(Tag::Emphasis) => self.emphasis += 1,
+            Event::End(TagEnd::Emphasis) => self.emphasis -= 1,
+            Event::Start(Tag::Strong) => self.strong += 1,
+            Event::End(TagEnd::Strong) => self.strong -= 1,
+            Event::Start(Tag::Strikethrough) => self.strikethrough += 1,
+            Event::End(TagEnd::Strikethrough) => self.strikethrough -= 1,
+            Event::Start(Tag::Link { .. }) => self.link += 1,
+            Event::End(TagEnd::Link) => self.link -= 1,
+            // Image alt text arrives as text events and is shown as plain
+            // text until images are supported.
+            Event::Start(Tag::Image { .. }) | Event::End(TagEnd::Image) => {}
+            _ => return false,
+        }
+        true
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.output.text.is_empty()
+    }
+
+    fn push(&mut self, text: &str, source: Range<usize>, code: bool) {
         if text.is_empty() {
             return;
         }
@@ -107,7 +113,7 @@ impl Builder {
             emphasis: self.emphasis > 0,
             strikethrough: self.strikethrough > 0,
             link: self.link > 0,
-            code: self.style.code,
+            code,
         };
         let start = self.output.text.len();
         self.output.text.push_str(text);
@@ -132,7 +138,7 @@ impl Builder {
         });
     }
 
-    fn finish(self) -> InlineText {
+    pub(crate) fn finish(self) -> InlineText {
         self.output
     }
 }

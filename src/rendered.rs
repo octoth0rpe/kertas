@@ -1,7 +1,13 @@
 //! What each top-level block looks like when rendered.
+//!
+//! Each top-level block is parsed on its own into a small tree: lists and
+//! blockquotes contain nested blocks, and tables contain cells. Inline text
+//! keeps source ranges relative to the start of its top-level block.
 
-use crate::blocks::{BlockKind, Blocks};
-use crate::inline::{InlineText, render_inline};
+use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Parser, Tag, TagEnd};
+
+use crate::blocks::{BlockKind, Blocks, parser_options};
+use crate::inline::{InlineBuilder, InlineText};
 
 /// A block prepared for display.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -12,8 +18,47 @@ pub enum RenderedBlock {
         text: InlineText,
     },
     ThematicBreak,
-    /// A block kami doesn't render yet, shown as its source text.
+    List {
+        /// The first item's number for an ordered list, `None` for bullets.
+        start: Option<u64>,
+        items: Vec<ListItem>,
+    },
+    BlockQuote(Vec<RenderedBlock>),
+    CodeBlock {
+        /// The info string's language, e.g. `rust` in ```` ```rust ````.
+        language: Option<String>,
+        code: String,
+    },
+    Table(Table),
+    /// An HTML block, shown as its source. It's never executed (N4).
+    Html(String),
+    /// A block that isn't rendered, shown as its source text: front matter
+    /// and link reference definitions.
     Raw(String),
+}
+
+/// One item in a list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListItem {
+    /// `Some(checked)` for a task list item.
+    pub task: Option<bool>,
+    pub children: Vec<RenderedBlock>,
+}
+
+/// A GFM table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Table {
+    pub alignments: Vec<ColumnAlignment>,
+    pub header: Vec<InlineText>,
+    pub rows: Vec<Vec<InlineText>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColumnAlignment {
+    None,
+    Left,
+    Center,
+    Right,
 }
 
 /// Prepares every block in `text` for display.
@@ -32,18 +77,283 @@ pub fn render_blocks(text: &str, blocks: &Blocks) -> Vec<RenderedBlock> {
         .map(|block| {
             let source = &text[block.range.clone()];
             match block.kind {
-                BlockKind::Paragraph => {
-                    RenderedBlock::Paragraph(render_inline(source, &definitions))
+                BlockKind::FrontMatter | BlockKind::LinkReferenceDefinition => {
+                    RenderedBlock::Raw(source.to_owned())
                 }
-                BlockKind::Heading { level } => RenderedBlock::Heading {
-                    level,
-                    text: render_inline(source, &definitions),
-                },
-                BlockKind::ThematicBreak => RenderedBlock::ThematicBreak,
-                _ => RenderedBlock::Raw(source.to_owned()),
+                _ => render_block(source, &definitions)
+                    .unwrap_or_else(|| RenderedBlock::Raw(source.to_owned())),
             }
         })
         .collect()
+}
+
+/// Renders a single top-level block from its source. `definitions` is the
+/// document's link reference definitions, so reference links resolve.
+pub fn render_block(source: &str, definitions: &str) -> Option<RenderedBlock> {
+    let full;
+    let parse_text = if definitions.is_empty() {
+        source
+    } else {
+        // Definitions go after a blank line so they're separate blocks;
+        // their events (if any) fall outside `source` and are ignored.
+        full = format!("{source}\n\n{definitions}");
+        &full
+    };
+
+    let mut builder = TreeBuilder::default();
+    for (event, range) in Parser::new_ext(parse_text, parser_options()).into_offset_iter() {
+        // Stop at the appended definitions. Events at exactly `source.len()`
+        // still belong to the block, e.g. empty cells padding a short table row.
+        if range.start > source.len() {
+            break;
+        }
+        builder.handle(event, range);
+    }
+    builder.finish()
+}
+
+/// A container being built while walking parser events.
+#[derive(Debug)]
+enum Frame {
+    Root(Vec<RenderedBlock>),
+    Paragraph(InlineBuilder),
+    Heading(u8, InlineBuilder),
+    List {
+        start: Option<u64>,
+        items: Vec<ListItem>,
+    },
+    Item {
+        task: Option<bool>,
+        children: Vec<RenderedBlock>,
+        /// Text directly in a tight list item, which has no paragraph tags.
+        inline: InlineBuilder,
+    },
+    BlockQuote(Vec<RenderedBlock>),
+    CodeBlock {
+        language: Option<String>,
+        code: String,
+    },
+    Html(String),
+    Table {
+        table: Table,
+        row: Vec<InlineText>,
+    },
+    Cell(InlineBuilder),
+}
+
+#[derive(Debug)]
+struct TreeBuilder {
+    stack: Vec<Frame>,
+}
+
+impl Default for TreeBuilder {
+    fn default() -> Self {
+        Self {
+            stack: vec![Frame::Root(Vec::new())],
+        }
+    }
+}
+
+impl TreeBuilder {
+    fn handle(&mut self, event: Event, range: std::ops::Range<usize>) {
+        // Inline events go to the innermost inline container.
+        match self.stack.last_mut() {
+            Some(
+                Frame::Paragraph(inline)
+                | Frame::Heading(_, inline)
+                | Frame::Cell(inline)
+                | Frame::Item { inline, .. },
+            ) => {
+                if inline.handle(&event, range) {
+                    return;
+                }
+            }
+            Some(Frame::CodeBlock { code, .. }) => {
+                if let Event::Text(text) = &event {
+                    code.push_str(text);
+                    return;
+                }
+            }
+            Some(Frame::Html(html)) => {
+                if let Event::Html(text) = &event {
+                    html.push_str(text);
+                    return;
+                }
+            }
+            _ => {}
+        }
+
+        match event {
+            Event::Start(tag) => self.start(tag),
+            Event::End(tag) => self.end(tag),
+            Event::Rule => self.push_block(RenderedBlock::ThematicBreak),
+            Event::TaskListMarker(checked) => {
+                if let Some(Frame::Item { task, .. }) = self.stack.last_mut() {
+                    *task = Some(checked);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn start(&mut self, tag: Tag) {
+        let frame = match tag {
+            Tag::Paragraph => Frame::Paragraph(InlineBuilder::default()),
+            Tag::Heading { level, .. } => {
+                Frame::Heading(heading_level(level), InlineBuilder::default())
+            }
+            Tag::List(start) => Frame::List {
+                start,
+                items: Vec::new(),
+            },
+            Tag::Item => Frame::Item {
+                task: None,
+                children: Vec::new(),
+                inline: InlineBuilder::default(),
+            },
+            Tag::BlockQuote(_) => Frame::BlockQuote(Vec::new()),
+            Tag::CodeBlock(kind) => Frame::CodeBlock {
+                language: match kind {
+                    CodeBlockKind::Fenced(info) => info
+                        .split_whitespace()
+                        .next()
+                        .map(|language| language.to_owned()),
+                    CodeBlockKind::Indented => None,
+                },
+                code: String::new(),
+            },
+            Tag::HtmlBlock => Frame::Html(String::new()),
+            Tag::Table(alignments) => Frame::Table {
+                table: Table {
+                    alignments: alignments.into_iter().map(column_alignment).collect(),
+                    header: Vec::new(),
+                    rows: Vec::new(),
+                },
+                row: Vec::new(),
+            },
+            Tag::TableCell => Frame::Cell(InlineBuilder::default()),
+            // Table heads and rows are tracked in the table frame; other tags
+            // are inline (handled above) or extensions kami doesn't enable.
+            _ => return,
+        };
+        // A nested block in a tight list item ends the item's leading text.
+        self.flush_item_text();
+        self.stack.push(frame);
+    }
+
+    fn end(&mut self, tag: TagEnd) {
+        match tag {
+            TagEnd::TableHead => {
+                if let Some(Frame::Table { table, row }) = self.stack.last_mut() {
+                    table.header = std::mem::take(row);
+                }
+                return;
+            }
+            TagEnd::TableRow => {
+                if let Some(Frame::Table { table, row }) = self.stack.last_mut() {
+                    table.rows.push(std::mem::take(row));
+                }
+                return;
+            }
+            TagEnd::Paragraph
+            | TagEnd::Heading(_)
+            | TagEnd::List(_)
+            | TagEnd::Item
+            | TagEnd::BlockQuote(_)
+            | TagEnd::CodeBlock
+            | TagEnd::HtmlBlock
+            | TagEnd::Table
+            | TagEnd::TableCell => {}
+            _ => return,
+        }
+
+        let Some(frame) = self.stack.pop() else {
+            return;
+        };
+        match frame {
+            Frame::Paragraph(inline) => self.push_block(RenderedBlock::Paragraph(inline.finish())),
+            Frame::Heading(level, inline) => self.push_block(RenderedBlock::Heading {
+                level,
+                text: inline.finish(),
+            }),
+            Frame::List { start, items } => self.push_block(RenderedBlock::List { start, items }),
+            Frame::Item {
+                task,
+                mut children,
+                inline,
+            } => {
+                if !inline.is_empty() {
+                    children.push(RenderedBlock::Paragraph(inline.finish()));
+                }
+                if let Some(Frame::List { items, .. }) = self.stack.last_mut() {
+                    items.push(ListItem { task, children });
+                }
+            }
+            Frame::BlockQuote(children) => self.push_block(RenderedBlock::BlockQuote(children)),
+            Frame::CodeBlock { language, code } => {
+                self.push_block(RenderedBlock::CodeBlock { language, code })
+            }
+            Frame::Html(html) => self.push_block(RenderedBlock::Html(html)),
+            Frame::Table { table, .. } => self.push_block(RenderedBlock::Table(table)),
+            Frame::Cell(inline) => {
+                if let Some(Frame::Table { row, .. }) = self.stack.last_mut() {
+                    row.push(inline.finish());
+                }
+            }
+            Frame::Root(_) => unreachable!("root frame is never closed"),
+        }
+    }
+
+    /// Adds a finished block to the innermost container.
+    fn push_block(&mut self, block: RenderedBlock) {
+        self.flush_item_text();
+        if let Some(
+            Frame::Root(children) | Frame::BlockQuote(children) | Frame::Item { children, .. },
+        ) = self.stack.last_mut()
+        {
+            children.push(block);
+        }
+    }
+
+    /// Moves a tight list item's pending text into a paragraph, so it stays
+    /// ahead of the nested block that follows it.
+    fn flush_item_text(&mut self) {
+        if let Some(Frame::Item {
+            children, inline, ..
+        }) = self.stack.last_mut()
+            && !inline.is_empty()
+        {
+            let text = std::mem::take(inline).finish();
+            children.push(RenderedBlock::Paragraph(text));
+        }
+    }
+
+    fn finish(mut self) -> Option<RenderedBlock> {
+        match self.stack.drain(..1).next() {
+            Some(Frame::Root(children)) => children.into_iter().next(),
+            _ => None,
+        }
+    }
+}
+
+fn heading_level(level: HeadingLevel) -> u8 {
+    match level {
+        HeadingLevel::H1 => 1,
+        HeadingLevel::H2 => 2,
+        HeadingLevel::H3 => 3,
+        HeadingLevel::H4 => 4,
+        HeadingLevel::H5 => 5,
+        HeadingLevel::H6 => 6,
+    }
+}
+
+fn column_alignment(alignment: Alignment) -> ColumnAlignment {
+    match alignment {
+        Alignment::None => ColumnAlignment::None,
+        Alignment::Left => ColumnAlignment::Left,
+        Alignment::Center => ColumnAlignment::Center,
+        Alignment::Right => ColumnAlignment::Right,
+    }
 }
 
 #[cfg(test)]
@@ -54,31 +364,214 @@ mod tests {
         render_blocks(text, &Blocks::parse(text))
     }
 
-    fn display_text(block: &RenderedBlock) -> &str {
+    fn render_one(text: &str) -> RenderedBlock {
+        let mut blocks = render(text);
+        assert_eq!(blocks.len(), 1, "expected one block: {blocks:?}");
+        blocks.remove(0)
+    }
+
+    /// A compact description of a block tree, for readable assertions.
+    fn describe(block: &RenderedBlock) -> String {
         match block {
-            RenderedBlock::Paragraph(text) | RenderedBlock::Heading { text, .. } => &text.text,
-            RenderedBlock::Raw(source) => source,
-            RenderedBlock::ThematicBreak => "---",
+            RenderedBlock::Paragraph(text) => format!("p({})", text.text),
+            RenderedBlock::Heading { level, text } => format!("h{level}({})", text.text),
+            RenderedBlock::ThematicBreak => "hr".into(),
+            RenderedBlock::List { start, items } => {
+                let items: Vec<String> = items
+                    .iter()
+                    .map(|item| {
+                        let marker = match item.task {
+                            Some(true) => "[x] ",
+                            Some(false) => "[ ] ",
+                            None => "",
+                        };
+                        let children: Vec<String> = item.children.iter().map(describe).collect();
+                        format!("{marker}{}", children.join(" "))
+                    })
+                    .collect();
+                match start {
+                    Some(start) => format!("ol{start}[{}]", items.join(", ")),
+                    None => format!("ul[{}]", items.join(", ")),
+                }
+            }
+            RenderedBlock::BlockQuote(children) => {
+                let children: Vec<String> = children.iter().map(describe).collect();
+                format!("quote[{}]", children.join(" "))
+            }
+            RenderedBlock::CodeBlock { language, code } => {
+                format!("code:{}({code:?})", language.as_deref().unwrap_or(""))
+            }
+            RenderedBlock::Table(table) => {
+                let row = |cells: &[InlineText]| {
+                    cells
+                        .iter()
+                        .map(|cell| cell.text.as_str())
+                        .collect::<Vec<_>>()
+                        .join("|")
+                };
+                let rows: Vec<String> = table.rows.iter().map(|cells| row(cells)).collect();
+                format!("table[{} / {}]", row(&table.header), rows.join(" / "))
+            }
+            RenderedBlock::Html(html) => format!("html({html:?})"),
+            RenderedBlock::Raw(source) => format!("raw({source})"),
         }
     }
 
-    #[test]
-    fn text_blocks_are_rendered_and_others_raw() {
-        let blocks = render("# Title\n\nSome *text*.\n\n***\n\n- list\n\n> quote\n");
-        let texts: Vec<_> = blocks.iter().map(display_text).collect();
-        assert_eq!(texts, ["Title", "Some text.", "---", "- list", "> quote"]);
-        assert!(matches!(blocks[0], RenderedBlock::Heading { level: 1, .. }));
-        assert!(matches!(blocks[3], RenderedBlock::Raw(_)));
+    #[track_caller]
+    fn assert_renders(text: &str, expected: &[&str]) {
+        let described: Vec<String> = render(text).iter().map(describe).collect();
+        assert_eq!(described, expected);
     }
 
     #[test]
-    fn reference_links_use_definitions_anywhere_in_document() {
-        let blocks = render("See [kami][k].\n\n[k]: https://example.com\n");
-        assert_eq!(display_text(&blocks[0]), "See kami.");
-        assert_eq!(
-            blocks[1],
-            RenderedBlock::Raw("[k]: https://example.com".into())
+    fn text_blocks() {
+        assert_renders(
+            "# Title\n\nSome *text*.\n\n***\n",
+            &["h1(Title)", "p(Some text.)", "hr"],
         );
+    }
+
+    #[test]
+    fn tight_bullet_list() {
+        assert_renders("- one\n- **two**\n", &["ul[p(one), p(two)]"]);
+    }
+
+    #[test]
+    fn loose_list() {
+        assert_renders("- one\n\n- two\n", &["ul[p(one), p(two)]"]);
+    }
+
+    #[test]
+    fn ordered_list_keeps_start_number() {
+        assert_renders("3. three\n4. four\n", &["ol3[p(three), p(four)]"]);
+    }
+
+    #[test]
+    fn nested_lists() {
+        assert_renders(
+            "- a\n  - b\n    1. c\n- d\n",
+            &["ul[p(a) ul[p(b) ol1[p(c)]], p(d)]"],
+        );
+    }
+
+    #[test]
+    fn task_list() {
+        assert_renders(
+            "- [ ] todo\n- [x] done\n- plain\n",
+            &["ul[[ ] p(todo), [x] p(done), p(plain)]"],
+        );
+    }
+
+    #[test]
+    fn list_item_with_multiple_blocks() {
+        assert_renders(
+            "- para one\n\n  para two\n\n  ```\n  code\n  ```\n",
+            &[r#"ul[p(para one) p(para two) code:("code\n")]"#],
+        );
+    }
+
+    #[test]
+    fn blockquote_with_nested_content() {
+        assert_renders(
+            "> # Title\n> text\n>\n> > nested\n>\n> - item\n",
+            &["quote[h1(Title) p(text) quote[p(nested)] ul[p(item)]]"],
+        );
+    }
+
+    #[test]
+    fn lazy_blockquote_continuation() {
+        assert_renders("> one\ntwo\n", &["quote[p(one two)]"]);
+    }
+
+    #[test]
+    fn fenced_code_block() {
+        assert_renders(
+            "```rust title=x\nfn main() {}\n\n```\n",
+            &[r#"code:rust("fn main() {}\n\n")"#],
+        );
+    }
+
+    #[test]
+    fn code_block_keeps_markdown_literal() {
+        assert_renders("```\n**not bold**\n```", &[r#"code:("**not bold**\n")"#]);
+    }
+
+    #[test]
+    fn indented_code_block() {
+        assert_renders(
+            "Para\n\n    code\n      indented\n",
+            &["p(Para)", r#"code:("code\n  indented")"#],
+        );
+    }
+
+    #[test]
+    fn table_with_alignment() {
+        let block = render_one("| a | **b** | c |\n|:--|:-:|--:|\n| 1 | 2 | 3 |\n| 4 |\n");
+        // Short rows are padded with empty cells.
+        assert_eq!(describe(&block), "table[a|b|c / 1|2|3 / 4||]");
+        let RenderedBlock::Table(table) = block else {
+            unreachable!()
+        };
+        assert_eq!(
+            table.alignments,
+            [
+                ColumnAlignment::Left,
+                ColumnAlignment::Center,
+                ColumnAlignment::Right
+            ]
+        );
+        assert!(table.header[1].segments[0].style.strong);
+    }
+
+    #[test]
+    fn html_block_is_kept_as_source() {
+        assert_renders(
+            "<div>\n<script>alert(1)</script>\n</div>\n",
+            &[r#"html("<div>\n<script>alert(1)</script>\n</div>")"#],
+        );
+    }
+
+    #[test]
+    fn front_matter_and_definitions_are_raw() {
+        assert_renders(
+            "---\nk: v\n---\n\nSee [kami][k].\n\n[k]: https://example.com\n",
+            &[
+                "raw(---\nk: v\n---)",
+                "p(See kami.)",
+                "raw([k]: https://example.com)",
+            ],
+        );
+    }
+
+    #[test]
+    fn reference_links_resolve_inside_lists_and_tables() {
+        let text = "- [kami][k]\n\n| [kami][k] |\n|---|\n\n[k]: /x\n";
+        let blocks = render(text);
+        let RenderedBlock::List { items, .. } = &blocks[0] else {
+            panic!("expected list: {blocks:?}")
+        };
+        let RenderedBlock::Paragraph(text) = &items[0].children[0] else {
+            panic!()
+        };
+        assert!(text.segments[0].style.link);
+        let RenderedBlock::Table(table) = &blocks[1] else {
+            panic!()
+        };
+        assert!(table.header[0].segments[0].style.link);
+    }
+
+    #[test]
+    fn inline_source_ranges_are_relative_to_block() {
+        let text = "Intro\n\n- **bold**\n";
+        let blocks = render(text);
+        let RenderedBlock::List { items, .. } = &blocks[1] else {
+            panic!()
+        };
+        let RenderedBlock::Paragraph(inline) = &items[0].children[0] else {
+            panic!()
+        };
+        // The list's source is "- **bold**"; "bold" is at 4..8.
+        assert_eq!(inline.segments[0].source, 4..8);
     }
 
     #[test]
@@ -93,6 +586,12 @@ mod tests {
         let rendered = render_blocks(&text, &blocks);
         let elapsed = start.elapsed();
         assert_eq!(rendered.len(), blocks.len());
+        assert!(
+            !rendered
+                .iter()
+                .any(|block| matches!(block, RenderedBlock::Raw(_))),
+            "every block in the fixture should be rendered"
+        );
         // Generous bound for unoptimized test builds; N1 is 500 ms end to end.
         assert!(elapsed.as_millis() < 250, "took {elapsed:?}");
         eprintln!("parsed and rendered {} blocks in {elapsed:?}", blocks.len());
