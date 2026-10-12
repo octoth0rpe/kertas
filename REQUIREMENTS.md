@@ -134,7 +134,7 @@ Deliberately **not** settings:
 
 - ~~**Q1 — How does the single pane reveal syntax?**~~ **Decided:** everything is rendered except the block containing the cursor, which shows as raw Markdown (C4, §1.1).
 - ~~**Q2 — Platform:**~~ **Decided:** native desktop app for macOS, Windows and Linux (T4).
-- ~~**Q3 — Stack:**~~ **Decided:** Rust + GPUI (T1–T3). Still open: plain GPUI or gpui-component, and the Markdown parser. See the research doc.
+- ~~**Q3 — Stack:**~~ **Decided:** Rust + GPUI (T1–T3). Built on plain GPUI pinned to a Zed commit, not gpui-component ([spike #3](docs/planning/spike-3-text-input.md)). Markdown parser: `pulldown-cmark`.
 - ~~**Q4 — Scope of files:**~~ **Decided:** individual files only, with no folder sidebar. A sidebar may come in a possible future "pro" version.
 - ~~**Q5 — Tabs / multiple windows**~~ **Decided:** both are supported, chosen by a setting (§8.2). The default is tabs.
 - **Q6 — kami's own license.** Not yet decided; leaning Apache-2.0. Decide before publishing or accepting outside contributions. Also consider the possible pro version. As the copyright holder, you can build a closed pro version under any license. The license decides whether others can do the same (a permissive license allows it, GPL does not), and on what terms outside contributions can go into the pro version (a contributor agreement may be needed). Dependencies are constrained by T6–T7 regardless.
