@@ -102,12 +102,13 @@ pub fn render_block(source: &str, definitions: &str) -> Option<RenderedBlock> {
 
     let mut builder = TreeBuilder::default();
     for (event, range) in Parser::new_ext(parse_text, parser_options()).into_offset_iter() {
-        // Stop at the appended definitions. Events at exactly `source.len()`
-        // still belong to the block, e.g. empty cells padding a short table row.
-        if range.start > source.len() {
+        builder.handle(event, range);
+        // Stop once the block is complete, before the appended definitions.
+        // Don't cut off by source position: the parser can place events just
+        // past the block's text, e.g. empty cells padding a short table row.
+        if builder.is_complete() {
             break;
         }
-        builder.handle(event, range);
     }
     builder.finish()
 }
@@ -328,6 +329,11 @@ impl TreeBuilder {
         }
     }
 
+    /// Whether a complete top-level block has been built.
+    fn is_complete(&self) -> bool {
+        matches!(self.stack.as_slice(), [Frame::Root(children)] if !children.is_empty())
+    }
+
     fn finish(mut self) -> Option<RenderedBlock> {
         match self.stack.drain(..1).next() {
             Some(Frame::Root(children)) => children.into_iter().next(),
@@ -521,6 +527,35 @@ mod tests {
             ]
         );
         assert!(table.header[1].segments[0].style.strong);
+    }
+
+    #[test]
+    fn showcase_alignment_table() {
+        // Regression test: this table from the showcase rendered as raw source.
+        let text = "## Tables\n\n| Left | Center | Right |\n|:-----|:------:|------:|\n| a    | **b**  | `c`   |\n| longer cell text | 2 | 3.00 |\n| short row |\n\n## HTML\n";
+        assert_renders(
+            text,
+            &[
+                "h2(Tables)",
+                "table[Left|Center|Right / a|b|c / longer cell text|2|3.00 / short row||]",
+                "h2(HTML)",
+            ],
+        );
+    }
+
+    #[test]
+    fn showcase_renders_everything_except_definitions() {
+        let text = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/spikes/fixtures/showcase.md"
+        ))
+        .unwrap();
+        let raw: Vec<String> = render(&text)
+            .iter()
+            .filter(|block| matches!(block, RenderedBlock::Raw(_)))
+            .map(describe)
+            .collect();
+        assert_eq!(raw, ["raw([docs]: https://example.com/docs)"]);
     }
 
     #[test]

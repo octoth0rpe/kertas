@@ -57,7 +57,9 @@ pub fn render_inline(source: &str, definitions: &str) -> InlineText {
 
     let mut builder = InlineBuilder::default();
     for (event, range) in Parser::new_ext(parse_text, parser_options()).into_offset_iter() {
-        if range.start > source.len() {
+        // Stop at the end of the paragraph or heading, before the appended
+        // definitions.
+        if matches!(event, Event::End(TagEnd::Paragraph | TagEnd::Heading(_))) {
             break;
         }
         builder.handle(&event, range);
