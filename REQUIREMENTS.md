@@ -26,7 +26,8 @@ A block is a top-level Markdown element:
 - Table
 - Thematic break (`---`)
 - HTML block
-- Front matter
+- Front matter (only at the very start of the file)
+- Link reference definition (`[label]: https://…`). These never render, so revealing them as a block is the only way to see or edit them.
 
 A selection that spans several blocks reveals all of them.
 
