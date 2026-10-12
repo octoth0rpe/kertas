@@ -12,8 +12,8 @@
 use std::path::{Path, PathBuf};
 
 use gpui::{
-    App, Bounds, Context, PathPromptOptions, TitlebarOptions, Window, WindowBounds, WindowHandle,
-    WindowOptions, point, prelude::*, px, size,
+    App, Bounds, Context, PathPromptOptions, SystemWindowTabController, TitlebarOptions, Window,
+    WindowBounds, WindowHandle, WindowOptions, point, prelude::*, px, size,
 };
 
 use crate::document_view::{CloseWindow, DocumentView, New, Open, Quit};
@@ -120,6 +120,17 @@ pub fn open_window(
             .flatten();
         if let (Some(host), Some(tab)) = (host, tab) {
             add_as_tab(&host, &tab);
+            // GPUI recorded the window's tab group when it was created, before
+            // it joined this one; update it so the tab strip is right.
+            window
+                .update(cx, |_, window, cx| {
+                    let id = window.window_handle().window_id();
+                    if let Some(tabs) = window.tabbed_windows() {
+                        SystemWindowTabController::remove_tab(cx, id);
+                        SystemWindowTabController::add_tab(cx, id, tabs);
+                    }
+                })
+                .ok();
         }
     }
 

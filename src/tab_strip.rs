@@ -1,0 +1,130 @@
+//! The tab strip shown when a window holds several documents as tabs.
+//!
+//! GPUI groups windows into native macOS tabs and tracks the groups in
+//! `SystemWindowTabController`, but it hides the native tab bar so apps can
+//! draw their own. This is Kami's.
+
+use gpui::{
+    AnyElement, AnyWindowHandle, App, MouseButton, SystemWindowTabController, Window, div,
+    prelude::*, px,
+};
+
+use crate::document_view::{CloseWindow, DocumentView};
+use crate::theme::Theme;
+use crate::windows::{DOCUMENT_LAYOUT, DocumentLayout};
+
+const STRIP_HEIGHT: f32 = 30.;
+const MAX_TAB_WIDTH: f32 = 240.;
+
+/// The tab strip for `window`, if it's in a tab group with other windows.
+/// `self_dirty` is whether this window's own document has unsaved changes
+/// (its view is being rendered, so it can't be read here).
+pub fn render_tab_strip(
+    window: &Window,
+    cx: &App,
+    theme: Theme,
+    self_dirty: bool,
+) -> Option<AnyElement> {
+    if DOCUMENT_LAYOUT != DocumentLayout::Tabs {
+        return None;
+    }
+    let id = window.window_handle().window_id();
+    let tabs = cx.try_global::<SystemWindowTabController>()?.tabs(id)?;
+    if tabs.len() < 2 {
+        return None;
+    }
+
+    let tabs = tabs.iter().enumerate().map(|(index, tab)| {
+        let active = tab.id == id;
+        let dirty = if active {
+            self_dirty
+        } else {
+            tab.handle
+                .downcast::<DocumentView>()
+                .and_then(|handle| handle.read(cx).ok())
+                .is_some_and(|view| view.is_dirty())
+        };
+        let handle = tab.handle;
+        div()
+            .id(("tab", index))
+            .flex_1()
+            .min_w(px(0.))
+            .max_w(px(MAX_TAB_WIDTH))
+            .h_full()
+            .px_3()
+            .flex()
+            .items_center()
+            .gap_2()
+            .border_r_1()
+            .border_color(theme.rule)
+            .text_size(px(12.))
+            .line_height(px(STRIP_HEIGHT))
+            .when(active, |this| {
+                this.bg(theme.background).text_color(theme.text)
+            })
+            .when(!active, |this| {
+                this.text_color(theme.muted_text)
+                    .hover(|style| style.text_color(theme.text))
+            })
+            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                if !active {
+                    activate(handle, cx);
+                }
+            })
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .truncate()
+                    .child(tab.title.clone()),
+            )
+            .child(
+                div()
+                    .id(("close-tab", index))
+                    .flex_none()
+                    .w(px(14.))
+                    .text_center()
+                    .rounded_sm()
+                    .hover(|style| style.bg(theme.rule))
+                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                        close(handle, cx);
+                        cx.stop_propagation();
+                    })
+                    .child(if dirty { "●" } else { "×" }),
+            )
+    });
+
+    Some(
+        div()
+            .flex_none()
+            .flex()
+            .h(px(STRIP_HEIGHT))
+            .w_full()
+            .bg(theme.table_header_background)
+            .border_b_1()
+            .border_color(theme.rule)
+            .children(tabs)
+            .into_any_element(),
+    )
+}
+
+/// Brings a tab's window to the front. Deferred, since the event is
+/// delivered while this window is locked.
+fn activate(handle: AnyWindowHandle, cx: &mut App) {
+    cx.defer(move |cx| {
+        handle
+            .update(cx, |_, window, _| window.activate_window())
+            .ok();
+    });
+}
+
+/// Closes a tab, asking about unsaved changes first.
+fn close(handle: AnyWindowHandle, cx: &mut App) {
+    cx.defer(move |cx| {
+        handle
+            .update(cx, |_, window, cx| {
+                window.dispatch_action(Box::new(CloseWindow), cx)
+            })
+            .ok();
+    });
+}

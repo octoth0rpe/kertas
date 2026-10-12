@@ -5,6 +5,7 @@ mod rendered_block;
 mod revealed_block;
 #[cfg(debug_assertions)]
 mod smoke;
+mod tab_strip;
 mod theme;
 mod windows;
 

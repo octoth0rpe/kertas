@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     Bounds, ClipboardItem, Context, EntityInputHandler, FocusHandle, KeyBinding, ListAlignment,
-    ListState, Pixels, Point, PromptLevel, Subscription, Task, TextLayout, UTF16Selection, Window,
-    actions, div, list, point, prelude::*, px, relative, size,
+    ListState, Pixels, Point, PromptLevel, Subscription, SystemWindowTabController, Task,
+    TextLayout, UTF16Selection, Window, actions, div, list, point, prelude::*, px, relative, size,
 };
 use kami::document::{Document, OpenError, SaveError};
 use kami::history::{EditKind, History};
@@ -23,6 +23,7 @@ use kami::reveal::{StyledSource, styled_source};
 
 use crate::rendered_block::{ClickTarget, render_block};
 use crate::revealed_block::{RevealedBlock, TextInput, render_revealed};
+use crate::tab_strip::render_tab_strip;
 use crate::theme::Theme;
 
 actions!(
@@ -34,6 +35,8 @@ actions!(
         SaveAs,
         CloseWindow,
         Quit,
+        NextTab,
+        PreviousTab,
         Unreveal,
         MoveLeft,
         MoveRight,
@@ -79,6 +82,10 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-shift-s", SaveAs, None),
         KeyBinding::new("cmd-w", CloseWindow, None),
         KeyBinding::new("cmd-q", Quit, None),
+        KeyBinding::new("cmd-shift-]", NextTab, None),
+        KeyBinding::new("cmd-shift-[", PreviousTab, None),
+        KeyBinding::new("ctrl-tab", NextTab, None),
+        KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
         KeyBinding::new("escape", Unreveal, None),
         KeyBinding::new("left", MoveLeft, None),
         KeyBinding::new("right", MoveRight, None),
@@ -172,6 +179,7 @@ pub struct DocumentView {
     /// The edited state last shown in the window's close button.
     shown_edited: Option<bool>,
     _appearance_observer: Subscription,
+    _tabs_observer: Subscription,
 }
 
 impl DocumentView {
@@ -199,6 +207,9 @@ impl DocumentView {
             confirming: false,
             shown_edited: None,
             _appearance_observer: appearance_observer,
+            // Redraw the tab strip when tabs are added, removed or renamed.
+            _tabs_observer: cx
+                .observe_global_in::<SystemWindowTabController>(window, |_, _, cx| cx.notify()),
         }
     }
 
@@ -218,19 +229,26 @@ impl DocumentView {
             revealed_layout: Rc::default(),
         });
         self.stop_blink();
-        self.update_window_title(window);
+        self.update_window_title(window, cx);
         cx.notify();
     }
 
-    fn update_window_title(&mut self, window: &mut Window) {
+    fn update_window_title(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(open) = &self.open else {
             return;
         };
-        window.set_window_title(&open.document.display_name());
+        let name = open.document.display_name();
+        window.set_window_title(&name);
         window.set_document_path(open.document.path());
+        // GPUI doesn't update tab titles from the window title.
+        SystemWindowTabController::update_tab_title(
+            cx,
+            window.window_handle().window_id(),
+            name.into(),
+        );
     }
 
-    fn is_dirty(&self) -> bool {
+    pub fn is_dirty(&self) -> bool {
         self.open
             .as_ref()
             .is_some_and(|open| open.document.is_dirty())
@@ -318,7 +336,7 @@ impl DocumentView {
     ) -> bool {
         match result {
             Ok(()) => {
-                self.update_window_title(window);
+                self.update_window_title(window, cx);
                 cx.notify();
                 true
             }
@@ -1036,6 +1054,7 @@ impl Render for DocumentView {
             window.set_window_edited(edited);
             self.shown_edited = Some(edited);
         }
+        let tab_strip = render_tab_strip(window, cx, self.theme, edited);
 
         let content = match &self.open {
             Some(open) => {
@@ -1120,6 +1139,15 @@ impl Render for DocumentView {
             .on_action(cx.listener(Self::save))
             .on_action(cx.listener(Self::save_as))
             .on_action(cx.listener(Self::close_window))
+            .on_action(|_: &NextTab, window, cx| {
+                SystemWindowTabController::select_next_tab(cx, window.window_handle().window_id())
+            })
+            .on_action(|_: &PreviousTab, window, cx| {
+                SystemWindowTabController::select_previous_tab(
+                    cx,
+                    window.window_handle().window_id(),
+                )
+            })
             .on_action(cx.listener(Self::unreveal))
             .on_action(cx.listener(|this, _: &MoveLeft, _, cx| {
                 this.move_by(false, false, cx, movement::prev_grapheme)
@@ -1208,7 +1236,10 @@ impl Render for DocumentView {
             .text_color(self.theme.text)
             .text_size(px(BODY_TEXT_SIZE))
             .line_height(relative(1.6))
-            .child(content)
+            .flex()
+            .flex_col()
+            .children(tab_strip)
+            .child(div().flex_1().min_h(px(0.)).child(content))
     }
 }
 

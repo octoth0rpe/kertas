@@ -111,7 +111,8 @@ fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
                 })
                 .ok();
         }
-        cx.background_executor().timer(STEP * 10).await;
+        // Hold so the windows can be inspected from outside.
+        cx.background_executor().timer(Duration::from_secs(2)).await;
         let opened = cx.update(|cx| cx.windows().len());
         println!("windows after 3 x New: {opened}");
         #[cfg(target_os = "macos")]
@@ -124,6 +125,15 @@ fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
         #[cfg(not(target_os = "macos"))]
         let tabs = opened;
         println!("tabs in the first window's group: {tabs}");
+        let strip_tabs = window
+            .update(cx, |_, window, cx| {
+                let id = window.window_handle().window_id();
+                cx.try_global::<gpui::SystemWindowTabController>()
+                    .and_then(|controller| controller.tabs(id))
+                    .map_or(0, |tabs| tabs.len())
+            })
+            .unwrap_or(0);
+        println!("tabs in the tab strip: {strip_tabs}");
         #[cfg(target_os = "macos")]
         let tabbing_calls = {
             let visible = window
@@ -152,7 +162,8 @@ fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
         }
         let remaining = cx.update(|cx| cx.windows().len());
         println!("windows after closing them: {remaining}");
-        let ok = opened == 4 && tabs == 4 && tabbing_calls == 3 && remaining == 1;
+        let ok =
+            opened == 4 && tabs == 4 && strip_tabs == 4 && tabbing_calls == 3 && remaining == 1;
         println!("SMOKE {}", if ok { "OK" } else { "FAILED" });
         cx.update(|cx| cx.quit());
     })
