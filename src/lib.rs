@@ -3,3 +3,5 @@
 pub mod blocks;
 pub mod buffer;
 pub mod document;
+pub mod inline;
+pub mod rendered;

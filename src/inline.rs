@@ -1,0 +1,305 @@
+//! Converts a text block's Markdown into display text with inline styles.
+//!
+//! The result keeps a source mapping: each segment of display text records
+//! the source range it came from, so positions in the rendered text can be
+//! mapped back to the source (needed for caret placement).
+
+use std::ops::Range;
+
+use pulldown_cmark::{Event, Parser, Tag, TagEnd};
+
+use crate::blocks::parser_options;
+
+/// Inline formatting applied to a segment of text.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct InlineStyle {
+    pub strong: bool,
+    pub emphasis: bool,
+    pub strikethrough: bool,
+    pub code: bool,
+    pub link: bool,
+}
+
+/// A run of display text with one style.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Segment {
+    /// Byte range in [`InlineText::text`].
+    pub display: Range<usize>,
+    /// Byte range in the block's source that produced this text.
+    pub source: Range<usize>,
+    pub style: InlineStyle,
+}
+
+/// A block's text as displayed: Markdown syntax removed, formatting kept as
+/// styled segments that cover the whole text in order.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct InlineText {
+    pub text: String,
+    pub segments: Vec<Segment>,
+}
+
+/// Renders the inline content of a paragraph or heading.
+///
+/// `definitions` is the source of the document's link reference
+/// definitions, so reference links like `[text][label]` resolve. Pass an
+/// empty string if there are none.
+pub fn render_inline(source: &str, definitions: &str) -> InlineText {
+    // Append the definitions after a blank line so they're parsed as
+    // separate blocks; their events (if any) fall outside `source` and are
+    // ignored.
+    let full;
+    let parse_text = if definitions.is_empty() {
+        source
+    } else {
+        full = format!("{source}\n\n{definitions}");
+        &full
+    };
+
+    let mut builder = Builder::default();
+    for (event, range) in Parser::new_ext(parse_text, parser_options()).into_offset_iter() {
+        if range.start >= source.len() && !source.is_empty() {
+            break;
+        }
+        match event {
+            Event::Text(text) | Event::InlineHtml(text) | Event::Html(text) => {
+                builder.push(&text, range)
+            }
+            Event::Code(text) => {
+                builder.style.code = true;
+                builder.push(&text, range);
+                builder.style.code = false;
+            }
+            Event::SoftBreak => builder.push(" ", range),
+            Event::HardBreak => builder.push("\n", range),
+            Event::Start(Tag::Emphasis) => builder.emphasis += 1,
+            Event::End(TagEnd::Emphasis) => builder.emphasis -= 1,
+            Event::Start(Tag::Strong) => builder.strong += 1,
+            Event::End(TagEnd::Strong) => builder.strong -= 1,
+            Event::Start(Tag::Strikethrough) => builder.strikethrough += 1,
+            Event::End(TagEnd::Strikethrough) => builder.strikethrough -= 1,
+            Event::Start(Tag::Link { .. }) => builder.link += 1,
+            Event::End(TagEnd::Link) => builder.link -= 1,
+            // Paragraph and heading tags, and image alt text (shown as plain
+            // text until images are supported).
+            _ => {}
+        }
+    }
+    builder.finish()
+}
+
+#[derive(Default)]
+struct Builder {
+    output: InlineText,
+    style: InlineStyle,
+    strong: usize,
+    emphasis: usize,
+    strikethrough: usize,
+    link: usize,
+}
+
+impl Builder {
+    fn push(&mut self, text: &str, source: Range<usize>) {
+        if text.is_empty() {
+            return;
+        }
+        let style = InlineStyle {
+            strong: self.strong > 0,
+            emphasis: self.emphasis > 0,
+            strikethrough: self.strikethrough > 0,
+            link: self.link > 0,
+            code: self.style.code,
+        };
+        let start = self.output.text.len();
+        self.output.text.push_str(text);
+        let display = start..self.output.text.len();
+
+        // Merge with the previous segment when the style matches and the
+        // sources are contiguous, e.g. text split around an escape.
+        if let Some(last) = self.output.segments.last_mut()
+            && last.style == style
+            && last.source.end == source.start
+            && last.display.len() == last.source.len()
+            && display.len() == source.len()
+        {
+            last.display.end = display.end;
+            last.source.end = source.end;
+            return;
+        }
+        self.output.segments.push(Segment {
+            display,
+            source,
+            style,
+        });
+    }
+
+    fn finish(self) -> InlineText {
+        self.output
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PLAIN: InlineStyle = InlineStyle {
+        strong: false,
+        emphasis: false,
+        strikethrough: false,
+        code: false,
+        link: false,
+    };
+
+    /// The display text of each segment, with its style.
+    fn segments(inline: &InlineText) -> Vec<(&str, InlineStyle)> {
+        inline
+            .segments
+            .iter()
+            .map(|segment| (&inline.text[segment.display.clone()], segment.style))
+            .collect()
+    }
+
+    #[test]
+    fn plain_paragraph() {
+        let inline = render_inline("Just text.", "");
+        assert_eq!(inline.text, "Just text.");
+        assert_eq!(segments(&inline), [("Just text.", PLAIN)]);
+        assert_eq!(inline.segments[0].source, 0..10);
+    }
+
+    #[test]
+    fn heading_text_drops_markers() {
+        assert_eq!(render_inline("## Title", "").text, "Title");
+        assert_eq!(render_inline("Title\n=====", "").text, "Title");
+    }
+
+    #[test]
+    fn styles() {
+        let inline = render_inline("a **b** *c* ~~d~~ `e` [f](http://x)", "");
+        assert_eq!(inline.text, "a b c d e f");
+        let strong = InlineStyle {
+            strong: true,
+            ..PLAIN
+        };
+        let emphasis = InlineStyle {
+            emphasis: true,
+            ..PLAIN
+        };
+        let strike = InlineStyle {
+            strikethrough: true,
+            ..PLAIN
+        };
+        let code = InlineStyle {
+            code: true,
+            ..PLAIN
+        };
+        let link = InlineStyle {
+            link: true,
+            ..PLAIN
+        };
+        assert_eq!(
+            segments(&inline),
+            [
+                ("a ", PLAIN),
+                ("b", strong),
+                (" ", PLAIN),
+                ("c", emphasis),
+                (" ", PLAIN),
+                ("d", strike),
+                (" ", PLAIN),
+                ("e", code),
+                (" ", PLAIN),
+                ("f", link),
+            ]
+        );
+    }
+
+    #[test]
+    fn nested_styles_combine() {
+        let inline = render_inline("***both*** and [**bold link**](/x)", "");
+        let both = InlineStyle {
+            strong: true,
+            emphasis: true,
+            ..PLAIN
+        };
+        let bold_link = InlineStyle {
+            strong: true,
+            link: true,
+            ..PLAIN
+        };
+        assert_eq!(
+            segments(&inline),
+            [("both", both), (" and ", PLAIN), ("bold link", bold_link)]
+        );
+    }
+
+    #[test]
+    fn soft_break_becomes_space_and_hard_break_newline() {
+        assert_eq!(render_inline("one\ntwo", "").text, "one two");
+        assert_eq!(render_inline("one  \ntwo", "").text, "one\ntwo");
+        assert_eq!(render_inline("one\\\ntwo", "").text, "one\ntwo");
+    }
+
+    #[test]
+    fn source_ranges_point_at_source_text() {
+        let source = "Hello **world**";
+        let inline = render_inline(source, "");
+        for segment in &inline.segments {
+            assert_eq!(
+                &inline.text[segment.display.clone()],
+                &source[segment.source.clone()]
+            );
+        }
+        assert_eq!(inline.segments[1].source, 8..13);
+    }
+
+    #[test]
+    fn escapes_and_entities_are_unescaped() {
+        let inline = render_inline(r"\*not emphasis\* &amp; done", "");
+        assert_eq!(inline.text, "*not emphasis* & done");
+    }
+
+    #[test]
+    fn reference_links_resolve_with_definitions() {
+        let source = "See [kami][k].";
+        assert_eq!(render_inline(source, "").text, "See [kami][k].");
+
+        let inline = render_inline(source, "[k]: https://example.com");
+        assert_eq!(inline.text, "See kami.");
+        assert_eq!(
+            segments(&inline),
+            [
+                ("See ", PLAIN),
+                (
+                    "kami",
+                    InlineStyle {
+                        link: true,
+                        ..PLAIN
+                    }
+                ),
+                (".", PLAIN),
+            ]
+        );
+    }
+
+    #[test]
+    fn definitions_do_not_add_text() {
+        let inline = render_inline("Text", "[a]: /a\n[b]: /b");
+        assert_eq!(inline.text, "Text");
+    }
+
+    #[test]
+    fn inline_html_is_shown_as_text() {
+        assert_eq!(render_inline("a <b>bold</b> c", "").text, "a <b>bold</b> c");
+    }
+
+    #[test]
+    fn non_ascii() {
+        let inline = render_inline("**見出し** café 🦀", "");
+        assert_eq!(inline.text, "見出し café 🦀");
+    }
+
+    #[test]
+    fn empty_heading() {
+        assert_eq!(render_inline("#", ""), InlineText::default());
+    }
+}
