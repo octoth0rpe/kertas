@@ -2398,6 +2398,7 @@ dependencies = [
  "gpui_platform",
  "pulldown-cmark",
  "ropey",
+ "unicode-segmentation",
 ]
 
 [[package]]

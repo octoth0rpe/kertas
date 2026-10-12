@@ -38,6 +38,34 @@ pub struct InlineText {
     pub segments: Vec<Segment>,
 }
 
+impl InlineText {
+    /// Maps a byte index in [`Self::text`] to a byte offset in the source.
+    ///
+    /// Inside a segment whose display text matches its source byte for byte,
+    /// the mapping is exact. Otherwise (escapes, entities, line breaks) the
+    /// index snaps to the segment's source start or end. An index between
+    /// segments, or past the end, maps to the nearest segment edge.
+    pub fn source_offset(&self, index: usize) -> usize {
+        let Some(segment) = self
+            .segments
+            .iter()
+            .find(|segment| index < segment.display.end)
+            .or(self.segments.last())
+        else {
+            return 0;
+        };
+        if index <= segment.display.start {
+            segment.source.start
+        } else if index >= segment.display.end {
+            segment.source.end
+        } else if segment.display.len() == segment.source.len() {
+            segment.source.start + (index - segment.display.start)
+        } else {
+            segment.source.start
+        }
+    }
+}
+
 /// Renders the inline content of a paragraph or heading.
 ///
 /// `definitions` is the source of the document's link reference
@@ -304,6 +332,34 @@ mod tests {
     fn non_ascii() {
         let inline = render_inline("**見出し** café 🦀", "");
         assert_eq!(inline.text, "見出し café 🦀");
+    }
+
+    #[test]
+    fn source_offset_maps_display_to_source() {
+        // "Hi **bold** \\*x" displays as "Hi bold *x".
+        let inline = render_inline("Hi **bold** \\*x", "");
+        assert_eq!(inline.text, "Hi bold *x");
+        assert_eq!(inline.source_offset(0), 0);
+        assert_eq!(inline.source_offset(2), 2, "end of `Hi `'s first word");
+        assert_eq!(inline.source_offset(3), 5, "start of bold text, after `**`");
+        assert_eq!(inline.source_offset(5), 7);
+        assert_eq!(
+            inline.source_offset(7),
+            11,
+            "just after bold text maps past the closing `**`"
+        );
+        assert_eq!(
+            inline.source_offset(8),
+            13,
+            "the escaped `*`, after its backslash"
+        );
+        assert_eq!(inline.source_offset(10), 15, "end of text");
+        assert_eq!(inline.source_offset(99), 15, "past the end");
+    }
+
+    #[test]
+    fn source_offset_of_empty_text() {
+        assert_eq!(InlineText::default().source_offset(0), 0);
     }
 
     #[test]

@@ -242,7 +242,11 @@ fn render_content(block: &RenderedBlock, style: &TextStyle, depth: usize) -> Any
             .text_size(px(13.))
             .line_height(relative(1.5))
             .text_color(style.theme.text)
-            .child(code.trim_end_matches(['\n', '\r']).replace('\t', "    "))
+            .child(
+                code.text
+                    .trim_end_matches(['\n', '\r'])
+                    .replace('\t', "    "),
+            )
             .into_any_element(),
         RenderedBlock::Table(table) => render_table(table, style),
         RenderedBlock::Html(source) | RenderedBlock::Raw(source) => div()

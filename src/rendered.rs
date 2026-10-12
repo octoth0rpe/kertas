@@ -27,7 +27,8 @@ pub enum RenderedBlock {
     CodeBlock {
         /// The info string's language, e.g. `rust` in ```` ```rust ````.
         language: Option<String>,
-        code: String,
+        /// The code, unstyled, with its mapping back to the source.
+        code: InlineText,
     },
     Table(Table),
     /// An HTML block, shown as its source. It's never executed (N4).
@@ -132,7 +133,7 @@ enum Frame {
     BlockQuote(Vec<RenderedBlock>),
     CodeBlock {
         language: Option<String>,
-        code: String,
+        code: InlineBuilder,
     },
     Html(String),
     Table {
@@ -170,8 +171,8 @@ impl TreeBuilder {
                 }
             }
             Some(Frame::CodeBlock { code, .. }) => {
-                if let Event::Text(text) = &event {
-                    code.push_str(text);
+                if let Event::Text(_) = &event {
+                    code.handle(&event, range);
                     return;
                 }
             }
@@ -221,7 +222,7 @@ impl TreeBuilder {
                         .map(|language| language.to_owned()),
                     CodeBlockKind::Indented => None,
                 },
-                code: String::new(),
+                code: InlineBuilder::default(),
             },
             Tag::HtmlBlock => Frame::Html(String::new()),
             Tag::Table(alignments) => Frame::Table {
@@ -291,9 +292,10 @@ impl TreeBuilder {
                 }
             }
             Frame::BlockQuote(children) => self.push_block(RenderedBlock::BlockQuote(children)),
-            Frame::CodeBlock { language, code } => {
-                self.push_block(RenderedBlock::CodeBlock { language, code })
-            }
+            Frame::CodeBlock { language, code } => self.push_block(RenderedBlock::CodeBlock {
+                language,
+                code: code.finish(),
+            }),
             Frame::Html(html) => self.push_block(RenderedBlock::Html(html)),
             Frame::Table { table, .. } => self.push_block(RenderedBlock::Table(table)),
             Frame::Cell(inline) => {
@@ -405,7 +407,11 @@ mod tests {
                 format!("quote[{}]", children.join(" "))
             }
             RenderedBlock::CodeBlock { language, code } => {
-                format!("code:{}({code:?})", language.as_deref().unwrap_or(""))
+                format!(
+                    "code:{}({:?})",
+                    language.as_deref().unwrap_or(""),
+                    code.text
+                )
             }
             RenderedBlock::Table(table) => {
                 let row = |cells: &[InlineText]| {
@@ -500,6 +506,21 @@ mod tests {
     #[test]
     fn code_block_keeps_markdown_literal() {
         assert_renders("```\n**not bold**\n```", &[r#"code:("**not bold**\n")"#]);
+    }
+
+    #[test]
+    fn code_maps_to_source() {
+        let text = "```rust\nlet a;\nlet b;\n```";
+        let RenderedBlock::CodeBlock { code, .. } = render_one(text) else {
+            panic!()
+        };
+        assert_eq!(code.text, "let a;\nlet b;\n");
+        assert_eq!(
+            code.source_offset(0),
+            8,
+            "first line starts after the fence"
+        );
+        assert_eq!(code.source_offset(7), 15);
     }
 
     #[test]
