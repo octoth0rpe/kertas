@@ -32,8 +32,8 @@ pub struct RevealedBlock<'a> {
     pub first: bool,
 }
 
-/// Renders the revealed block as a list item. Its text layout is stored in
-/// `layout_slot` for the view's layout-dependent movement.
+/// Renders the revealed block as a list item. Once painted, its text layout
+/// is stored in `layout_slot` for the view's layout-dependent movement.
 pub fn render_revealed(
     block: RevealedBlock,
     base_font: &Font,
@@ -52,13 +52,16 @@ pub fn render_revealed(
     let runs = text_runs(&block, base_font, theme, heading);
     let styled = StyledText::new(text).with_runs(runs);
     let layout = styled.layout().clone();
-    *layout_slot.borrow_mut() = Some(layout.clone());
 
     let caret = block.caret;
     let caret_layout = layout.clone();
     let caret_overlay = canvas(
         |_, _, _| {},
         move |_, _, window, _| {
+            // Publish the layout only now that it's been painted: its
+            // position queries panic before prepaint, and the list can
+            // build an item just to measure it without painting it.
+            *layout_slot.borrow_mut() = Some(caret_layout.clone());
             let Some(caret) = caret else {
                 return;
             };

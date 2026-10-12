@@ -1,6 +1,8 @@
 mod document_view;
 mod rendered_block;
 mod revealed_block;
+#[cfg(debug_assertions)]
+mod smoke;
 mod theme;
 
 use std::path::PathBuf;
@@ -62,6 +64,8 @@ fn main() {
                 .update(cx, |view, window, cx| view.open_path(path, window, cx))
                 .ok();
         }
+        #[cfg(debug_assertions)]
+        smoke::start_if_requested(window, cx);
         cx.activate(true);
     });
 }
