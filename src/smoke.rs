@@ -13,8 +13,8 @@ use gpui::{Action, App, EntityInputHandler, WindowHandle};
 
 use crate::document_view::{
     Backspace, CloseWindow, Delete, DeleteWordLeft, DocumentView, MoveDocumentEnd,
-    MoveDocumentStart, MoveDown, MoveLeft, MoveRight, MoveUp, New, Newline, Redo, Save, SelectAll,
-    SelectDown, SelectUp, Undo,
+    MoveDocumentStart, MoveDown, MoveLeft, MoveRight, MoveUp, New, Newline, Quit, Redo, Save,
+    SelectAll, SelectDown, SelectUp, Undo,
 };
 
 const STEP: Duration = Duration::from_millis(16);
@@ -29,6 +29,7 @@ pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
     match std::env::var("KAMI_SMOKE").as_deref() {
         Err(_) => return,
         Ok("tabs") => return smoke_tabs(window, cx),
+        Ok("quit") => return smoke_quit(window, cx),
         Ok(_) => {}
     }
     let mut steps: Vec<Step> = Vec::new();
@@ -123,6 +124,23 @@ fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
         #[cfg(not(target_os = "macos"))]
         let tabs = opened;
         println!("tabs in the first window's group: {tabs}");
+        #[cfg(target_os = "macos")]
+        let tabbing_calls = {
+            let visible = window
+                .update(cx, |_, window, _| {
+                    crate::native_tabs::NativeWindow::of(window)
+                        .is_some_and(|native| crate::native_tabs::tab_bar_visible(&native))
+                })
+                .unwrap_or(false);
+            println!("native tab bar visible: {visible}");
+            let calls =
+                crate::native_tabs::TABBING_CALLS.load(std::sync::atomic::Ordering::Relaxed);
+            println!("kami tabbing calls: {calls}");
+            calls
+        };
+        // Kami must group the tabs itself, whatever the macOS preference.
+        #[cfg(not(target_os = "macos"))]
+        let tabbing_calls = 3;
         let windows = cx.update(|cx| cx.windows());
         for other in windows.into_iter().filter(|other| *other != *window) {
             other
@@ -134,9 +152,24 @@ fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
         }
         let remaining = cx.update(|cx| cx.windows().len());
         println!("windows after closing them: {remaining}");
-        let ok = opened == 4 && tabs == 4 && remaining == 1;
+        let ok = opened == 4 && tabs == 4 && tabbing_calls == 3 && remaining == 1;
         println!("SMOKE {}", if ok { "OK" } else { "FAILED" });
         cx.update(|cx| cx.quit());
+    })
+    .detach();
+}
+
+/// `KAMI_SMOKE=quit`: Quit, with an unedited document, exits the app. The
+/// caller checks that the process ends.
+fn smoke_quit(window: WindowHandle<DocumentView>, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        cx.background_executor().timer(STEP * 20).await;
+        println!("dispatching Quit");
+        window
+            .update(cx, |_, window, cx| {
+                window.dispatch_action(Box::new(Quit), cx)
+            })
+            .ok();
     })
     .detach();
 }

@@ -41,25 +41,33 @@ const TABBING_IDENTIFIER: &str = "kami-documents";
 const CASCADE_OFFSET: f32 = 24.;
 
 /// Registers the app-wide document actions.
+///
+/// The handlers defer their work: an action is delivered while its window
+/// is locked for the dispatch, so updating that window from the handler
+/// itself would silently fail.
 pub fn register(cx: &mut App) {
     cx.on_action(|_: &New, cx| {
-        open_window(cx, |view, window, cx| view.start_untitled(window, cx));
+        cx.defer(|cx| {
+            open_window(cx, |view, window, cx| view.start_untitled(window, cx));
+        });
     });
-    cx.on_action(|_: &Open, cx| choose_and_open(cx));
+    cx.on_action(|_: &Open, cx| cx.defer(choose_and_open));
     // Quitting closes each window, which asks about unsaved changes;
     // closing the last window quits.
     cx.on_action(|_: &Quit, cx| {
-        let windows = cx.windows();
-        if windows.is_empty() {
-            cx.quit();
-        }
-        for window in windows {
-            window
-                .update(cx, |_, window, cx| {
-                    window.dispatch_action(Box::new(CloseWindow), cx)
-                })
-                .ok();
-        }
+        cx.defer(|cx| {
+            let windows = cx.windows();
+            if windows.is_empty() {
+                cx.quit();
+            }
+            for window in windows {
+                window
+                    .update(cx, |_, window, cx| {
+                        window.dispatch_action(Box::new(CloseWindow), cx)
+                    })
+                    .ok();
+            }
+        });
     });
 }
 

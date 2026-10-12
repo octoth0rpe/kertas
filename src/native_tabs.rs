@@ -23,6 +23,10 @@ impl NativeWindow {
     }
 }
 
+/// How many times [`add_as_tab`] found both windows, for the smoke test.
+#[cfg(debug_assertions)]
+pub static TABBING_CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// Adds `tab` as a tab of `host`'s tab group, if it isn't in it already.
 pub fn add_as_tab(host: &NativeWindow, tab: &NativeWindow) {
     // SAFETY: both pointers are the content views of live GPUI windows,
@@ -39,6 +43,8 @@ pub fn add_as_tab(host: &NativeWindow, tab: &NativeWindow) {
     if host_window == tab_window {
         return;
     }
+    #[cfg(debug_assertions)]
+    TABBING_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if let Some(group) = host_window.tabbedWindows()
         && group.iter().any(|window| window == tab_window)
     {
@@ -57,4 +63,14 @@ pub fn tab_group_size(window: &NativeWindow) -> usize {
     view.window()
         .and_then(|window| window.tabbedWindows())
         .map_or(1, |group| group.count())
+}
+
+/// Whether `window`'s native tab bar is showing.
+#[cfg(debug_assertions)]
+pub fn tab_bar_visible(window: &NativeWindow) -> bool {
+    // SAFETY: as in `tab_group_size`.
+    let view = unsafe { window.0.cast::<NSView>().as_ref() };
+    view.window()
+        .and_then(|window| window.tabGroup())
+        .is_some_and(|group| group.isTabBarVisible())
 }
