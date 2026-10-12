@@ -13,7 +13,7 @@ fn opens_md_and_markdown_files() {
         let path = tmp_path(name);
         std::fs::write(&path, "# Hello\n").unwrap();
         let document = Document::open(&path).unwrap();
-        assert_eq!(document.path(), path);
+        assert_eq!(document.path(), Some(path.as_path()));
         assert_eq!(document.display_name(), name);
         assert_eq!(document.buffer().len_bytes(), 8);
     }

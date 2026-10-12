@@ -4,7 +4,8 @@
 //! itself a long sequence of movement and editing steps one frame apart,
 //! then prints `SMOKE OK` and quits. A panic along the way fails it. This
 //! exercises the real view, list and text layout, which unit tests can't.
-//! It never saves, and it doesn't touch the clipboard.
+//! It doesn't save unless `KAMI_SMOKE=save`, and it doesn't touch the
+//! clipboard.
 
 use std::time::Duration;
 
@@ -12,7 +13,7 @@ use gpui::{Action, App, EntityInputHandler, WindowHandle};
 
 use crate::document_view::{
     Backspace, Delete, DeleteWordLeft, DocumentView, MoveDocumentEnd, MoveDocumentStart, MoveDown,
-    MoveLeft, MoveRight, MoveUp, Newline, Redo, SelectAll, SelectDown, SelectUp, Undo,
+    MoveLeft, MoveRight, MoveUp, Newline, Redo, Save, SelectAll, SelectDown, SelectUp, Undo,
 };
 
 const STEP: Duration = Duration::from_millis(16);
@@ -71,6 +72,12 @@ pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
     steps_ref.push(Step::Type("a"));
     repeat(steps_ref, &Backspace, 3);
     repeat(steps_ref, &Undo, 3);
+
+    // `KAMI_SMOKE=save` ends by saving, to check the file on disk.
+    if std::env::var("KAMI_SMOKE").as_deref() == Ok("save") {
+        steps.push(Step::Type("Saved by smoke test.\n"));
+        steps.push(Step::Action(Box::new(Save)));
+    }
 
     cx.spawn(async move |cx| {
         let total = steps.len();

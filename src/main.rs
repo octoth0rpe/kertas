@@ -7,30 +7,40 @@ mod theme;
 
 use std::path::PathBuf;
 
-use document_view::{CloseWindow, DocumentView, Open};
+use document_view::{CloseWindow, DocumentView, New, Open, Quit, Save, SaveAs};
 use gpui::{
-    App, Bounds, KeyBinding, Menu, MenuItem, TitlebarOptions, WindowBounds, WindowOptions, actions,
-    prelude::*, px, size,
+    App, Bounds, Menu, MenuItem, TitlebarOptions, WindowBounds, WindowOptions, prelude::*, px, size,
 };
 use gpui_platform::application;
-
-actions!(kami, [Quit]);
 
 fn main() {
     let path = std::env::args_os().nth(1).map(PathBuf::from);
 
     application().run(move |cx: &mut App| {
-        cx.on_action(|_: &Quit, cx| cx.quit());
-        cx.bind_keys([
-            KeyBinding::new("cmd-q", Quit, None),
-            KeyBinding::new("cmd-w", CloseWindow, None),
-            KeyBinding::new("cmd-o", Open, None),
-        ]);
+        // Quitting closes each window, which asks about unsaved changes;
+        // closing the last window quits.
+        cx.on_action(|_: &Quit, cx| {
+            let windows = cx.windows();
+            if windows.is_empty() {
+                cx.quit();
+            }
+            for window in windows {
+                window
+                    .update(cx, |_, window, cx| {
+                        window.dispatch_action(Box::new(CloseWindow), cx)
+                    })
+                    .ok();
+            }
+        });
         cx.bind_keys(document_view::key_bindings());
         cx.set_menus([
             Menu::new("Kami").items([MenuItem::action("Quit Kami", Quit)]),
             Menu::new("File").items([
+                MenuItem::action("New", New),
                 MenuItem::action("Open…", Open),
+                MenuItem::separator(),
+                MenuItem::action("Save", Save),
+                MenuItem::action("Save As…", SaveAs),
                 MenuItem::separator(),
                 MenuItem::action("Close Window", CloseWindow),
             ]),
