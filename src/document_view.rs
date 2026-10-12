@@ -1,27 +1,28 @@
 //! The view that shows a document in a window.
 //!
 //! Every block is rendered except the one containing the caret, which is
-//! revealed as styled Markdown source (C4). See
+//! revealed as styled Markdown source and edited in place (C4). See
 //! `docs/planning/caret-and-reveal.md`.
 
 use std::cell::RefCell;
+use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::{
-    Context, FocusHandle, KeyBinding, ListAlignment, ListState, PathPromptOptions, Pixels,
-    PromptLevel, Subscription, TextLayout, Window, actions, div, list, point, prelude::*, px,
-    relative,
+    Bounds, ClipboardItem, Context, EntityInputHandler, FocusHandle, KeyBinding, ListAlignment,
+    ListState, PathPromptOptions, Pixels, Point, PromptLevel, Subscription, TextLayout,
+    UTF16Selection, Window, actions, div, list, point, prelude::*, px, relative, size,
 };
-use kami::blocks::{BlockKind, Blocks};
 use kami::document::{Document, OpenError};
+use kami::history::{EditKind, History};
+use kami::model::Model;
 use kami::movement::{self, Selection};
-use kami::rendered::{RenderedBlock, render_blocks};
 use kami::reveal::{StyledSource, styled_source};
 
 use crate::rendered_block::{ClickTarget, render_block};
-use crate::revealed_block::{RevealedBlock, render_revealed};
+use crate::revealed_block::{RevealedBlock, TextInput, render_revealed};
 use crate::theme::Theme;
 
 actions!(
@@ -50,10 +51,22 @@ actions!(
         SelectLineEnd,
         SelectDocumentStart,
         SelectDocumentEnd,
+        SelectAll,
+        Backspace,
+        Delete,
+        DeleteWordLeft,
+        DeleteWordRight,
+        DeleteToLineStart,
+        Newline,
+        Cut,
+        Copy,
+        Paste,
+        Undo,
+        Redo,
     ]
 );
 
-/// Key bindings for caret movement and selection (macOS conventions).
+/// Key bindings for the document view (macOS conventions).
 pub fn key_bindings() -> Vec<KeyBinding> {
     vec![
         KeyBinding::new("escape", Unreveal, None),
@@ -81,6 +94,20 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("shift-end", SelectLineEnd, None),
         KeyBinding::new("cmd-shift-up", SelectDocumentStart, None),
         KeyBinding::new("cmd-shift-down", SelectDocumentEnd, None),
+        KeyBinding::new("cmd-a", SelectAll, None),
+        KeyBinding::new("backspace", Backspace, None),
+        KeyBinding::new("shift-backspace", Backspace, None),
+        KeyBinding::new("delete", Delete, None),
+        KeyBinding::new("alt-backspace", DeleteWordLeft, None),
+        KeyBinding::new("alt-delete", DeleteWordRight, None),
+        KeyBinding::new("cmd-backspace", DeleteToLineStart, None),
+        KeyBinding::new("enter", Newline, None),
+        KeyBinding::new("shift-enter", Newline, None),
+        KeyBinding::new("cmd-x", Cut, None),
+        KeyBinding::new("cmd-c", Copy, None),
+        KeyBinding::new("cmd-v", Paste, None),
+        KeyBinding::new("cmd-z", Undo, None),
+        KeyBinding::new("cmd-shift-z", Redo, None),
     ]
 }
 
@@ -92,32 +119,30 @@ pub const CODE_FONT: &str = "Menlo";
 /// How long the caret stays on, and then off, while blinking.
 const CARET_BLINK_INTERVAL: Duration = Duration::from_millis(530);
 
-/// An open document and everything needed to display it.
+/// An open document and everything needed to display and edit it.
 struct OpenDocument {
-    #[expect(dead_code, reason = "read by the save and editing stories")]
     document: Document,
-    text: Rc<str>,
-    blocks: Rc<Blocks>,
-    rendered: Rc<Vec<RenderedBlock>>,
-    /// The source of the document's link reference definitions.
-    definitions: Rc<str>,
+    model: Rc<Model>,
+    history: History,
     list_state: ListState,
     /// The selection, or `None` before the first click or key press.
     selection: Option<Selection>,
+    /// Text being composed with an input method.
+    marked: Option<Range<usize>>,
     /// The x position to keep when moving up and down.
     goal_x: Option<Pixels>,
     revealed: Option<Revealed>,
-    /// The revealed block's text layout from the last frame.
+    /// The revealed item's text layout from the last frame.
     revealed_layout: Rc<RefCell<Option<TextLayout>>>,
 }
 
-/// The block shown as source.
+/// The item shown as source.
 struct Revealed {
     index: usize,
     styled: Rc<StyledSource>,
 }
 
-/// Where to put the caret after a neighbor block is revealed and laid out.
+/// Where to put the caret after a neighbor item is revealed and laid out.
 #[derive(Clone, Copy)]
 enum LineGoal {
     First,
@@ -160,29 +185,20 @@ impl DocumentView {
         match Document::open(path) {
             Ok(document) => {
                 window.set_window_title(&document.display_name());
-                let text: Rc<str> = document.buffer().rope().to_string().into();
-                let blocks = Blocks::parse(&text);
-                let rendered = render_blocks(&text, &blocks);
-                let definitions = blocks
-                    .as_slice()
-                    .iter()
-                    .filter(|block| block.kind == BlockKind::LinkReferenceDefinition)
-                    .map(|block| &text[block.range.clone()])
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                let list_state = ListState::new(rendered.len(), ListAlignment::Top, px(1000.));
+                let model = Model::new(&document.buffer().rope().to_string());
+                let list_state = ListState::new(model.items.len(), ListAlignment::Top, px(1000.));
                 self.open = Some(OpenDocument {
                     document,
-                    text,
-                    blocks: Rc::new(blocks),
-                    rendered: Rc::new(rendered),
-                    definitions: definitions.into(),
+                    model: Rc::new(model),
+                    history: History::default(),
                     list_state,
                     selection: None,
+                    marked: None,
                     goal_x: None,
                     revealed: None,
                     revealed_layout: Rc::default(),
                 });
+                self.stop_blink();
                 cx.notify();
             }
             Err(err) => show_open_error(&err, window, cx),
@@ -222,40 +238,38 @@ impl DocumentView {
         self.focus_handle.focus(window, cx);
         if let Some(open) = &mut self.open {
             open.goal_x = None;
+            open.marked = None;
+        }
+        self.move_caret(offset, extend, cx);
+    }
+
+    /// Moves the caret to `offset` as a navigation (not an edit): it ends
+    /// the current undo group.
+    fn move_caret(&mut self, offset: usize, extend: bool, cx: &mut Context<Self>) {
+        if let Some(open) = &mut self.open {
+            open.history.break_group();
         }
         self.set_caret(offset, extend, cx);
     }
 
-    /// Moves the caret to `offset`, revealing its block.
+    /// Moves the caret to `offset`, revealing its item.
     fn set_caret(&mut self, offset: usize, extend: bool, cx: &mut Context<Self>) {
         let Some(open) = &mut self.open else {
             return;
         };
         let mut selection = open.selection.unwrap_or(Selection::caret(offset));
         selection.move_to(offset, extend);
-        open.selection = Some(selection);
+        self.set_selection(selection, cx);
+    }
 
-        let index = open.blocks.index_at(offset);
-        if open.revealed.as_ref().map(|revealed| revealed.index) != index {
-            // Both the old and new blocks change height, so re-measure them.
-            if let Some(old) = open.revealed.take() {
-                open.list_state.splice(old.index..old.index + 1, 1);
-            }
-            *open.revealed_layout.borrow_mut() = None;
-            if let Some(index) = index {
-                let block = &open.blocks.as_slice()[index];
-                let source = &open.text[block.range.clone()];
-                let styled = styled_source(source, block.kind, &open.definitions);
-                open.revealed = Some(Revealed {
-                    index,
-                    styled: Rc::new(styled),
-                });
-                open.list_state.splice(index..index + 1, 1);
-            }
-        }
-        if let Some(index) = index {
-            open.list_state.scroll_to_reveal_item(index);
-        }
+    fn set_selection(&mut self, selection: Selection, cx: &mut Context<Self>) {
+        let Some(open) = &mut self.open else {
+            return;
+        };
+        open.selection = Some(selection);
+        let index = open.model.item_at(selection.head);
+        reveal(open, Some(index));
+        open.list_state.scroll_to_reveal_item(index);
         self.restart_blink(cx);
         cx.notify();
     }
@@ -295,10 +309,9 @@ impl DocumentView {
         };
         open.selection = None;
         open.goal_x = None;
-        if let Some(old) = open.revealed.take() {
-            open.list_state.splice(old.index..old.index + 1, 1);
-        }
-        *open.revealed_layout.borrow_mut() = None;
+        open.marked = None;
+        open.history.break_group();
+        reveal(open, None);
         self.stop_blink();
         cx.notify();
     }
@@ -307,10 +320,7 @@ impl DocumentView {
     /// caret yet.
     fn caret(&self) -> Option<usize> {
         let open = self.open.as_ref()?;
-        Some(match open.selection {
-            Some(selection) => selection.head,
-            None => movement::document_start(&open.blocks),
-        })
+        Some(open.selection.map_or(0, |selection| selection.head))
     }
 
     /// Applies a layout-independent movement. `forward` is the direction,
@@ -320,7 +330,7 @@ impl DocumentView {
         extend: bool,
         forward: bool,
         cx: &mut Context<Self>,
-        motion: impl FnOnce(&str, &Blocks, usize) -> usize,
+        motion: impl FnOnce(&str, usize) -> usize,
     ) {
         let (Some(open), Some(caret)) = (&self.open, self.caret()) else {
             return;
@@ -332,16 +342,25 @@ impl DocumentView {
                 let range = selection.range();
                 if forward { range.end } else { range.start }
             }
-            Some(_) => motion(&open.text, &open.blocks, caret),
+            Some(_) => motion(&open.model.text, caret),
         };
         if let Some(open) = &mut self.open {
             open.goal_x = None;
         }
-        self.set_caret(target, extend, cx);
+        self.move_caret(target, extend, cx);
     }
 
-    /// Moves the caret up or down a visual line, into the neighbor block at
-    /// the revealed block's edge.
+    /// The revealed item's layout and start offset, if it's been painted.
+    fn revealed_layout(&self) -> Option<(TextLayout, usize)> {
+        let open = self.open.as_ref()?;
+        open.selection?;
+        let revealed = open.revealed.as_ref()?;
+        let layout = open.revealed_layout.borrow().clone()?;
+        Some((layout, open.model.items[revealed.index].range.start))
+    }
+
+    /// Moves the caret up or down a visual line, into the neighbor item at
+    /// the revealed item's edge.
     fn move_vertically(
         &mut self,
         down: bool,
@@ -352,17 +371,14 @@ impl DocumentView {
         let Some(caret) = self.caret() else {
             return;
         };
+        let Some((layout, item_start)) = self.revealed_layout() else {
+            self.move_caret(caret, extend, cx);
+            return;
+        };
+        let Some(position) = layout.position_for_index(caret - item_start) else {
+            return;
+        };
         let Some(open) = &mut self.open else {
-            return;
-        };
-        let layout = open.revealed_layout.borrow().clone();
-        let (Some(layout), Some(revealed), Some(_)) = (layout, &open.revealed, open.selection)
-        else {
-            self.set_caret(caret, extend, cx);
-            return;
-        };
-        let block_start = open.blocks.as_slice()[revealed.index].range.start;
-        let Some(position) = layout.position_for_index(caret - block_start) else {
             return;
         };
         let line_height = layout.line_height();
@@ -376,27 +392,26 @@ impl DocumentView {
 
         if target_y >= bounds.top() && target_y < bounds.bottom() {
             let (Ok(index) | Err(index)) = layout.index_for_position(point(goal_x, target_y));
-            self.set_caret(block_start + index, extend, cx);
+            self.move_caret(item_start + index, extend, cx);
             return;
         }
 
-        // Past the block's edge: reveal the neighbor, then place the caret on
+        // Past the item's edge: reveal the neighbor, then place the caret on
         // its first or last line once it's laid out.
+        let index = open.model.item_at(caret);
         let neighbor = if down {
-            movement::next_block_start(&open.blocks, caret)
+            open.model.items.get(index + 1).map(|item| item.range.start)
         } else {
-            movement::prev_block_end(&open.blocks, caret)
+            index
+                .checked_sub(1)
+                .map(|index| open.model.items[index].range.end)
         };
         let Some(neighbor) = neighbor else {
-            let edge = if down {
-                movement::document_end(&open.blocks)
-            } else {
-                movement::document_start(&open.blocks)
-            };
-            self.set_caret(edge, extend, cx);
+            let edge = if down { open.model.text.len() } else { 0 };
+            self.move_caret(edge, extend, cx);
             return;
         };
-        self.set_caret(neighbor, extend, cx);
+        self.move_caret(neighbor, extend, cx);
         let goal = if down {
             LineGoal::First
         } else {
@@ -411,7 +426,7 @@ impl DocumentView {
         });
     }
 
-    /// Places the caret at `goal_x` on the revealed block's first or last
+    /// Places the caret at `goal_x` on the revealed item's first or last
     /// line, after it has been laid out.
     fn resolve_line_goal(
         &mut self,
@@ -420,15 +435,9 @@ impl DocumentView {
         extend: bool,
         cx: &mut Context<Self>,
     ) {
-        let Some(open) = &self.open else {
+        let Some((layout, item_start)) = self.revealed_layout() else {
             return;
         };
-        let (Some(layout), Some(revealed)) =
-            (open.revealed_layout.borrow().clone(), &open.revealed)
-        else {
-            return;
-        };
-        let block_start = open.blocks.as_slice()[revealed.index].range.start;
         let bounds = layout.bounds();
         let half_line = layout.line_height() * 0.5;
         let y = match goal {
@@ -436,30 +445,17 @@ impl DocumentView {
             LineGoal::Last => bounds.bottom() - half_line,
         };
         let (Ok(index) | Err(index)) = layout.index_for_position(point(goal_x, y));
-        self.set_caret(block_start + index, extend, cx);
+        self.move_caret(item_start + index, extend, cx);
         if let Some(open) = &mut self.open {
             open.goal_x = Some(goal_x);
         }
     }
 
-    /// Moves the caret to the start or end of its visual line.
-    fn move_to_line_edge(&mut self, end: bool, extend: bool, cx: &mut Context<Self>) {
-        let Some(caret) = self.caret() else {
-            return;
-        };
-        let Some(open) = &self.open else {
-            return;
-        };
-        let layout = open.revealed_layout.borrow().clone();
-        let (Some(layout), Some(revealed), Some(_)) = (layout, &open.revealed, open.selection)
-        else {
-            self.set_caret(caret, extend, cx);
-            return;
-        };
-        let block_start = open.blocks.as_slice()[revealed.index].range.start;
-        let Some(position) = layout.position_for_index(caret - block_start) else {
-            return;
-        };
+    /// The start or end of the caret's visual line.
+    fn line_edge(&self, end: bool) -> Option<usize> {
+        let caret = self.caret()?;
+        let (layout, item_start) = self.revealed_layout()?;
+        let position = layout.position_for_index(caret - item_start)?;
         let bounds = layout.bounds();
         let y = position.y + layout.line_height() * 0.5;
         let x = if end {
@@ -468,10 +464,361 @@ impl DocumentView {
             bounds.left() - px(10_000.)
         };
         let (Ok(index) | Err(index)) = layout.index_for_position(point(x, y));
+        Some(item_start + index)
+    }
+
+    fn move_to_line_edge(&mut self, end: bool, extend: bool, cx: &mut Context<Self>) {
+        let Some(target) = self.line_edge(end).or(self.caret()) else {
+            return;
+        };
         if let Some(open) = &mut self.open {
             open.goal_x = None;
         }
-        self.set_caret(block_start + index, extend, cx);
+        self.move_caret(target, extend, cx);
+    }
+
+    fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(open) = &mut self.open else {
+            return;
+        };
+        open.history.break_group();
+        let selection = Selection {
+            anchor: 0,
+            head: open.model.text.len(),
+        };
+        self.set_selection(selection, cx);
+    }
+
+    // Editing
+
+    /// Replaces `range` with `text`, records it for undo, and updates the
+    /// display. The caret ends after the inserted text.
+    fn replace(&mut self, range: Range<usize>, text: &str, kind: EditKind, cx: &mut Context<Self>) {
+        let Some(open) = &mut self.open else {
+            return;
+        };
+        let before = open.selection.unwrap_or(Selection::caret(range.start));
+        let selection = open.history.replace(
+            open.document.buffer_mut(),
+            range,
+            text,
+            kind,
+            before,
+            Instant::now(),
+        );
+        open.marked = None;
+        open.goal_x = None;
+        text_changed(open);
+        self.set_selection(selection, cx);
+    }
+
+    /// The selected range, or `None` without a caret.
+    fn selected_range(&self) -> Option<Range<usize>> {
+        Some(self.open.as_ref()?.selection?.range())
+    }
+
+    /// Deletes the selection, or else the range from the caret to
+    /// `target(text, caret)`.
+    fn delete(&mut self, cx: &mut Context<Self>, target: impl FnOnce(&str, usize) -> usize) {
+        let Some(range) = self.selected_range() else {
+            return;
+        };
+        let Some(open) = &self.open else {
+            return;
+        };
+        let (range, kind) = if range.is_empty() {
+            let other = target(&open.model.text, range.start);
+            (
+                range.start.min(other)..range.start.max(other),
+                EditKind::Deleting,
+            )
+        } else {
+            (range, EditKind::Other)
+        };
+        if !range.is_empty() {
+            self.replace(range, "", kind, cx);
+        }
+    }
+
+    fn delete_to_line_start(
+        &mut self,
+        _: &DeleteToLineStart,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(line_start) = self.line_edge(false) else {
+            return;
+        };
+        self.delete(cx, |text, caret| {
+            if line_start == caret {
+                movement::prev_grapheme(text, caret)
+            } else {
+                line_start
+            }
+        });
+    }
+
+    fn newline(&mut self, _: &Newline, _: &mut Window, cx: &mut Context<Self>) {
+        let (Some(range), Some(open)) = (self.selected_range(), &self.open) else {
+            return;
+        };
+        let line_ending = line_ending(&open.model.text);
+        self.replace(range, line_ending, EditKind::Other, cx);
+    }
+
+    fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
+        let (Some(range), Some(open)) = (self.selected_range(), &self.open) else {
+            return;
+        };
+        if !range.is_empty() {
+            let text = open.model.text[range].to_owned();
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        }
+    }
+
+    fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
+        self.copy(&Copy, window, cx);
+        if let Some(range) = self.selected_range()
+            && !range.is_empty()
+        {
+            self.replace(range, "", EditKind::Other, cx);
+        }
+    }
+
+    fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
+        let (Some(range), Some(open)) = (self.selected_range(), &self.open) else {
+            return;
+        };
+        let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
+            return;
+        };
+        let text = normalize_line_endings(&text, line_ending(&open.model.text));
+        self.replace(range, &text, EditKind::Other, cx);
+    }
+
+    fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(open) = &mut self.open else {
+            return;
+        };
+        if let Some(selection) = open.history.undo(open.document.buffer_mut()) {
+            open.marked = None;
+            text_changed(open);
+            self.set_selection(selection, cx);
+        }
+    }
+
+    fn redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(open) = &mut self.open else {
+            return;
+        };
+        if let Some(selection) = open.history.redo(open.document.buffer_mut()) {
+            open.marked = None;
+            text_changed(open);
+            self.set_selection(selection, cx);
+        }
+    }
+
+    // UTF-16 conversion for the platform input handler.
+
+    fn rope(&self) -> Option<&ropey::Rope> {
+        Some(self.open.as_ref()?.document.buffer().rope())
+    }
+
+    fn offset_to_utf16(&self, offset: usize) -> usize {
+        self.rope().map_or(0, |rope| {
+            rope.char_to_utf16_cu(rope.byte_to_char(offset.min(rope.len_bytes())))
+        })
+    }
+
+    fn offset_from_utf16(&self, offset: usize) -> usize {
+        self.rope().map_or(0, |rope| {
+            let offset = offset.min(rope.len_utf16_cu());
+            rope.char_to_byte(rope.utf16_cu_to_char(offset))
+        })
+    }
+
+    fn range_to_utf16(&self, range: &Range<usize>) -> Range<usize> {
+        self.offset_to_utf16(range.start)..self.offset_to_utf16(range.end)
+    }
+
+    fn range_from_utf16(&self, range: &Range<usize>) -> Range<usize> {
+        self.offset_from_utf16(range.start)..self.offset_from_utf16(range.end)
+    }
+}
+
+/// Reveals item `index` (or none), re-measuring the items that change.
+fn reveal(open: &mut OpenDocument, index: Option<usize>) {
+    if open.revealed.as_ref().map(|revealed| revealed.index) == index {
+        return;
+    }
+    if let Some(old) = open.revealed.take() {
+        open.list_state.splice(old.index..old.index + 1, 1);
+    }
+    *open.revealed_layout.borrow_mut() = None;
+    if let Some(index) = index {
+        let item = &open.model.items[index];
+        let source = &open.model.text[item.range.clone()];
+        let styled = styled_source(source, item.kind, &open.model.definitions);
+        open.revealed = Some(Revealed {
+            index,
+            styled: Rc::new(styled),
+        });
+        open.list_state.splice(index..index + 1, 1);
+    }
+}
+
+/// Rebuilds the model after the buffer changed, re-measuring only the
+/// items that changed. The caller then sets the selection, which reveals
+/// its item again.
+fn text_changed(open: &mut OpenDocument) {
+    let text = open.document.buffer().rope().to_string();
+    let (model, splice) = open.model.updated(&text);
+    open.model = Rc::new(model);
+    open.list_state.splice(splice.old, splice.new_count);
+    // The revealed item's index and source may have changed.
+    open.revealed = None;
+    *open.revealed_layout.borrow_mut() = None;
+}
+
+/// The line ending the document uses: CRLF if it has any, otherwise LF.
+fn line_ending(text: &str) -> &'static str {
+    if text.contains("\r\n") { "\r\n" } else { "\n" }
+}
+
+/// Converts all line endings in `text` to `line_ending`.
+fn normalize_line_endings(text: &str, line_ending: &str) -> String {
+    text.replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .replace('\n', line_ending)
+}
+
+impl EntityInputHandler for DocumentView {
+    fn text_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        actual_range: &mut Option<Range<usize>>,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Option<String> {
+        let range = self.range_from_utf16(&range_utf16);
+        actual_range.replace(self.range_to_utf16(&range));
+        Some(self.open.as_ref()?.model.text[range].to_owned())
+    }
+
+    fn selected_text_range(
+        &mut self,
+        _ignore_disabled_input: bool,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Option<UTF16Selection> {
+        let selection = self.open.as_ref()?.selection?;
+        Some(UTF16Selection {
+            range: self.range_to_utf16(&selection.range()),
+            reversed: selection.head < selection.anchor,
+        })
+    }
+
+    fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
+        let marked = self.open.as_ref()?.marked.clone()?;
+        Some(self.range_to_utf16(&marked))
+    }
+
+    fn unmark_text(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(open) = &mut self.open {
+            open.marked = None;
+        }
+        cx.notify();
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        text: &str,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(open) = &self.open else {
+            return;
+        };
+        let Some(range) = range_utf16
+            .map(|range| self.range_from_utf16(&range))
+            .or(open.marked.clone())
+            .or(self.selected_range())
+        else {
+            return;
+        };
+        let kind = if range.is_empty() && open.marked.is_none() && !text.contains(['\n', '\r']) {
+            EditKind::Typing
+        } else {
+            EditKind::Other
+        };
+        self.replace(range, text, kind, cx);
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        text: &str,
+        new_selected_range_utf16: Option<Range<usize>>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(open) = &self.open else {
+            return;
+        };
+        let Some(range) = range_utf16
+            .map(|range| self.range_from_utf16(&range))
+            .or(open.marked.clone())
+            .or(self.selected_range())
+        else {
+            return;
+        };
+        self.replace(range.clone(), text, EditKind::Other, cx);
+        // The new selection is relative to the inserted text, in UTF-16.
+        let base = self.offset_to_utf16(range.start);
+        let selection = new_selected_range_utf16.map(|selected| Selection {
+            anchor: self.offset_from_utf16(base + selected.start),
+            head: self.offset_from_utf16(base + selected.end),
+        });
+        if let Some(open) = &mut self.open {
+            open.marked = (!text.is_empty()).then(|| range.start..range.start + text.len());
+        }
+        if let Some(selection) = selection {
+            self.set_selection(selection, cx);
+        }
+    }
+
+    fn bounds_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        _element_bounds: Bounds<Pixels>,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Option<Bounds<Pixels>> {
+        let range = self.range_from_utf16(&range_utf16);
+        let (layout, item_start) = self.revealed_layout()?;
+        let start = layout.position_for_index(range.start.checked_sub(item_start)?)?;
+        let end = layout
+            .position_for_index(range.end.checked_sub(item_start)?)
+            .unwrap_or(start);
+        let line_height = layout.line_height();
+        let width = if end.y == start.y {
+            end.x - start.x
+        } else {
+            px(0.)
+        };
+        Some(Bounds::new(start, size(width, line_height)))
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        point: Point<Pixels>,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Option<usize> {
+        let (layout, item_start) = self.revealed_layout()?;
+        let (Ok(index) | Err(index)) = layout.index_for_position(point);
+        Some(self.offset_to_utf16(item_start + index))
     }
 }
 
@@ -494,10 +841,9 @@ impl Render for DocumentView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let content = match &self.open {
             Some(open) => {
-                let text = open.text.clone();
-                let blocks = open.blocks.clone();
-                let rendered = open.rendered.clone();
+                let model = open.model.clone();
                 let selection = open.selection;
+                let marked = open.marked.clone();
                 let revealed = open
                     .revealed
                     .as_ref()
@@ -506,15 +852,13 @@ impl Render for DocumentView {
                 let caret_visible = self.caret_visible;
                 let base_font = window.text_style().font();
                 let theme = self.theme;
-                let view = cx.entity().downgrade();
+                let view = cx.entity();
+                let focus_handle = self.focus_handle.clone();
                 list(open.list_state.clone(), move |index, _, _| {
-                    let range = blocks.as_slice()[index].range.clone();
-                    let click = ClickTarget {
-                        view: view.clone(),
-                        block_start: range.start,
-                    };
+                    let item = &model.items[index];
                     match &revealed {
                         Some((revealed_index, styled)) if *revealed_index == index => {
+                            let range = item.range.clone();
                             let selection = selection.unwrap_or_default();
                             let local =
                                 |offset: usize| offset.clamp(range.start, range.end) - range.start;
@@ -523,21 +867,41 @@ impl Render for DocumentView {
                                 && (range.contains(&selection.head)
                                     || selection.head == range.end))
                                 .then(|| selection.head - range.start);
+                            let marked = marked
+                                .as_ref()
+                                .map(|marked| local(marked.start)..local(marked.end));
                             render_revealed(
                                 RevealedBlock {
-                                    source: &text[range.clone()],
+                                    source: &model.text[range.clone()],
                                     styled,
                                     selection: local(selected.start)..local(selected.end),
                                     caret,
+                                    marked,
                                     first: index == 0,
                                 },
                                 &base_font,
                                 theme,
-                                click,
+                                ClickTarget {
+                                    view: view.downgrade(),
+                                    block_start: range.start,
+                                },
                                 layout_slot.clone(),
+                                TextInput {
+                                    focus_handle: focus_handle.clone(),
+                                    view: view.clone(),
+                                },
                             )
                         }
-                        _ => render_block(&rendered[index], index == 0, &base_font, theme, click),
+                        _ => render_block(
+                            &item.rendered,
+                            index == 0,
+                            &base_font,
+                            theme,
+                            ClickTarget {
+                                view: view.downgrade(),
+                                block_start: item.block.start,
+                            },
+                        ),
                     }
                 })
                 .size_full()
@@ -559,48 +923,40 @@ impl Render for DocumentView {
             .on_action(|_: &CloseWindow, window, _| window.remove_window())
             .on_action(cx.listener(Self::unreveal))
             .on_action(cx.listener(|this, _: &MoveLeft, _, cx| {
-                this.move_by(false, false, cx, movement::move_left)
+                this.move_by(false, false, cx, movement::prev_grapheme)
             }))
             .on_action(cx.listener(|this, _: &MoveRight, _, cx| {
-                this.move_by(false, true, cx, movement::move_right)
+                this.move_by(false, true, cx, movement::next_grapheme)
             }))
             .on_action(cx.listener(|this, _: &SelectLeft, _, cx| {
-                this.move_by(true, false, cx, movement::move_left)
+                this.move_by(true, false, cx, movement::prev_grapheme)
             }))
             .on_action(cx.listener(|this, _: &SelectRight, _, cx| {
-                this.move_by(true, true, cx, movement::move_right)
+                this.move_by(true, true, cx, movement::next_grapheme)
             }))
             .on_action(cx.listener(|this, _: &MoveWordLeft, _, cx| {
-                this.move_by(false, false, cx, movement::move_word_left)
+                this.move_by(false, false, cx, movement::prev_word_start)
             }))
             .on_action(cx.listener(|this, _: &MoveWordRight, _, cx| {
-                this.move_by(false, true, cx, movement::move_word_right)
+                this.move_by(false, true, cx, movement::next_word_end)
             }))
             .on_action(cx.listener(|this, _: &SelectWordLeft, _, cx| {
-                this.move_by(true, false, cx, movement::move_word_left)
+                this.move_by(true, false, cx, movement::prev_word_start)
             }))
             .on_action(cx.listener(|this, _: &SelectWordRight, _, cx| {
-                this.move_by(true, true, cx, movement::move_word_right)
+                this.move_by(true, true, cx, movement::next_word_end)
             }))
             .on_action(cx.listener(|this, _: &MoveDocumentStart, _, cx| {
-                this.move_by(false, false, cx, |_, blocks, _| {
-                    movement::document_start(blocks)
-                })
+                this.move_by(false, false, cx, |_, _| 0)
             }))
             .on_action(cx.listener(|this, _: &MoveDocumentEnd, _, cx| {
-                this.move_by(false, true, cx, |_, blocks, _| {
-                    movement::document_end(blocks)
-                })
+                this.move_by(false, true, cx, |text, _| text.len())
             }))
             .on_action(cx.listener(|this, _: &SelectDocumentStart, _, cx| {
-                this.move_by(true, false, cx, |_, blocks, _| {
-                    movement::document_start(blocks)
-                })
+                this.move_by(true, false, cx, |_, _| 0)
             }))
             .on_action(cx.listener(|this, _: &SelectDocumentEnd, _, cx| {
-                this.move_by(true, true, cx, |_, blocks, _| {
-                    movement::document_end(blocks)
-                })
+                this.move_by(true, true, cx, |text, _| text.len())
             }))
             .on_action(cx.listener(|this, _: &MoveUp, window, cx| {
                 this.move_vertically(false, false, window, cx)
@@ -628,11 +984,49 @@ impl Render for DocumentView {
                     this.move_to_line_edge(true, true, cx)
                 }),
             )
+            .on_action(cx.listener(Self::select_all))
+            .on_action(
+                cx.listener(|this, _: &Backspace, _, cx| this.delete(cx, movement::prev_grapheme)),
+            )
+            .on_action(
+                cx.listener(|this, _: &Delete, _, cx| this.delete(cx, movement::next_grapheme)),
+            )
+            .on_action(cx.listener(|this, _: &DeleteWordLeft, _, cx| {
+                this.delete(cx, movement::prev_word_start)
+            }))
+            .on_action(cx.listener(|this, _: &DeleteWordRight, _, cx| {
+                this.delete(cx, movement::next_word_end)
+            }))
+            .on_action(cx.listener(Self::delete_to_line_start))
+            .on_action(cx.listener(Self::newline))
+            .on_action(cx.listener(Self::cut))
+            .on_action(cx.listener(Self::copy))
+            .on_action(cx.listener(Self::paste))
+            .on_action(cx.listener(Self::undo))
+            .on_action(cx.listener(Self::redo))
             .size_full()
             .bg(self.theme.background)
             .text_color(self.theme.text)
             .text_size(px(BODY_TEXT_SIZE))
             .line_height(relative(1.6))
             .child(content)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_line_ending() {
+        assert_eq!(line_ending("a\nb"), "\n");
+        assert_eq!(line_ending("a\r\nb"), "\r\n");
+        assert_eq!(line_ending(""), "\n");
+    }
+
+    #[test]
+    fn normalizes_pasted_line_endings() {
+        assert_eq!(normalize_line_endings("a\r\nb\nc\rd", "\n"), "a\nb\nc\nd");
+        assert_eq!(normalize_line_endings("a\nb\r\nc", "\r\n"), "a\r\nb\r\nc");
     }
 }

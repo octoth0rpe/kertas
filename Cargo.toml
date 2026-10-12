@@ -14,3 +14,7 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "c66312b2
 pulldown-cmark = { version = "0.13.4", default-features = false }
 ropey = "1.6"
 unicode-segmentation = "1"
+
+[lints.clippy]
+# kami often builds lists of byte ranges, including lists with one range.
+single_range_in_vec_init = "allow"

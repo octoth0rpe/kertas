@@ -6,13 +6,13 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, Bounds, Font, FontStyle, FontWeight, MouseButton, SharedString, StrikethroughStyle,
-    StyledText, TextLayout, TextRun, UnderlineStyle, canvas, div, fill, prelude::*, px, relative,
-    size,
+    AnyElement, Bounds, ElementInputHandler, Entity, FocusHandle, Font, FontStyle, FontWeight,
+    MouseButton, SharedString, StrikethroughStyle, StyledText, TextLayout, TextRun, UnderlineStyle,
+    canvas, div, fill, prelude::*, px, relative, size,
 };
 use kami::reveal::{RevealFont, SpanStyle, StyledSource};
 
-use crate::document_view::{BODY_TEXT_SIZE, CODE_FONT};
+use crate::document_view::{BODY_TEXT_SIZE, CODE_FONT, DocumentView};
 use crate::rendered_block::{ClickTarget, block_frame, heading_scale};
 use crate::theme::Theme;
 
@@ -27,9 +27,18 @@ pub struct RevealedBlock<'a> {
     pub styled: &'a StyledSource,
     /// The selection, in block-relative offsets, clamped to the block.
     pub selection: Range<usize>,
-    /// The caret, in block-relative offsets, if it's in this block.
+    /// The caret, in block-relative offsets, if it's in this block and
+    /// currently drawn (it blinks).
     pub caret: Option<usize>,
+    /// Text being composed with an input method, in block-relative offsets.
+    pub marked: Option<Range<usize>>,
     pub first: bool,
+}
+
+/// Where typed text and IME input go while the block is revealed.
+pub struct TextInput {
+    pub focus_handle: FocusHandle,
+    pub view: Entity<DocumentView>,
 }
 
 /// Renders the revealed block as a list item. Once painted, its text layout
@@ -40,6 +49,7 @@ pub fn render_revealed(
     theme: Theme,
     click: ClickTarget,
     layout_slot: Rc<RefCell<Option<TextLayout>>>,
+    input: TextInput,
 ) -> AnyElement {
     let (heading, monospace) = match block.styled.font {
         RevealFont::Prose { heading } => (heading, false),
@@ -57,11 +67,16 @@ pub fn render_revealed(
     let caret_layout = layout.clone();
     let caret_overlay = canvas(
         |_, _, _| {},
-        move |_, _, window, _| {
+        move |bounds, _, window, cx| {
             // Publish the layout only now that it's been painted: its
             // position queries panic before prepaint, and the list can
             // build an item just to measure it without painting it.
             *layout_slot.borrow_mut() = Some(caret_layout.clone());
+            window.handle_input(
+                &input.focus_handle,
+                ElementInputHandler::new(bounds, input.view),
+                cx,
+            );
             let Some(caret) = caret else {
                 return;
             };
@@ -181,16 +196,32 @@ fn text_runs(
             }
         }
 
-        // Split the span where the selection starts and ends.
-        for piece in split_at_selection(span.range.clone(), &block.selection) {
-            let selected = !block.selection.is_empty()
-                && piece.start >= block.selection.start
-                && piece.end <= block.selection.end;
+        // Split the span where the selection and marked text start and end.
+        let marked = block.marked.clone().unwrap_or(0..0);
+        let cuts = [
+            block.selection.start,
+            block.selection.end,
+            marked.start,
+            marked.end,
+        ];
+        for piece in split_at(span.range.clone(), &cuts) {
+            let within = |range: &Range<usize>| {
+                !range.is_empty() && piece.start >= range.start && piece.end <= range.end
+            };
+            let underline = if within(&marked) {
+                Some(UnderlineStyle {
+                    thickness: px(1.),
+                    color: Some(color),
+                    wavy: false,
+                })
+            } else {
+                underline
+            };
             runs.push(TextRun {
                 len: piece.len(),
                 font: font.clone(),
                 color,
-                background_color: if selected {
+                background_color: if within(&block.selection) {
                     Some(theme.selection)
                 } else {
                     background
@@ -203,18 +234,19 @@ fn text_runs(
     runs
 }
 
-/// Splits `range` at the selection's boundaries, dropping empty pieces.
-fn split_at_selection(range: Range<usize>, selection: &Range<usize>) -> Vec<Range<usize>> {
-    let mut cuts = vec![range.start];
-    for cut in [selection.start, selection.end] {
-        if range.start < cut && cut < range.end {
-            cuts.push(cut);
-        }
-    }
-    cuts.push(range.end);
-    cuts.sort_unstable();
-    cuts.dedup();
-    cuts.windows(2).map(|pair| pair[0]..pair[1]).collect()
+/// Splits `range` at any of `cuts` that fall inside it, dropping empty
+/// pieces.
+fn split_at(range: Range<usize>, cuts: &[usize]) -> Vec<Range<usize>> {
+    let mut points = vec![range.start];
+    points.extend(
+        cuts.iter()
+            .copied()
+            .filter(|&cut| range.start < cut && cut < range.end),
+    );
+    points.push(range.end);
+    points.sort_unstable();
+    points.dedup();
+    points.windows(2).map(|pair| pair[0]..pair[1]).collect()
 }
 
 #[cfg(test)]
@@ -222,15 +254,11 @@ mod tests {
     use super::*;
 
     #[test]
-    #[allow(
-        clippy::single_range_in_vec_init,
-        reason = "lists of one range are intended"
-    )]
-    fn splits_at_selection_edges() {
-        assert_eq!(split_at_selection(0..10, &(3..6)), [0..3, 3..6, 6..10]);
-        assert_eq!(split_at_selection(0..10, &(0..10)), vec![0..10]);
-        assert_eq!(split_at_selection(0..10, &(8..20)), [0..8, 8..10]);
-        assert_eq!(split_at_selection(5..10, &(0..2)), vec![5..10]);
-        assert_eq!(split_at_selection(0..10, &(4..4)), [0..4, 4..10]);
+    fn splits_at_cuts_inside_range() {
+        assert_eq!(split_at(0..10, &[3, 6]), [0..3, 3..6, 6..10]);
+        assert_eq!(split_at(0..10, &[0, 10]), vec![0..10]);
+        assert_eq!(split_at(0..10, &[8, 20]), [0..8, 8..10]);
+        assert_eq!(split_at(5..10, &[0, 2]), vec![5..10]);
+        assert_eq!(split_at(0..10, &[4, 4, 6, 2]), [0..2, 2..4, 4..6, 6..10]);
     }
 }
