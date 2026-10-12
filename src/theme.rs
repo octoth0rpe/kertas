@@ -3,7 +3,7 @@
 //! The theme follows the macOS appearance. Colors are hardcoded for now;
 //! the config file (§8) will add a setting to pin one.
 
-use gpui::{Hsla, WindowAppearance, rgb};
+use gpui::{Hsla, WindowAppearance, rgb, rgba};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Theme {
@@ -16,6 +16,9 @@ pub struct Theme {
     /// Thematic breaks, blockquote bars and table borders.
     pub rule: Hsla,
     pub table_header_background: Hsla,
+    /// Background of selected text.
+    pub selection: Hsla,
+    pub caret: Hsla,
 }
 
 impl Theme {
@@ -28,6 +31,8 @@ impl Theme {
             code_background: rgb(0xeff1f3).into(),
             rule: rgb(0xd1d9e0).into(),
             table_header_background: rgb(0xf6f8fa).into(),
+            selection: rgba(0x0969da40).into(),
+            caret: rgb(0x0969da).into(),
         }
     }
 
@@ -40,6 +45,8 @@ impl Theme {
             code_background: rgb(0x262a31).into(),
             rule: rgb(0x3a4049).into(),
             table_header_background: rgb(0x1e2127).into(),
+            selection: rgba(0x58a6ff4d).into(),
+            caret: rgb(0x58a6ff).into(),
         }
     }
 

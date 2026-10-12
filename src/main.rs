@@ -1,4 +1,6 @@
 mod document_view;
+mod rendered_block;
+mod revealed_block;
 mod theme;
 
 use std::path::PathBuf;
@@ -22,6 +24,7 @@ fn main() {
             KeyBinding::new("cmd-w", CloseWindow, None),
             KeyBinding::new("cmd-o", Open, None),
         ]);
+        cx.bind_keys(document_view::key_bindings());
         cx.set_menus([
             Menu::new("Kami").items([MenuItem::action("Quit Kami", Quit)]),
             Menu::new("File").items([

@@ -1,0 +1,397 @@
+//! Drawing blocks in rendered mode, and mapping clicks on them back to
+//! source offsets.
+
+use gpui::{
+    AnyElement, App, Font, FontStyle, FontWeight, Hsla, MouseButton, SharedString,
+    StrikethroughStyle, StyledText, TextRun, UnderlineStyle, WeakEntity, Window, div, prelude::*,
+    px, relative,
+};
+use kami::inline::InlineText;
+use kami::rendered::{ColumnAlignment, ListItem, RenderedBlock, Table};
+
+use crate::document_view::{BODY_TEXT_SIZE, CODE_FONT, DocumentView, MAX_TEXT_WIDTH};
+use crate::theme::Theme;
+
+/// Space between blocks inside lists and blockquotes.
+const NESTED_GAP: f32 = 8.;
+
+/// Text styling inherited by nested blocks.
+#[derive(Clone)]
+struct TextStyle {
+    font: Font,
+    color: Hsla,
+    theme: Theme,
+    click: ClickTarget,
+}
+
+/// Where clicks on a block's text are reported.
+#[derive(Clone)]
+pub struct ClickTarget {
+    pub view: WeakEntity<DocumentView>,
+    /// The block's start offset in the document.
+    pub block_start: usize,
+}
+
+impl ClickTarget {
+    /// Places the caret at `offset` in the block's source (shift-click
+    /// extends the selection).
+    pub fn report(&self, offset: usize, extend: bool, window: &mut Window, cx: &mut App) {
+        let offset = self.block_start + offset;
+        self.view
+            .update(cx, |view, cx| view.click(offset, extend, window, cx))
+            .ok();
+    }
+}
+
+/// Renders one block in rendered mode as a list item.
+pub fn render_block(
+    block: &RenderedBlock,
+    first: bool,
+    base_font: &Font,
+    theme: Theme,
+    click: ClickTarget,
+) -> AnyElement {
+    let heading = match block {
+        RenderedBlock::Heading { level, .. } => Some(*level),
+        _ => None,
+    };
+    let style = TextStyle {
+        font: base_font.clone(),
+        color: theme.text,
+        theme,
+        click: click.clone(),
+    };
+    block_frame(render_content(block, &style, 0), heading, first, click)
+}
+
+/// Wraps a block's content as a list item: centered in the text column,
+/// with spacing around it. Clicks that miss the block's text place the
+/// caret at the block's start.
+pub fn block_frame(
+    content: AnyElement,
+    heading: Option<u8>,
+    first: bool,
+    click: ClickTarget,
+) -> AnyElement {
+    let top = match heading {
+        Some(level) if !first => heading_top_space(level),
+        _ => 0.,
+    };
+    div()
+        .w_full()
+        .px_8()
+        .when(first, |this| this.pt(px(32.)))
+        .pb(px(16.))
+        .on_mouse_down(MouseButton::Left, move |event, window, cx| {
+            click.report(0, event.modifiers.shift, window, cx);
+        })
+        .child(
+            div()
+                .w_full()
+                .max_w(px(MAX_TEXT_WIDTH))
+                .mx_auto()
+                .pt(px(top))
+                .child(content),
+        )
+        .into_any_element()
+}
+
+/// The text size multiplier for a heading level.
+pub fn heading_scale(level: u8) -> f32 {
+    match level {
+        1 => 2.0,
+        2 => 1.5,
+        3 => 1.25,
+        4 => 1.0,
+        5 => 0.875,
+        _ => 0.85,
+    }
+}
+
+/// Renders a block's content, without the spacing around it. `depth` is
+/// how many lists the block is nested in, which picks the bullet style.
+fn render_content(block: &RenderedBlock, style: &TextStyle, depth: usize) -> AnyElement {
+    match block {
+        RenderedBlock::Paragraph(text) => clickable_text(text, style),
+        RenderedBlock::Heading { level, text } => {
+            let size = heading_scale(*level);
+            let mut heading_style = style.clone();
+            heading_style.font.weight = FontWeight::SEMIBOLD;
+            if *level == 6 {
+                heading_style.color = style.theme.muted_text;
+            }
+            div()
+                .text_size(px(BODY_TEXT_SIZE * size))
+                .line_height(relative(1.25))
+                .child(clickable_text(text, &heading_style))
+                .into_any_element()
+        }
+        RenderedBlock::ThematicBreak => div()
+            .py(px(8.))
+            .child(div().h(px(2.)).bg(style.theme.rule))
+            .into_any_element(),
+        RenderedBlock::List { start, items } => render_list(*start, items, style, depth),
+        RenderedBlock::BlockQuote(children) => {
+            let quote_style = TextStyle {
+                color: style.theme.muted_text,
+                ..style.clone()
+            };
+            div()
+                .border_l_4()
+                .border_color(style.theme.rule)
+                .pl_4()
+                .text_color(style.theme.muted_text)
+                .child(render_children(children, &quote_style, depth))
+                .into_any_element()
+        }
+        RenderedBlock::CodeBlock { code, .. } => div()
+            .bg(style.theme.code_background)
+            .rounded_md()
+            .px_4()
+            .py_3()
+            .font_family(CODE_FONT)
+            .text_size(px(13.))
+            .line_height(relative(1.5))
+            .text_color(style.theme.text)
+            .child({
+                let shown = code.text.trim_end_matches(['\n', '\r']);
+                let code = code.clone();
+                clickable_source(shown, style, move |index| code.source_offset(index))
+            })
+            .into_any_element(),
+        RenderedBlock::Table(table) => render_table(table, style),
+        RenderedBlock::Html(source) | RenderedBlock::Raw(source) => div()
+            .font_family(CODE_FONT)
+            .text_size(px(13.))
+            .line_height(relative(1.5))
+            .text_color(style.theme.muted_text)
+            .child(clickable_source(source, style, |index| index))
+            .into_any_element(),
+    }
+}
+
+/// Nested blocks stacked vertically, e.g. the contents of a list item.
+fn render_children(children: &[RenderedBlock], style: &TextStyle, depth: usize) -> AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(NESTED_GAP))
+        .children(
+            children
+                .iter()
+                .map(|child| render_content(child, style, depth)),
+        )
+        .into_any_element()
+}
+
+fn render_list(
+    start: Option<u64>,
+    items: &[ListItem],
+    style: &TextStyle,
+    depth: usize,
+) -> AnyElement {
+    let bullet = ["•", "◦", "▪"][depth % 3];
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(4.))
+        .children(items.iter().enumerate().map(|(index, item)| {
+            let marker = match (item.task, start) {
+                (Some(true), _) => "☑".to_owned(),
+                (Some(false), _) => "☐".to_owned(),
+                (None, Some(start)) => format!("{}.", start + index as u64),
+                (None, None) => bullet.to_owned(),
+            };
+            div()
+                .flex()
+                .child(
+                    div()
+                        .flex_none()
+                        .w(px(28.))
+                        .pr(px(8.))
+                        .text_right()
+                        .text_color(style.color)
+                        .child(marker),
+                )
+                .child(div().flex_1().min_w(px(0.)).child(render_children(
+                    &item.children,
+                    style,
+                    depth + 1,
+                )))
+        }))
+        .into_any_element()
+}
+
+fn render_table(table: &Table, style: &TextStyle) -> AnyElement {
+    let mut header_style = style.clone();
+    header_style.font.weight = FontWeight::SEMIBOLD;
+
+    let row = |cells: &[InlineText], style: &TextStyle, header: bool| {
+        div()
+            .flex()
+            .when(header, |this| this.bg(style.theme.table_header_background))
+            .children(cells.iter().enumerate().map(|(column, cell)| {
+                let alignment = table
+                    .alignments
+                    .get(column)
+                    .copied()
+                    .unwrap_or(ColumnAlignment::None);
+                div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .px_3()
+                    .py_1()
+                    .border_1()
+                    .border_color(style.theme.rule)
+                    .map(|this| match alignment {
+                        ColumnAlignment::Center => this.text_center(),
+                        ColumnAlignment::Right => this.text_right(),
+                        ColumnAlignment::Left | ColumnAlignment::None => this,
+                    })
+                    .child(clickable_text(cell, style))
+            }))
+    };
+
+    div()
+        .flex()
+        .flex_col()
+        .child(row(&table.header, &header_style, true))
+        .children(table.rows.iter().map(|cells| row(cells, style, false)))
+        .into_any_element()
+}
+
+fn heading_top_space(level: u8) -> f32 {
+    match level {
+        1 | 2 => 24.,
+        3 => 20.,
+        _ => 16.,
+    }
+}
+
+/// Inline text that places the caret at the matching source position
+/// when clicked.
+fn clickable_text(text: &InlineText, style: &TextStyle) -> AnyElement {
+    let styled = styled_text(text, style);
+    let layout = styled.layout().clone();
+    let inline = text.clone();
+    let click = style.click.clone();
+    div()
+        .on_mouse_down(MouseButton::Left, move |event, window, cx| {
+            let (Ok(index) | Err(index)) = layout.index_for_position(event.position);
+            click.report(
+                inline.source_offset(index),
+                event.modifiers.shift,
+                window,
+                cx,
+            );
+            cx.stop_propagation();
+        })
+        .child(styled)
+        .into_any_element()
+}
+
+/// Plain text shown with tabs expanded. A click maps the clicked index back
+/// through `to_source` (which takes an index into `text`).
+fn clickable_source(
+    text: &str,
+    style: &TextStyle,
+    to_source: impl Fn(usize) -> usize + 'static,
+) -> AnyElement {
+    let original = text.to_owned();
+    let styled = StyledText::new(SharedString::from(expand_tabs(text)));
+    let layout = styled.layout().clone();
+    let click = style.click.clone();
+    div()
+        .on_mouse_down(MouseButton::Left, move |event, window, cx| {
+            let (Ok(index) | Err(index)) = layout.index_for_position(event.position);
+            let index = unexpand_tabs(&original, index);
+            click.report(to_source(index), event.modifiers.shift, window, cx);
+            cx.stop_propagation();
+        })
+        .child(styled)
+        .into_any_element()
+}
+
+/// How a tab is displayed.
+const TAB: &str = "    ";
+
+pub fn expand_tabs(text: &str) -> String {
+    text.replace('\t', TAB)
+}
+
+/// Maps an index in `text` with tabs expanded to [`TAB`] back to an index in
+/// `text`. An index inside an expanded tab maps to the tab's start.
+fn unexpand_tabs(text: &str, expanded: usize) -> usize {
+    let mut shown = 0;
+    for (index, ch) in text.char_indices() {
+        let width = if ch == '\t' { TAB.len() } else { ch.len_utf8() };
+        if expanded < shown + width {
+            return index;
+        }
+        shown += width;
+    }
+    text.len()
+}
+
+/// Inline text with its formatting as GPUI text runs.
+fn styled_text(text: &InlineText, style: &TextStyle) -> StyledText {
+    let runs = text
+        .segments
+        .iter()
+        .map(|segment| {
+            let inline = segment.style;
+            let mut font = if inline.code {
+                Font {
+                    family: CODE_FONT.into(),
+                    ..style.font.clone()
+                }
+            } else {
+                style.font.clone()
+            };
+            if inline.strong {
+                font.weight = FontWeight::BOLD;
+            }
+            if inline.emphasis {
+                font.style = FontStyle::Italic;
+            }
+            let color: Hsla = if inline.link {
+                style.theme.link
+            } else {
+                style.color
+            };
+            TextRun {
+                len: segment.display.len(),
+                font,
+                color,
+                background_color: inline.code.then_some(style.theme.code_background),
+                underline: inline.link.then(|| UnderlineStyle {
+                    thickness: px(1.),
+                    color: Some(color),
+                    wavy: false,
+                }),
+                strikethrough: inline.strikethrough.then(|| StrikethroughStyle {
+                    thickness: px(1.),
+                    color: Some(color),
+                }),
+            }
+        })
+        .collect();
+    StyledText::new(SharedString::from(text.text.clone())).with_runs(runs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unexpand_tabs_maps_back() {
+        let text = "a\tb";
+        // Shown as "a    b": a(0) tab(1..5) b(5).
+        assert_eq!(unexpand_tabs(text, 0), 0);
+        assert_eq!(unexpand_tabs(text, 1), 1);
+        assert_eq!(unexpand_tabs(text, 4), 1, "inside the tab");
+        assert_eq!(unexpand_tabs(text, 5), 2);
+        assert_eq!(unexpand_tabs(text, 6), 3, "end");
+        assert_eq!(unexpand_tabs("no tabs", 3), 3);
+    }
+}

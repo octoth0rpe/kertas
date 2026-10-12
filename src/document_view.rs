@@ -1,39 +1,123 @@
 //! The view that shows a document in a window.
 //!
-//! Every block is rendered except front matter and link reference
-//! definitions, which are shown as their source text.
+//! Every block is rendered except the one containing the caret, which is
+//! revealed as styled Markdown source (C4). See
+//! `docs/planning/caret-and-reveal.md`.
 
+use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, Context, FocusHandle, Font, FontStyle, FontWeight, Hsla, ListAlignment, ListState,
-    PathPromptOptions, PromptLevel, SharedString, StrikethroughStyle, StyledText, Subscription,
-    TextRun, UnderlineStyle, Window, actions, div, list, prelude::*, px, relative,
+    Context, FocusHandle, KeyBinding, ListAlignment, ListState, PathPromptOptions, Pixels,
+    PromptLevel, Subscription, TextLayout, Window, actions, div, list, point, prelude::*, px,
+    relative,
 };
-use kami::blocks::Blocks;
+use kami::blocks::{BlockKind, Blocks};
 use kami::document::{Document, OpenError};
-use kami::inline::InlineText;
-use kami::rendered::{ColumnAlignment, ListItem, RenderedBlock, Table, render_blocks};
+use kami::movement::{self, Selection};
+use kami::rendered::{RenderedBlock, render_blocks};
+use kami::reveal::{StyledSource, styled_source};
 
+use crate::rendered_block::{ClickTarget, render_block};
+use crate::revealed_block::{RevealedBlock, render_revealed};
 use crate::theme::Theme;
 
-actions!(kami, [Open, CloseWindow]);
+actions!(
+    kami,
+    [
+        Open,
+        CloseWindow,
+        Unreveal,
+        MoveLeft,
+        MoveRight,
+        MoveUp,
+        MoveDown,
+        MoveWordLeft,
+        MoveWordRight,
+        MoveLineStart,
+        MoveLineEnd,
+        MoveDocumentStart,
+        MoveDocumentEnd,
+        SelectLeft,
+        SelectRight,
+        SelectUp,
+        SelectDown,
+        SelectWordLeft,
+        SelectWordRight,
+        SelectLineStart,
+        SelectLineEnd,
+        SelectDocumentStart,
+        SelectDocumentEnd,
+    ]
+);
+
+/// Key bindings for caret movement and selection (macOS conventions).
+pub fn key_bindings() -> Vec<KeyBinding> {
+    vec![
+        KeyBinding::new("escape", Unreveal, None),
+        KeyBinding::new("left", MoveLeft, None),
+        KeyBinding::new("right", MoveRight, None),
+        KeyBinding::new("up", MoveUp, None),
+        KeyBinding::new("down", MoveDown, None),
+        KeyBinding::new("alt-left", MoveWordLeft, None),
+        KeyBinding::new("alt-right", MoveWordRight, None),
+        KeyBinding::new("cmd-left", MoveLineStart, None),
+        KeyBinding::new("cmd-right", MoveLineEnd, None),
+        KeyBinding::new("home", MoveLineStart, None),
+        KeyBinding::new("end", MoveLineEnd, None),
+        KeyBinding::new("cmd-up", MoveDocumentStart, None),
+        KeyBinding::new("cmd-down", MoveDocumentEnd, None),
+        KeyBinding::new("shift-left", SelectLeft, None),
+        KeyBinding::new("shift-right", SelectRight, None),
+        KeyBinding::new("shift-up", SelectUp, None),
+        KeyBinding::new("shift-down", SelectDown, None),
+        KeyBinding::new("alt-shift-left", SelectWordLeft, None),
+        KeyBinding::new("alt-shift-right", SelectWordRight, None),
+        KeyBinding::new("cmd-shift-left", SelectLineStart, None),
+        KeyBinding::new("cmd-shift-right", SelectLineEnd, None),
+        KeyBinding::new("shift-home", SelectLineStart, None),
+        KeyBinding::new("shift-end", SelectLineEnd, None),
+        KeyBinding::new("cmd-shift-up", SelectDocumentStart, None),
+        KeyBinding::new("cmd-shift-down", SelectDocumentEnd, None),
+    ]
+}
 
 /// Maximum width of the text column (A1).
-const MAX_TEXT_WIDTH: f32 = 720.;
-const BODY_TEXT_SIZE: f32 = 16.;
-const CODE_FONT: &str = "Menlo";
-
-/// Space between blocks inside lists and blockquotes.
-const NESTED_GAP: f32 = 8.;
+pub const MAX_TEXT_WIDTH: f32 = 720.;
+pub const BODY_TEXT_SIZE: f32 = 16.;
+pub const CODE_FONT: &str = "Menlo";
 
 /// An open document and everything needed to display it.
 struct OpenDocument {
     #[expect(dead_code, reason = "read by the save and editing stories")]
     document: Document,
-    blocks: Rc<Vec<RenderedBlock>>,
+    text: Rc<str>,
+    blocks: Rc<Blocks>,
+    rendered: Rc<Vec<RenderedBlock>>,
+    /// The source of the document's link reference definitions.
+    definitions: Rc<str>,
     list_state: ListState,
+    /// The selection, or `None` before the first click or key press.
+    selection: Option<Selection>,
+    /// The x position to keep when moving up and down.
+    goal_x: Option<Pixels>,
+    revealed: Option<Revealed>,
+    /// The revealed block's text layout from the last frame.
+    revealed_layout: Rc<RefCell<Option<TextLayout>>>,
+}
+
+/// The block shown as source.
+struct Revealed {
+    index: usize,
+    styled: Rc<StyledSource>,
+}
+
+/// Where to put the caret after a neighbor block is revealed and laid out.
+#[derive(Clone, Copy)]
+enum LineGoal {
+    First,
+    Last,
 }
 
 pub struct DocumentView {
@@ -66,13 +150,28 @@ impl DocumentView {
         match Document::open(path) {
             Ok(document) => {
                 window.set_window_title(&document.display_name());
-                let text = document.buffer().rope().to_string();
-                let blocks = render_blocks(&text, &Blocks::parse(&text));
-                let list_state = ListState::new(blocks.len(), ListAlignment::Top, px(1000.));
+                let text: Rc<str> = document.buffer().rope().to_string().into();
+                let blocks = Blocks::parse(&text);
+                let rendered = render_blocks(&text, &blocks);
+                let definitions = blocks
+                    .as_slice()
+                    .iter()
+                    .filter(|block| block.kind == BlockKind::LinkReferenceDefinition)
+                    .map(|block| &text[block.range.clone()])
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let list_state = ListState::new(rendered.len(), ListAlignment::Top, px(1000.));
                 self.open = Some(OpenDocument {
                     document,
+                    text,
                     blocks: Rc::new(blocks),
+                    rendered: Rc::new(rendered),
+                    definitions: definitions.into(),
                     list_state,
+                    selection: None,
+                    goal_x: None,
+                    revealed: None,
+                    revealed_layout: Rc::default(),
                 });
                 cx.notify();
             }
@@ -101,6 +200,238 @@ impl DocumentView {
         })
         .detach();
     }
+
+    /// Places the caret at document `offset` after a click.
+    pub fn click(
+        &mut self,
+        offset: usize,
+        extend: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.focus_handle.focus(window, cx);
+        if let Some(open) = &mut self.open {
+            open.goal_x = None;
+        }
+        self.set_caret(offset, extend, cx);
+    }
+
+    /// Moves the caret to `offset`, revealing its block.
+    fn set_caret(&mut self, offset: usize, extend: bool, cx: &mut Context<Self>) {
+        let Some(open) = &mut self.open else {
+            return;
+        };
+        let mut selection = open.selection.unwrap_or(Selection::caret(offset));
+        selection.move_to(offset, extend);
+        open.selection = Some(selection);
+
+        let index = open.blocks.index_at(offset);
+        if open.revealed.as_ref().map(|revealed| revealed.index) != index {
+            // Both the old and new blocks change height, so re-measure them.
+            if let Some(old) = open.revealed.take() {
+                open.list_state.splice(old.index..old.index + 1, 1);
+            }
+            *open.revealed_layout.borrow_mut() = None;
+            if let Some(index) = index {
+                let block = &open.blocks.as_slice()[index];
+                let source = &open.text[block.range.clone()];
+                let styled = styled_source(source, block.kind, &open.definitions);
+                open.revealed = Some(Revealed {
+                    index,
+                    styled: Rc::new(styled),
+                });
+                open.list_state.splice(index..index + 1, 1);
+            }
+        }
+        if let Some(index) = index {
+            open.list_state.scroll_to_reveal_item(index);
+        }
+        cx.notify();
+    }
+
+    fn unreveal(&mut self, _: &Unreveal, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(open) = &mut self.open else {
+            return;
+        };
+        open.selection = None;
+        open.goal_x = None;
+        if let Some(old) = open.revealed.take() {
+            open.list_state.splice(old.index..old.index + 1, 1);
+        }
+        *open.revealed_layout.borrow_mut() = None;
+        cx.notify();
+    }
+
+    /// The caret's offset, placing it at the document start if there's no
+    /// caret yet.
+    fn caret(&self) -> Option<usize> {
+        let open = self.open.as_ref()?;
+        Some(match open.selection {
+            Some(selection) => selection.head,
+            None => movement::document_start(&open.blocks),
+        })
+    }
+
+    /// Applies a layout-independent movement. `forward` is the direction,
+    /// used to collapse a selection to the matching edge (as on macOS).
+    fn move_by(
+        &mut self,
+        extend: bool,
+        forward: bool,
+        cx: &mut Context<Self>,
+        motion: impl FnOnce(&str, &Blocks, usize) -> usize,
+    ) {
+        let (Some(open), Some(caret)) = (&self.open, self.caret()) else {
+            return;
+        };
+        let target = match open.selection {
+            // The first key press just places the caret.
+            None => caret,
+            Some(selection) if !extend && !selection.is_empty() => {
+                let range = selection.range();
+                if forward { range.end } else { range.start }
+            }
+            Some(_) => motion(&open.text, &open.blocks, caret),
+        };
+        if let Some(open) = &mut self.open {
+            open.goal_x = None;
+        }
+        self.set_caret(target, extend, cx);
+    }
+
+    /// Moves the caret up or down a visual line, into the neighbor block at
+    /// the revealed block's edge.
+    fn move_vertically(
+        &mut self,
+        down: bool,
+        extend: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(caret) = self.caret() else {
+            return;
+        };
+        let Some(open) = &mut self.open else {
+            return;
+        };
+        let layout = open.revealed_layout.borrow().clone();
+        let (Some(layout), Some(revealed), Some(_)) = (layout, &open.revealed, open.selection)
+        else {
+            self.set_caret(caret, extend, cx);
+            return;
+        };
+        let block_start = open.blocks.as_slice()[revealed.index].range.start;
+        let Some(position) = layout.position_for_index(caret - block_start) else {
+            return;
+        };
+        let line_height = layout.line_height();
+        let goal_x = *open.goal_x.get_or_insert(position.x);
+        let target_y = if down {
+            position.y + line_height * 1.5
+        } else {
+            position.y - line_height * 0.5
+        };
+        let bounds = layout.bounds();
+
+        if target_y >= bounds.top() && target_y < bounds.bottom() {
+            let (Ok(index) | Err(index)) = layout.index_for_position(point(goal_x, target_y));
+            self.set_caret(block_start + index, extend, cx);
+            return;
+        }
+
+        // Past the block's edge: reveal the neighbor, then place the caret on
+        // its first or last line once it's laid out.
+        let neighbor = if down {
+            movement::next_block_start(&open.blocks, caret)
+        } else {
+            movement::prev_block_end(&open.blocks, caret)
+        };
+        let Some(neighbor) = neighbor else {
+            let edge = if down {
+                movement::document_end(&open.blocks)
+            } else {
+                movement::document_start(&open.blocks)
+            };
+            self.set_caret(edge, extend, cx);
+            return;
+        };
+        self.set_caret(neighbor, extend, cx);
+        let goal = if down {
+            LineGoal::First
+        } else {
+            LineGoal::Last
+        };
+        let view = cx.entity().downgrade();
+        window.on_next_frame(move |_, cx| {
+            view.update(cx, |this, cx| {
+                this.resolve_line_goal(goal, goal_x, extend, cx)
+            })
+            .ok();
+        });
+    }
+
+    /// Places the caret at `goal_x` on the revealed block's first or last
+    /// line, after it has been laid out.
+    fn resolve_line_goal(
+        &mut self,
+        goal: LineGoal,
+        goal_x: Pixels,
+        extend: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(open) = &self.open else {
+            return;
+        };
+        let (Some(layout), Some(revealed)) =
+            (open.revealed_layout.borrow().clone(), &open.revealed)
+        else {
+            return;
+        };
+        let block_start = open.blocks.as_slice()[revealed.index].range.start;
+        let bounds = layout.bounds();
+        let half_line = layout.line_height() * 0.5;
+        let y = match goal {
+            LineGoal::First => bounds.top() + half_line,
+            LineGoal::Last => bounds.bottom() - half_line,
+        };
+        let (Ok(index) | Err(index)) = layout.index_for_position(point(goal_x, y));
+        self.set_caret(block_start + index, extend, cx);
+        if let Some(open) = &mut self.open {
+            open.goal_x = Some(goal_x);
+        }
+    }
+
+    /// Moves the caret to the start or end of its visual line.
+    fn move_to_line_edge(&mut self, end: bool, extend: bool, cx: &mut Context<Self>) {
+        let Some(caret) = self.caret() else {
+            return;
+        };
+        let Some(open) = &self.open else {
+            return;
+        };
+        let layout = open.revealed_layout.borrow().clone();
+        let (Some(layout), Some(revealed), Some(_)) = (layout, &open.revealed, open.selection)
+        else {
+            self.set_caret(caret, extend, cx);
+            return;
+        };
+        let block_start = open.blocks.as_slice()[revealed.index].range.start;
+        let Some(position) = layout.position_for_index(caret - block_start) else {
+            return;
+        };
+        let bounds = layout.bounds();
+        let y = position.y + layout.line_height() * 0.5;
+        let x = if end {
+            bounds.right() + px(10_000.)
+        } else {
+            bounds.left() - px(10_000.)
+        };
+        let (Ok(index) | Err(index)) = layout.index_for_position(point(x, y));
+        if let Some(open) = &mut self.open {
+            open.goal_x = None;
+        }
+        self.set_caret(block_start + index, extend, cx);
+    }
 }
 
 fn show_open_error(err: &OpenError, window: &mut Window, cx: &mut Context<DocumentView>) {
@@ -122,11 +453,50 @@ impl Render for DocumentView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let content = match &self.open {
             Some(open) => {
+                let text = open.text.clone();
                 let blocks = open.blocks.clone();
+                let rendered = open.rendered.clone();
+                let selection = open.selection;
+                let revealed = open
+                    .revealed
+                    .as_ref()
+                    .map(|revealed| (revealed.index, revealed.styled.clone()));
+                let layout_slot = open.revealed_layout.clone();
                 let base_font = window.text_style().font();
                 let theme = self.theme;
+                let view = cx.entity().downgrade();
                 list(open.list_state.clone(), move |index, _, _| {
-                    render_block(&blocks[index], index == 0, &base_font, theme)
+                    let range = blocks.as_slice()[index].range.clone();
+                    let click = ClickTarget {
+                        view: view.clone(),
+                        block_start: range.start,
+                    };
+                    match &revealed {
+                        Some((revealed_index, styled)) if *revealed_index == index => {
+                            let selection = selection.unwrap_or_default();
+                            let local =
+                                |offset: usize| offset.clamp(range.start, range.end) - range.start;
+                            let selected = selection.range();
+                            let caret = range
+                                .contains(&selection.head)
+                                .then(|| selection.head - range.start)
+                                .or((selection.head == range.end).then(|| range.len()));
+                            render_revealed(
+                                RevealedBlock {
+                                    source: &text[range.clone()],
+                                    styled,
+                                    selection: local(selected.start)..local(selected.end),
+                                    caret,
+                                    first: index == 0,
+                                },
+                                &base_font,
+                                theme,
+                                click,
+                                layout_slot.clone(),
+                            )
+                        }
+                        _ => render_block(&rendered[index], index == 0, &base_font, theme, click),
+                    }
                 })
                 .size_full()
                 .into_any_element()
@@ -145,6 +515,77 @@ impl Render for DocumentView {
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::open))
             .on_action(|_: &CloseWindow, window, _| window.remove_window())
+            .on_action(cx.listener(Self::unreveal))
+            .on_action(cx.listener(|this, _: &MoveLeft, _, cx| {
+                this.move_by(false, false, cx, movement::move_left)
+            }))
+            .on_action(cx.listener(|this, _: &MoveRight, _, cx| {
+                this.move_by(false, true, cx, movement::move_right)
+            }))
+            .on_action(cx.listener(|this, _: &SelectLeft, _, cx| {
+                this.move_by(true, false, cx, movement::move_left)
+            }))
+            .on_action(cx.listener(|this, _: &SelectRight, _, cx| {
+                this.move_by(true, true, cx, movement::move_right)
+            }))
+            .on_action(cx.listener(|this, _: &MoveWordLeft, _, cx| {
+                this.move_by(false, false, cx, movement::move_word_left)
+            }))
+            .on_action(cx.listener(|this, _: &MoveWordRight, _, cx| {
+                this.move_by(false, true, cx, movement::move_word_right)
+            }))
+            .on_action(cx.listener(|this, _: &SelectWordLeft, _, cx| {
+                this.move_by(true, false, cx, movement::move_word_left)
+            }))
+            .on_action(cx.listener(|this, _: &SelectWordRight, _, cx| {
+                this.move_by(true, true, cx, movement::move_word_right)
+            }))
+            .on_action(cx.listener(|this, _: &MoveDocumentStart, _, cx| {
+                this.move_by(false, false, cx, |_, blocks, _| {
+                    movement::document_start(blocks)
+                })
+            }))
+            .on_action(cx.listener(|this, _: &MoveDocumentEnd, _, cx| {
+                this.move_by(false, true, cx, |_, blocks, _| {
+                    movement::document_end(blocks)
+                })
+            }))
+            .on_action(cx.listener(|this, _: &SelectDocumentStart, _, cx| {
+                this.move_by(true, false, cx, |_, blocks, _| {
+                    movement::document_start(blocks)
+                })
+            }))
+            .on_action(cx.listener(|this, _: &SelectDocumentEnd, _, cx| {
+                this.move_by(true, true, cx, |_, blocks, _| {
+                    movement::document_end(blocks)
+                })
+            }))
+            .on_action(cx.listener(|this, _: &MoveUp, window, cx| {
+                this.move_vertically(false, false, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &MoveDown, window, cx| {
+                this.move_vertically(true, false, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &SelectUp, window, cx| {
+                this.move_vertically(false, true, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &SelectDown, window, cx| {
+                this.move_vertically(true, true, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &MoveLineStart, _, cx| {
+                this.move_to_line_edge(false, false, cx)
+            }))
+            .on_action(
+                cx.listener(|this, _: &MoveLineEnd, _, cx| this.move_to_line_edge(true, false, cx)),
+            )
+            .on_action(cx.listener(|this, _: &SelectLineStart, _, cx| {
+                this.move_to_line_edge(false, true, cx)
+            }))
+            .on_action(
+                cx.listener(|this, _: &SelectLineEnd, _, cx| {
+                    this.move_to_line_edge(true, true, cx)
+                }),
+            )
             .size_full()
             .bg(self.theme.background)
             .text_color(self.theme.text)
@@ -152,253 +593,4 @@ impl Render for DocumentView {
             .line_height(relative(1.6))
             .child(content)
     }
-}
-
-/// Text styling inherited by nested blocks.
-#[derive(Clone)]
-struct TextStyle {
-    font: Font,
-    color: Hsla,
-    theme: Theme,
-}
-
-/// Renders one block as a list item: the block centered in the text
-/// column, with spacing around it.
-fn render_block(block: &RenderedBlock, first: bool, base_font: &Font, theme: Theme) -> AnyElement {
-    let style = TextStyle {
-        font: base_font.clone(),
-        color: theme.text,
-        theme,
-    };
-    let top = match block {
-        RenderedBlock::Heading { level, .. } if !first => heading_top_space(*level),
-        _ => 0.,
-    };
-    div()
-        .w_full()
-        .px_8()
-        .when(first, |this| this.pt(px(32.)))
-        .pb(px(16.))
-        .child(
-            div()
-                .w_full()
-                .max_w(px(MAX_TEXT_WIDTH))
-                .mx_auto()
-                .pt(px(top))
-                .child(render_content(block, &style, 0)),
-        )
-        .into_any_element()
-}
-
-/// Renders a block's content, without the spacing around it. `depth` is
-/// how many lists the block is nested in, which picks the bullet style.
-fn render_content(block: &RenderedBlock, style: &TextStyle, depth: usize) -> AnyElement {
-    match block {
-        RenderedBlock::Paragraph(text) => div().child(styled_text(text, style)).into_any_element(),
-        RenderedBlock::Heading { level, text } => {
-            let size = match level {
-                1 => 2.0,
-                2 => 1.5,
-                3 => 1.25,
-                4 => 1.0,
-                5 => 0.875,
-                _ => 0.85,
-            };
-            let mut heading_style = style.clone();
-            heading_style.font.weight = FontWeight::SEMIBOLD;
-            if *level == 6 {
-                heading_style.color = style.theme.muted_text;
-            }
-            div()
-                .text_size(px(BODY_TEXT_SIZE * size))
-                .line_height(relative(1.25))
-                .child(styled_text(text, &heading_style))
-                .into_any_element()
-        }
-        RenderedBlock::ThematicBreak => div()
-            .py(px(8.))
-            .child(div().h(px(2.)).bg(style.theme.rule))
-            .into_any_element(),
-        RenderedBlock::List { start, items } => render_list(*start, items, style, depth),
-        RenderedBlock::BlockQuote(children) => {
-            let quote_style = TextStyle {
-                color: style.theme.muted_text,
-                ..style.clone()
-            };
-            div()
-                .border_l_4()
-                .border_color(style.theme.rule)
-                .pl_4()
-                .text_color(style.theme.muted_text)
-                .child(render_children(children, &quote_style, depth))
-                .into_any_element()
-        }
-        RenderedBlock::CodeBlock { code, .. } => div()
-            .bg(style.theme.code_background)
-            .rounded_md()
-            .px_4()
-            .py_3()
-            .font_family(CODE_FONT)
-            .text_size(px(13.))
-            .line_height(relative(1.5))
-            .text_color(style.theme.text)
-            .child(
-                code.text
-                    .trim_end_matches(['\n', '\r'])
-                    .replace('\t', "    "),
-            )
-            .into_any_element(),
-        RenderedBlock::Table(table) => render_table(table, style),
-        RenderedBlock::Html(source) | RenderedBlock::Raw(source) => div()
-            .font_family(CODE_FONT)
-            .text_size(px(13.))
-            .line_height(relative(1.5))
-            .text_color(style.theme.muted_text)
-            .child(source.replace('\t', "    "))
-            .into_any_element(),
-    }
-}
-
-/// Nested blocks stacked vertically, e.g. the contents of a list item.
-fn render_children(children: &[RenderedBlock], style: &TextStyle, depth: usize) -> AnyElement {
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(NESTED_GAP))
-        .children(
-            children
-                .iter()
-                .map(|child| render_content(child, style, depth)),
-        )
-        .into_any_element()
-}
-
-fn render_list(
-    start: Option<u64>,
-    items: &[ListItem],
-    style: &TextStyle,
-    depth: usize,
-) -> AnyElement {
-    let bullet = ["•", "◦", "▪"][depth % 3];
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(4.))
-        .children(items.iter().enumerate().map(|(index, item)| {
-            let marker = match (item.task, start) {
-                (Some(true), _) => "☑".to_owned(),
-                (Some(false), _) => "☐".to_owned(),
-                (None, Some(start)) => format!("{}.", start + index as u64),
-                (None, None) => bullet.to_owned(),
-            };
-            div()
-                .flex()
-                .child(
-                    div()
-                        .flex_none()
-                        .w(px(28.))
-                        .pr(px(8.))
-                        .text_right()
-                        .text_color(style.color)
-                        .child(marker),
-                )
-                .child(div().flex_1().min_w(px(0.)).child(render_children(
-                    &item.children,
-                    style,
-                    depth + 1,
-                )))
-        }))
-        .into_any_element()
-}
-
-fn render_table(table: &Table, style: &TextStyle) -> AnyElement {
-    let mut header_style = style.clone();
-    header_style.font.weight = FontWeight::SEMIBOLD;
-
-    let row = |cells: &[InlineText], style: &TextStyle, header: bool| {
-        div()
-            .flex()
-            .when(header, |this| this.bg(style.theme.table_header_background))
-            .children(cells.iter().enumerate().map(|(column, cell)| {
-                let alignment = table
-                    .alignments
-                    .get(column)
-                    .copied()
-                    .unwrap_or(ColumnAlignment::None);
-                div()
-                    .flex_1()
-                    .min_w(px(0.))
-                    .px_3()
-                    .py_1()
-                    .border_1()
-                    .border_color(style.theme.rule)
-                    .map(|this| match alignment {
-                        ColumnAlignment::Center => this.text_center(),
-                        ColumnAlignment::Right => this.text_right(),
-                        ColumnAlignment::Left | ColumnAlignment::None => this,
-                    })
-                    .child(styled_text(cell, style))
-            }))
-    };
-
-    div()
-        .flex()
-        .flex_col()
-        .child(row(&table.header, &header_style, true))
-        .children(table.rows.iter().map(|cells| row(cells, style, false)))
-        .into_any_element()
-}
-
-fn heading_top_space(level: u8) -> f32 {
-    match level {
-        1 | 2 => 24.,
-        3 => 20.,
-        _ => 16.,
-    }
-}
-
-/// Inline text with its formatting as GPUI text runs.
-fn styled_text(text: &InlineText, style: &TextStyle) -> StyledText {
-    let runs = text
-        .segments
-        .iter()
-        .map(|segment| {
-            let inline = segment.style;
-            let mut font = if inline.code {
-                Font {
-                    family: CODE_FONT.into(),
-                    ..style.font.clone()
-                }
-            } else {
-                style.font.clone()
-            };
-            if inline.strong {
-                font.weight = FontWeight::BOLD;
-            }
-            if inline.emphasis {
-                font.style = FontStyle::Italic;
-            }
-            let color: Hsla = if inline.link {
-                style.theme.link
-            } else {
-                style.color
-            };
-            TextRun {
-                len: segment.display.len(),
-                font,
-                color,
-                background_color: inline.code.then_some(style.theme.code_background),
-                underline: inline.link.then(|| UnderlineStyle {
-                    thickness: px(1.),
-                    color: Some(color),
-                    wavy: false,
-                }),
-                strikethrough: inline.strikethrough.then(|| StrikethroughStyle {
-                    thickness: px(1.),
-                    color: Some(color),
-                }),
-            }
-        })
-        .collect();
-    StyledText::new(SharedString::from(text.text.clone())).with_runs(runs)
 }
