@@ -8,13 +8,15 @@ use std::rc::Rc;
 
 use gpui::{
     AnyElement, Context, FocusHandle, Font, FontStyle, FontWeight, Hsla, ListAlignment, ListState,
-    PathPromptOptions, PromptLevel, SharedString, StrikethroughStyle, StyledText, TextRun,
-    UnderlineStyle, Window, actions, div, list, prelude::*, px, relative, rgb,
+    PathPromptOptions, PromptLevel, SharedString, StrikethroughStyle, StyledText, Subscription,
+    TextRun, UnderlineStyle, Window, actions, div, list, prelude::*, px, relative,
 };
 use kami::blocks::Blocks;
 use kami::document::{Document, OpenError};
 use kami::inline::InlineText;
 use kami::rendered::{ColumnAlignment, ListItem, RenderedBlock, Table, render_blocks};
+
+use crate::theme::Theme;
 
 actions!(kami, [Open, CloseWindow]);
 
@@ -22,15 +24,6 @@ actions!(kami, [Open, CloseWindow]);
 const MAX_TEXT_WIDTH: f32 = 720.;
 const BODY_TEXT_SIZE: f32 = 16.;
 const CODE_FONT: &str = "Menlo";
-
-// Hardcoded light colors; themes come in a later story.
-const BACKGROUND: u32 = 0xffffff;
-const TEXT: u32 = 0x1f2328;
-const MUTED_TEXT: u32 = 0x656d76;
-const LINK: u32 = 0x0969da;
-const CODE_BACKGROUND: u32 = 0xeff1f3;
-const RULE: u32 = 0xd1d9e0;
-const TABLE_HEADER_BACKGROUND: u32 = 0xf6f8fa;
 
 /// Space between blocks inside lists and blockquotes.
 const NESTED_GAP: f32 = 8.;
@@ -46,15 +39,24 @@ struct OpenDocument {
 pub struct DocumentView {
     focus_handle: FocusHandle,
     open: Option<OpenDocument>,
+    theme: Theme,
+    _appearance_observer: Subscription,
 }
 
 impl DocumentView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
         focus_handle.focus(window, cx);
+        // Follow the macOS appearance, switching live when it changes.
+        let appearance_observer = cx.observe_window_appearance(window, |this, window, cx| {
+            this.theme = Theme::for_appearance(window.appearance());
+            cx.notify();
+        });
         Self {
             focus_handle,
             open: None,
+            theme: Theme::for_appearance(window.appearance()),
+            _appearance_observer: appearance_observer,
         }
     }
 
@@ -122,8 +124,9 @@ impl Render for DocumentView {
             Some(open) => {
                 let blocks = open.blocks.clone();
                 let base_font = window.text_style().font();
+                let theme = self.theme;
                 list(open.list_state.clone(), move |index, _, _| {
-                    render_block(&blocks[index], index == 0, &base_font)
+                    render_block(&blocks[index], index == 0, &base_font, theme)
                 })
                 .size_full()
                 .into_any_element()
@@ -133,7 +136,7 @@ impl Render for DocumentView {
                 .flex()
                 .items_center()
                 .justify_center()
-                .text_color(rgb(MUTED_TEXT))
+                .text_color(self.theme.muted_text)
                 .child("Open a Markdown file with ⌘O")
                 .into_any_element(),
         };
@@ -143,8 +146,8 @@ impl Render for DocumentView {
             .on_action(cx.listener(Self::open))
             .on_action(|_: &CloseWindow, window, _| window.remove_window())
             .size_full()
-            .bg(rgb(BACKGROUND))
-            .text_color(rgb(TEXT))
+            .bg(self.theme.background)
+            .text_color(self.theme.text)
             .text_size(px(BODY_TEXT_SIZE))
             .line_height(relative(1.6))
             .child(content)
@@ -156,14 +159,16 @@ impl Render for DocumentView {
 struct TextStyle {
     font: Font,
     color: Hsla,
+    theme: Theme,
 }
 
 /// Renders one block as a list item: the block centered in the text
 /// column, with spacing around it.
-fn render_block(block: &RenderedBlock, first: bool, base_font: &Font) -> AnyElement {
+fn render_block(block: &RenderedBlock, first: bool, base_font: &Font, theme: Theme) -> AnyElement {
     let style = TextStyle {
         font: base_font.clone(),
-        color: rgb(TEXT).into(),
+        color: theme.text,
+        theme,
     };
     let top = match block {
         RenderedBlock::Heading { level, .. } if !first => heading_top_space(*level),
@@ -202,7 +207,7 @@ fn render_content(block: &RenderedBlock, style: &TextStyle, depth: usize) -> Any
             let mut heading_style = style.clone();
             heading_style.font.weight = FontWeight::SEMIBOLD;
             if *level == 6 {
-                heading_style.color = rgb(MUTED_TEXT).into();
+                heading_style.color = style.theme.muted_text;
             }
             div()
                 .text_size(px(BODY_TEXT_SIZE * size))
@@ -212,31 +217,31 @@ fn render_content(block: &RenderedBlock, style: &TextStyle, depth: usize) -> Any
         }
         RenderedBlock::ThematicBreak => div()
             .py(px(8.))
-            .child(div().h(px(2.)).bg(rgb(RULE)))
+            .child(div().h(px(2.)).bg(style.theme.rule))
             .into_any_element(),
         RenderedBlock::List { start, items } => render_list(*start, items, style, depth),
         RenderedBlock::BlockQuote(children) => {
             let quote_style = TextStyle {
-                color: rgb(MUTED_TEXT).into(),
+                color: style.theme.muted_text,
                 ..style.clone()
             };
             div()
                 .border_l_4()
-                .border_color(rgb(RULE))
+                .border_color(style.theme.rule)
                 .pl_4()
-                .text_color(rgb(MUTED_TEXT))
+                .text_color(style.theme.muted_text)
                 .child(render_children(children, &quote_style, depth))
                 .into_any_element()
         }
         RenderedBlock::CodeBlock { code, .. } => div()
-            .bg(rgb(CODE_BACKGROUND))
+            .bg(style.theme.code_background)
             .rounded_md()
             .px_4()
             .py_3()
             .font_family(CODE_FONT)
             .text_size(px(13.))
             .line_height(relative(1.5))
-            .text_color(rgb(TEXT))
+            .text_color(style.theme.text)
             .child(code.trim_end_matches(['\n', '\r']).replace('\t', "    "))
             .into_any_element(),
         RenderedBlock::Table(table) => render_table(table, style),
@@ -244,7 +249,7 @@ fn render_content(block: &RenderedBlock, style: &TextStyle, depth: usize) -> Any
             .font_family(CODE_FONT)
             .text_size(px(13.))
             .line_height(relative(1.5))
-            .text_color(rgb(MUTED_TEXT))
+            .text_color(style.theme.muted_text)
             .child(source.replace('\t', "    "))
             .into_any_element(),
     }
@@ -309,7 +314,7 @@ fn render_table(table: &Table, style: &TextStyle) -> AnyElement {
     let row = |cells: &[InlineText], style: &TextStyle, header: bool| {
         div()
             .flex()
-            .when(header, |this| this.bg(rgb(TABLE_HEADER_BACKGROUND)))
+            .when(header, |this| this.bg(style.theme.table_header_background))
             .children(cells.iter().enumerate().map(|(column, cell)| {
                 let alignment = table
                     .alignments
@@ -322,7 +327,7 @@ fn render_table(table: &Table, style: &TextStyle) -> AnyElement {
                     .px_3()
                     .py_1()
                     .border_1()
-                    .border_color(rgb(RULE))
+                    .border_color(style.theme.rule)
                     .map(|this| match alignment {
                         ColumnAlignment::Center => this.text_center(),
                         ColumnAlignment::Right => this.text_right(),
@@ -370,7 +375,7 @@ fn styled_text(text: &InlineText, style: &TextStyle) -> StyledText {
                 font.style = FontStyle::Italic;
             }
             let color: Hsla = if inline.link {
-                rgb(LINK).into()
+                style.theme.link
             } else {
                 style.color
             };
@@ -378,7 +383,7 @@ fn styled_text(text: &InlineText, style: &TextStyle) -> StyledText {
                 len: segment.display.len(),
                 font,
                 color,
-                background_color: inline.code.then(|| rgb(CODE_BACKGROUND).into()),
+                background_color: inline.code.then_some(style.theme.code_background),
                 underline: inline.link.then(|| UnderlineStyle {
                     thickness: px(1.),
                     color: Some(color),

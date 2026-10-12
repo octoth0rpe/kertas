@@ -1,4 +1,5 @@
 mod document_view;
+mod theme;
 
 use std::path::PathBuf;
 
