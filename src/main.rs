@@ -1,32 +1,34 @@
+mod document_view;
+
+use std::path::PathBuf;
+
+use document_view::{CloseWindow, DocumentView, Open};
 use gpui::{
-    App, Bounds, Context, FocusHandle, KeyBinding, Menu, MenuItem, TitlebarOptions, Window,
-    WindowBounds, WindowOptions, actions, div, prelude::*, px, size,
+    App, Bounds, KeyBinding, Menu, MenuItem, TitlebarOptions, WindowBounds, WindowOptions, actions,
+    prelude::*, px, size,
 };
 use gpui_platform::application;
 
-actions!(kami, [Quit, CloseWindow]);
-
-struct KamiWindow {
-    focus_handle: FocusHandle,
-}
-
-impl Render for KamiWindow {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .track_focus(&self.focus_handle)
-            .on_action(|_: &CloseWindow, window, _| window.remove_window())
-            .size_full()
-    }
-}
+actions!(kami, [Quit]);
 
 fn main() {
-    application().run(|cx: &mut App| {
+    let path = std::env::args_os().nth(1).map(PathBuf::from);
+
+    application().run(move |cx: &mut App| {
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.bind_keys([
             KeyBinding::new("cmd-q", Quit, None),
             KeyBinding::new("cmd-w", CloseWindow, None),
+            KeyBinding::new("cmd-o", Open, None),
         ]);
-        cx.set_menus([Menu::new("Kami").items([MenuItem::action("Quit Kami", Quit)])]);
+        cx.set_menus([
+            Menu::new("Kami").items([MenuItem::action("Quit Kami", Quit)]),
+            Menu::new("File").items([
+                MenuItem::action("Open…", Open),
+                MenuItem::separator(),
+                MenuItem::action("Close Window", CloseWindow),
+            ]),
+        ]);
 
         // Kami is a single-window app for now, so closing the window quits.
         cx.on_window_closed(|cx, _| {
@@ -37,24 +39,25 @@ fn main() {
         .detach();
 
         let bounds = Bounds::centered(None, size(px(900.), px(700.)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(TitlebarOptions {
-                    title: Some("Kami".into()),
+        let window = cx
+            .open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    titlebar: Some(TitlebarOptions {
+                        title: Some("Kami".into()),
+                        ..Default::default()
+                    }),
                     ..Default::default()
-                }),
-                ..Default::default()
-            },
-            |window, cx| {
-                cx.new(|cx| {
-                    let focus_handle = cx.focus_handle();
-                    focus_handle.focus(window, cx);
-                    KamiWindow { focus_handle }
-                })
-            },
-        )
-        .expect("failed to open window");
+                },
+                |window, cx| cx.new(|cx| DocumentView::new(window, cx)),
+            )
+            .expect("failed to open window");
+
+        if let Some(path) = path.clone() {
+            window
+                .update(cx, |view, window, cx| view.open_path(path, window, cx))
+                .ok();
+        }
         cx.activate(true);
     });
 }

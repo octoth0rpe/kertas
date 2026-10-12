@@ -2,3 +2,4 @@
 
 pub mod blocks;
 pub mod buffer;
+pub mod document;
