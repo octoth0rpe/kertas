@@ -1,4 +1,6 @@
 mod document_view;
+#[cfg(target_os = "macos")]
+mod native_tabs;
 mod rendered_block;
 mod revealed_block;
 #[cfg(debug_assertions)]

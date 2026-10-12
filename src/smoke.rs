@@ -113,6 +113,16 @@ fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
         cx.background_executor().timer(STEP * 10).await;
         let opened = cx.update(|cx| cx.windows().len());
         println!("windows after 3 x New: {opened}");
+        #[cfg(target_os = "macos")]
+        let tabs = window
+            .update(cx, |_, window, _| {
+                crate::native_tabs::NativeWindow::of(window)
+                    .map_or(0, |native| crate::native_tabs::tab_group_size(&native))
+            })
+            .unwrap_or(0);
+        #[cfg(not(target_os = "macos"))]
+        let tabs = opened;
+        println!("tabs in the first window's group: {tabs}");
         let windows = cx.update(|cx| cx.windows());
         for other in windows.into_iter().filter(|other| *other != *window) {
             other
@@ -124,7 +134,7 @@ fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
         }
         let remaining = cx.update(|cx| cx.windows().len());
         println!("windows after closing them: {remaining}");
-        let ok = opened == 4 && remaining == 1;
+        let ok = opened == 4 && tabs == 4 && remaining == 1;
         println!("SMOKE {}", if ok { "OK" } else { "FAILED" });
         cx.update(|cx| cx.quit());
     })
