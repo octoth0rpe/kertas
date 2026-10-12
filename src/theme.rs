@@ -19,6 +19,9 @@ pub struct Theme {
     /// Background of selected text.
     pub selection: Hsla,
     pub caret: Hsla,
+    /// Background and border that mark the revealed block.
+    pub revealed_background: Hsla,
+    pub revealed_border: Hsla,
 }
 
 impl Theme {
@@ -33,6 +36,8 @@ impl Theme {
             table_header_background: rgb(0xf6f8fa).into(),
             selection: rgba(0x0969da40).into(),
             caret: rgb(0x0969da).into(),
+            revealed_background: rgba(0x0969da0a).into(),
+            revealed_border: rgba(0x0969da40).into(),
         }
     }
 
@@ -47,6 +52,8 @@ impl Theme {
             table_header_background: rgb(0x1e2127).into(),
             selection: rgba(0x58a6ff4d).into(),
             caret: rgb(0x58a6ff).into(),
+            revealed_background: rgba(0x58a6ff0f).into(),
+            revealed_border: rgba(0x58a6ff47).into(),
         }
     }
 

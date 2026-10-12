@@ -18,6 +18,9 @@ use crate::theme::Theme;
 
 const CARET_WIDTH: f32 = 2.;
 
+/// How far the revealed block's highlight extends outside its text.
+const HIGHLIGHT_INSET: f32 = 8.;
+
 /// What to draw for the revealed block.
 pub struct RevealedBlock<'a> {
     pub source: &'a str,
@@ -103,7 +106,19 @@ pub fn render_revealed(
         div().child(text_element)
     };
 
-    block_frame(content.into_any_element(), heading, block.first, click)
+    // Highlight the revealed block. The highlight extends outside the text
+    // column by its padding plus border, so the text doesn't shift.
+    let highlight = div()
+        .mx(px(-HIGHLIGHT_INSET))
+        .my(px(-HIGHLIGHT_INSET))
+        .p(px(HIGHLIGHT_INSET - 1.))
+        .border_1()
+        .border_color(theme.revealed_border)
+        .rounded_md()
+        .bg(theme.revealed_background)
+        .child(content);
+
+    block_frame(highlight.into_any_element(), heading, block.first, click)
 }
 
 /// Text runs for the styled source, with the selection as a background.

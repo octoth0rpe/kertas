@@ -7,6 +7,7 @@
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::time::Duration;
 
 use gpui::{
     Context, FocusHandle, KeyBinding, ListAlignment, ListState, PathPromptOptions, Pixels,
@@ -88,6 +89,9 @@ pub const MAX_TEXT_WIDTH: f32 = 720.;
 pub const BODY_TEXT_SIZE: f32 = 16.;
 pub const CODE_FONT: &str = "Menlo";
 
+/// How long the caret stays on, and then off, while blinking.
+const CARET_BLINK_INTERVAL: Duration = Duration::from_millis(530);
+
 /// An open document and everything needed to display it.
 struct OpenDocument {
     #[expect(dead_code, reason = "read by the save and editing stories")]
@@ -124,6 +128,10 @@ pub struct DocumentView {
     focus_handle: FocusHandle,
     open: Option<OpenDocument>,
     theme: Theme,
+    /// Whether the blinking caret is currently drawn.
+    caret_visible: bool,
+    /// Bumped to stop the current blink loop.
+    blink_epoch: usize,
     _appearance_observer: Subscription,
 }
 
@@ -140,6 +148,8 @@ impl DocumentView {
             focus_handle,
             open: None,
             theme: Theme::for_appearance(window.appearance()),
+            caret_visible: true,
+            blink_epoch: 0,
             _appearance_observer: appearance_observer,
         }
     }
@@ -246,7 +256,37 @@ impl DocumentView {
         if let Some(index) = index {
             open.list_state.scroll_to_reveal_item(index);
         }
+        self.restart_blink(cx);
         cx.notify();
+    }
+
+    /// Shows the caret and starts blinking it again, so it stays solid
+    /// while the user is moving it.
+    fn restart_blink(&mut self, cx: &mut Context<Self>) {
+        self.blink_epoch += 1;
+        self.caret_visible = true;
+        let epoch = self.blink_epoch;
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(CARET_BLINK_INTERVAL).await;
+                let blinking = this.update(cx, |this, cx| {
+                    if this.blink_epoch != epoch {
+                        return false;
+                    }
+                    this.caret_visible = !this.caret_visible;
+                    cx.notify();
+                    true
+                });
+                if !matches!(blinking, Ok(true)) {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn stop_blink(&mut self) {
+        self.blink_epoch += 1;
     }
 
     fn unreveal(&mut self, _: &Unreveal, _: &mut Window, cx: &mut Context<Self>) {
@@ -259,6 +299,7 @@ impl DocumentView {
             open.list_state.splice(old.index..old.index + 1, 1);
         }
         *open.revealed_layout.borrow_mut() = None;
+        self.stop_blink();
         cx.notify();
     }
 
@@ -462,6 +503,7 @@ impl Render for DocumentView {
                     .as_ref()
                     .map(|revealed| (revealed.index, revealed.styled.clone()));
                 let layout_slot = open.revealed_layout.clone();
+                let caret_visible = self.caret_visible;
                 let base_font = window.text_style().font();
                 let theme = self.theme;
                 let view = cx.entity().downgrade();
@@ -477,10 +519,10 @@ impl Render for DocumentView {
                             let local =
                                 |offset: usize| offset.clamp(range.start, range.end) - range.start;
                             let selected = selection.range();
-                            let caret = range
-                                .contains(&selection.head)
-                                .then(|| selection.head - range.start)
-                                .or((selection.head == range.end).then(|| range.len()));
+                            let caret = (caret_visible
+                                && (range.contains(&selection.head)
+                                    || selection.head == range.end))
+                                .then(|| selection.head - range.start);
                             render_revealed(
                                 RevealedBlock {
                                     source: &text[range.clone()],
