@@ -8,7 +8,7 @@ use gpui::{
     App, Bounds, Context, FocusHandle, Global, KeyBinding, MouseButton, SharedString, Subscription,
     Window, WindowBounds, WindowHandle, WindowKind, WindowOptions, div, prelude::*, px, size,
 };
-use kami::settings::{Layout, Settings, TextWidth, ThemeSetting};
+use kami::settings::{DEFAULT_FONT_SIZE, FONT_SIZES, Layout, Settings, TextWidth, ThemeSetting};
 
 use crate::app_settings::{self, AppSettings};
 use crate::document_view::{CloseWindow, DocumentView};
@@ -43,7 +43,7 @@ pub fn open(cx: &mut App) {
             .update(cx, |_, window, _| window.activate_window())
             .ok();
     }
-    let bounds = Bounds::centered(None, size(px(540.), px(430.)), cx);
+    let bounds = Bounds::centered(None, size(px(540.), px(500.)), cx);
     let window = cx
         .open_window(
             WindowOptions {
@@ -117,6 +117,38 @@ impl SettingsWindow {
                 cx.notify();
             }),
         }
+    }
+
+    /// The "Text size" row: the size documents start at, with − and +.
+    fn text_size(&self, size: u32, cx: &mut Context<Self>) -> impl IntoElement {
+        let set = |size: u32| {
+            move |_: &mut Self, cx: &mut Context<Self>| {
+                if FONT_SIZES.contains(&size) {
+                    cx.defer(move |cx| app_settings::set_or_report("font_size", size as i64, cx));
+                }
+            }
+        };
+        let content = div()
+            .flex()
+            .flex_col()
+            .items_start()
+            .gap_1()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(self.button("smaller", "−", cx, set(size.saturating_sub(1))))
+                    .child(div().w(px(44.)).text_center().child(format!("{size} px")))
+                    .child(self.button("larger", "+", cx, set(size + 1)))
+                    .when(size != DEFAULT_FONT_SIZE, |this| {
+                        this.child(self.button("reset-size", "Reset", cx, set(DEFAULT_FONT_SIZE)))
+                    }),
+            )
+            .child(
+                self.note("Documents start at this size. View → Zoom changes it until Kami quits."),
+            );
+        self.labelled("Text size", content)
     }
 
     /// A label on the left, and `content` on the right.
@@ -363,7 +395,9 @@ impl Render for SettingsWindow {
             theme,
             layout,
             text_width,
+            font_size,
         } = app_settings::get(cx);
+        let text_size = self.text_size(font_size, cx).into_any_element();
         #[cfg(target_os = "macos")]
         let system_rows = [
             self.markdown_files(cx).into_any_element(),
@@ -406,6 +440,7 @@ impl Render for SettingsWindow {
                 ],
                 None,
             ))
+            .child(text_size)
             .child(self.choices(
                 "Text width",
                 "text_width",

@@ -31,6 +31,8 @@ Each document opens in its own tab. **⌘1** to **⌘9** go straight to a tab. T
 
 **View → Appearance** chooses Light, Dark or Match System. **View → Text Width** chooses how wide the text is: Standard, Wide, or the whole window.
 
+**⌘+** and **⌘-** make the text bigger or smaller in every document, and **⌘0** returns to your usual size. Zooming lasts until you quit. To change the size documents start at, use **Text size** in **Kami → Settings…**.
+
 ## Settings
 
 Settings are kept in `~/Library/Application Support/kami/config.toml`. **Kami → Settings…** (⌘,) and the View menu change them for you, and you can also edit the file. Changes apply straight away, except `layout`, which applies the next time Kami starts.
@@ -39,6 +41,7 @@ Settings are kept in `~/Library/Application Support/kami/config.toml`. **Kami �
 theme = "dark"       # "light", "dark" or "system"
 layout = "windows"   # "tabs" or "windows", from the next start
 text_width = "wide"  # "standard", "wide" or "full"
+font_size = 18       # 10 to 32
 ```
 
 If the file has a mistake, Kami uses the default for that setting and shows what's wrong at the bottom of the window.

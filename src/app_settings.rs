@@ -81,7 +81,7 @@ pub fn init(cx: &mut App) {
 
 /// Changes a setting, like [`set`], reporting any problem in the bar
 /// that shows settings file problems.
-pub fn set_or_report(key: &str, value: &str, cx: &mut App) {
+pub fn set_or_report(key: &str, value: impl Into<toml_edit::Value>, cx: &mut App) {
     if let Err(problem) = set(key, value, cx) {
         cx.update_global::<AppSettings, _>(|state, _| state.problems.insert(0, problem));
     }
@@ -89,7 +89,7 @@ pub fn set_or_report(key: &str, value: &str, cx: &mut App) {
 
 /// Changes setting `key` to `value` in the settings file, creating it if
 /// needed, and applies it.
-pub fn set(key: &str, value: &str, cx: &mut App) -> Result<(), Problem> {
+pub fn set(key: &str, value: impl Into<toml_edit::Value>, cx: &mut App) -> Result<(), Problem> {
     let path = cx.global::<AppSettings>().path.clone();
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,

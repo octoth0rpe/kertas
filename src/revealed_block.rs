@@ -8,12 +8,12 @@ use std::rc::Rc;
 use gpui::{
     AnyElement, Bounds, ElementInputHandler, Entity, FocusHandle, Font, FontStyle, FontWeight,
     MouseButton, SharedString, StrikethroughStyle, StyledText, TextLayout, TextRun, UnderlineStyle,
-    canvas, div, fill, prelude::*, px, relative, size,
+    canvas, div, fill, prelude::*, px, relative, rems, size,
 };
 use kami::model::Gap;
 use kami::reveal::{RevealFont, SpanStyle, StyledSource};
 
-use crate::document_view::{BODY_TEXT_SIZE, CODE_FONT, DocumentView};
+use crate::document_view::{CODE_FONT, CODE_TEXT_SIZE, DocumentView};
 use kami::rendered::RenderedBlock;
 
 use crate::rendered_block::{
@@ -28,7 +28,9 @@ const HIGHLIGHT_INSET: f32 = 8.;
 
 /// Shown on the revealed block's border.
 const EDITING_HINT: &str = "esc to finish · ⌥↑ previous block · ⌥↓ next block";
-const HINT_HEIGHT: f32 = 14.;
+/// The hint's height and text size, in rems, so they scale with zoom.
+const HINT_HEIGHT: f32 = 0.875;
+const HINT_TEXT_SIZE: f32 = 0.6875;
 
 /// Space between a block and the caret's line in the gap next to it.
 const GAP_SPACE: f32 = 16.;
@@ -171,12 +173,12 @@ fn revealed_content(
             .px_4()
             .py_3()
             .font_family(CODE_FONT)
-            .text_size(px(13.))
+            .text_size(rems(CODE_TEXT_SIZE))
             .line_height(relative(1.5))
             .child(text_element)
     } else if let Some(level) = heading {
         div()
-            .text_size(px(BODY_TEXT_SIZE * heading_scale(level)))
+            .text_size(rems(heading_scale(level)))
             .line_height(relative(1.25))
             .child(text_element)
     } else {
@@ -189,12 +191,12 @@ fn revealed_content(
     let hint = div()
         .absolute()
         .right(px(12.))
-        .bottom(px(-HINT_HEIGHT / 2.))
-        .h(px(HINT_HEIGHT))
+        .bottom(rems(-HINT_HEIGHT / 2.))
+        .h(rems(HINT_HEIGHT))
         .px(px(6.))
         .bg(theme.background)
-        .text_size(px(11.))
-        .line_height(px(HINT_HEIGHT))
+        .text_size(rems(HINT_TEXT_SIZE))
+        .line_height(rems(HINT_HEIGHT))
         .text_color(theme.muted_text)
         .child(EDITING_HINT);
     div()

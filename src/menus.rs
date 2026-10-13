@@ -8,7 +8,9 @@ use kami::settings::{Settings, TextWidth, ThemeSetting};
 
 use crate::app_settings::{self, AppSettings};
 use crate::builtin::{self, Builtin};
-use crate::document_view::{CloseWindow, New, Open, Quit, Save, SaveAs};
+use crate::document_view::{
+    ActualSize, CloseWindow, New, Open, Quit, Save, SaveAs, ZoomIn, ZoomOut,
+};
 use crate::settings_window;
 
 actions!(
@@ -91,6 +93,10 @@ fn menus(settings: Settings) -> Vec<Menu> {
             MenuItem::action("Standard", UseStandardWidth).checked(width(TextWidth::Standard)),
             MenuItem::action("Wide", UseWideWidth).checked(width(TextWidth::Wide)),
             MenuItem::action("Full Width", UseFullWidth).checked(width(TextWidth::Full)),
+            MenuItem::separator(),
+            MenuItem::action("Zoom In", ZoomIn),
+            MenuItem::action("Zoom Out", ZoomOut),
+            MenuItem::action("Actual Size", ActualSize),
             // macOS adds Enter Full Screen, with an icon, at the end. In a
             // section of its own, its icon doesn't indent the items above.
             MenuItem::separator(),

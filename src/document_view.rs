@@ -12,9 +12,9 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     AnyElement, Bounds, ClipboardItem, Context, EntityInputHandler, FocusHandle, KeyBinding,
-    ListAlignment, ListState, Pixels, Point, PromptLevel, Subscription, SystemWindowTabController,
-    Task, TextLayout, UTF16Selection, Window, actions, div, list, point, prelude::*, px, relative,
-    size,
+    ListAlignment, ListState, Pixels, Point, PromptLevel, Rems, Subscription,
+    SystemWindowTabController, Task, TextLayout, UTF16Selection, Window, actions, div, list, point,
+    prelude::*, px, relative, rems, size,
 };
 use kami::blocks::BlockKind;
 use kami::document::{Document, OpenError, SaveError};
@@ -32,6 +32,7 @@ use crate::rendered_block::{ClickTarget, render_block};
 use crate::revealed_block::{RevealedBlock, TextInput, render_gap, render_revealed};
 use crate::tab_strip::{render_tab_strip, select_tab};
 use crate::theme::Theme;
+use crate::zoom::{self, Zoom};
 
 actions!(
     kami,
@@ -53,7 +54,9 @@ actions!(
         SelectTab7,
         SelectTab8,
         SelectTab9,
-        SelectTab10,
+        ZoomIn,
+        ZoomOut,
+        ActualSize,
         Unreveal,
         MoveLeft,
         MoveRight,
@@ -123,7 +126,10 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-7", SelectTab7, None),
         KeyBinding::new("cmd-8", SelectTab8, None),
         KeyBinding::new("cmd-9", SelectTab9, None),
-        KeyBinding::new("cmd-0", SelectTab10, None),
+        KeyBinding::new("cmd-=", ZoomIn, None),
+        KeyBinding::new("cmd-+", ZoomIn, None),
+        KeyBinding::new("cmd--", ZoomOut, None),
+        KeyBinding::new("cmd-0", ActualSize, None),
         KeyBinding::new("escape", Unreveal, None),
         KeyBinding::new("left", MoveLeft, None),
         KeyBinding::new("right", MoveRight, None),
@@ -177,14 +183,18 @@ pub fn key_bindings() -> Vec<KeyBinding> {
 
 /// The text column's maximum width for each `text_width` setting (A1), or
 /// `None` to use the whole window.
-fn column_width(width: TextWidth) -> Option<Pixels> {
+/// Widths are in rems, so zooming keeps the same number of characters per
+/// line: 45 rems is 720 px at the default 16 px.
+fn column_width(width: TextWidth) -> Option<Rems> {
     match width {
-        TextWidth::Standard => Some(px(720.)),
-        TextWidth::Wide => Some(px(960.)),
+        TextWidth::Standard => Some(rems(45.)),
+        TextWidth::Wide => Some(rems(60.)),
         TextWidth::Full => None,
     }
 }
-pub const BODY_TEXT_SIZE: f32 = 16.;
+
+/// Code's text size relative to body text (13 px at 16 px).
+pub const CODE_TEXT_SIZE: f32 = 0.8125;
 pub const CODE_FONT: &str = "Menlo";
 
 /// How long the caret stays on, and then off, while blinking.
@@ -245,6 +255,7 @@ pub struct DocumentView {
     settings_problems_dismissed: bool,
     _appearance_observer: Subscription,
     _settings_observer: Subscription,
+    _zoom_observer: Subscription,
     _tabs_observer: Subscription,
 }
 
@@ -258,13 +269,17 @@ impl DocumentView {
             this.theme = Theme::current(window, cx);
             cx.notify();
         });
+        let zoom_observer = cx.observe_global_in::<Zoom>(window, |this, _, cx| {
+            this.layout_changed();
+            cx.notify();
+        });
         let settings_observer = cx.observe_global_in::<AppSettings>(window, |this, window, cx| {
             this.theme = Theme::current(window, cx);
             this.settings_problems_dismissed = false;
             let text_width = app_settings::get(cx).text_width;
             if text_width != this.text_width {
                 this.text_width = text_width;
-                this.text_width_changed();
+                this.layout_changed();
             }
             cx.notify();
         });
@@ -288,6 +303,7 @@ impl DocumentView {
             settings_problems_dismissed: false,
             _appearance_observer: appearance_observer,
             _settings_observer: settings_observer,
+            _zoom_observer: zoom_observer,
             // Redraw the tab strip when tabs are added, removed or renamed.
             _tabs_observer: cx
                 .observe_global_in::<SystemWindowTabController>(window, |_, _, cx| cx.notify()),
@@ -332,9 +348,9 @@ impl DocumentView {
         );
     }
 
-    /// Re-measures every block for the new column width, keeping the
-    /// caret's block in view.
-    fn text_width_changed(&mut self) {
+    /// Re-measures every block after the column width or text size
+    /// changes, keeping the caret's block in view.
+    fn layout_changed(&mut self) {
         let Some(open) = &mut self.open else {
             return;
         };
@@ -1369,6 +1385,8 @@ impl DocumentView {
 
 impl Render for DocumentView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Document text is sized in rems, so this sets the zoom.
+        window.set_rem_size(px(zoom::size(cx) as f32));
         // Show unsaved changes in the window's close button.
         let edited = self.is_dirty();
         if self.shown_edited != Some(edited) {
@@ -1504,7 +1522,17 @@ impl Render for DocumentView {
             .on_action(|_: &SelectTab7, window, cx| select_tab(6, window, cx))
             .on_action(|_: &SelectTab8, window, cx| select_tab(7, window, cx))
             .on_action(|_: &SelectTab9, window, cx| select_tab(8, window, cx))
-            .on_action(|_: &SelectTab10, window, cx| select_tab(9, window, cx))
+            // Only while possible, so the menu items are disabled at the
+            // limits.
+            .when_some(zoom::larger(cx), |this, size| {
+                this.on_action(move |_: &ZoomIn, _, cx| zoom::set(size, cx))
+            })
+            .when_some(zoom::smaller(cx), |this, size| {
+                this.on_action(move |_: &ZoomOut, _, cx| zoom::set(size, cx))
+            })
+            .when(zoom::is_zoomed(cx), |this| {
+                this.on_action(|_: &ActualSize, _, cx| zoom::reset(cx))
+            })
             .on_action(cx.listener(Self::unreveal))
             .on_action(cx.listener(|this, _: &MoveLeft, _, cx| {
                 this.move_by(false, false, cx, movement::prev_grapheme)
@@ -1609,7 +1637,7 @@ impl Render for DocumentView {
             .size_full()
             .bg(self.theme.background)
             .text_color(self.theme.text)
-            .text_size(px(BODY_TEXT_SIZE))
+            .text_size(rems(1.))
             .line_height(relative(1.6))
             .flex()
             .flex_col()

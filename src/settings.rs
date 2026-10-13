@@ -40,12 +40,31 @@ pub enum TextWidth {
     Full,
 }
 
+/// The text sizes allowed, in pixels.
+pub const FONT_SIZES: std::ops::RangeInclusive<u32> = 10..=32;
+
+/// The default text size, in pixels.
+pub const DEFAULT_FONT_SIZE: u32 = 16;
+
 /// All settings, with defaults for any the file doesn't set.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Settings {
     pub theme: ThemeSetting,
     pub layout: Layout,
     pub text_width: TextWidth,
+    /// The text size documents start at, in pixels.
+    pub font_size: u32,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            theme: ThemeSetting::default(),
+            layout: Layout::default(),
+            text_width: TextWidth::default(),
+            font_size: DEFAULT_FONT_SIZE,
+        }
+    }
 }
 
 /// A problem in the settings file.
@@ -161,6 +180,20 @@ pub fn parse(text: &str) -> (Settings, Vec<Problem>) {
             .get_key_value(key)
             .and_then(|(key, _)| key.span())
             .map(|span| line_of(span.start));
+        if key == "font_size" {
+            match item.as_integer().and_then(|size| u32::try_from(size).ok()) {
+                Some(size) if FONT_SIZES.contains(&size) => settings.font_size = size,
+                _ => problems.push(Problem {
+                    line,
+                    message: format!(
+                        "`font_size` must be a whole number from {} to {}; using the default",
+                        FONT_SIZES.start(),
+                        FONT_SIZES.end()
+                    ),
+                }),
+            }
+            continue;
+        }
         let Some(setting) = SETTINGS.iter().find(|setting| setting.key == key) else {
             problems.push(Problem {
                 line,
@@ -185,7 +218,8 @@ pub fn parse(text: &str) -> (Settings, Vec<Problem>) {
 /// The file's `text` with `key` set to `value`, keeping everything else,
 /// including comments. Fails if the file can't be parsed, so it's never
 /// overwritten.
-pub fn set(text: &str, key: &str, value: &str) -> Result<String, Problem> {
+pub fn set(text: &str, key: &str, value: impl Into<Value>) -> Result<String, Problem> {
+    let value = value.into();
     let mut document: DocumentMut = text.parse().map_err(|err: toml_edit::TomlError| Problem {
         line: None,
         message: format!(
@@ -198,7 +232,7 @@ pub fn set(text: &str, key: &str, value: &str) -> Result<String, Problem> {
         // Replace just the value, keeping its comments and spacing.
         Some(Item::Value(existing)) => {
             let decor = existing.decor().clone();
-            *existing = Value::from(value);
+            *existing = value;
             *existing.decor_mut() = decor;
         }
         _ if !has_tables => {
@@ -209,11 +243,11 @@ pub fn set(text: &str, key: &str, value: &str) -> Result<String, Problem> {
                 text.push('\n');
             }
             let mut line = DocumentMut::new();
-            line[key] = toml_edit::value(value);
+            line[key] = Item::Value(value);
             text.push_str(&line.to_string());
             return Ok(text);
         }
-        _ => document[key] = toml_edit::value(value),
+        _ => document[key] = Item::Value(value),
     }
     Ok(document.to_string())
 }
@@ -249,6 +283,7 @@ mod tests {
                 theme: ThemeSetting::Dark,
                 layout: Layout::Windows,
                 text_width: TextWidth::Wide,
+                font_size: DEFAULT_FONT_SIZE,
             }
         );
     }
@@ -303,6 +338,20 @@ mod tests {
         assert_eq!(
             set("# Mine\n", "layout", "windows").unwrap(),
             "# Mine\nlayout = \"windows\"\n"
+        );
+    }
+
+    #[test]
+    fn font_size() {
+        assert_eq!(parse("font_size = 20\n").0.font_size, 20);
+        let (settings, problems) = parse("font_size = 99\n");
+        assert_eq!(settings.font_size, DEFAULT_FONT_SIZE);
+        assert_eq!(problems.len(), 1);
+        assert_eq!(parse("font_size = \"big\"\n").1.len(), 1);
+        assert_eq!(set("", "font_size", 18).unwrap(), "font_size = 18\n");
+        assert_eq!(
+            set("font_size = 18  # big\n", "font_size", 20).unwrap(),
+            "font_size = 20  # big\n"
         );
     }
 
