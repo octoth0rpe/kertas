@@ -715,7 +715,7 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
 /// each, they can't be edited, and they close without asking.
 fn smoke_help(window: WindowHandle<DocumentView>, cx: &mut App) {
     use crate::builtin::Builtin;
-    use crate::menus::{OpenAbout, OpenHelp, OpenKeyboardShortcuts};
+    use crate::menus::{OpenAbout, OpenHelp, OpenKeyboardShortcuts, OpenLicenses};
 
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
@@ -779,6 +779,9 @@ fn smoke_help(window: WindowHandle<DocumentView>, cx: &mut App) {
         dispatch(window, cx, Box::new(OpenAbout));
         pause(cx, 20).await;
         checks.check("About Kami opens", window_count(cx) == 4);
+        dispatch(window, cx, Box::new(OpenLicenses));
+        pause(cx, 20).await;
+        checks.check("Licenses opens", window_count(cx) == 5);
 
         let windows = cx.update(|cx| cx.windows());
         for other in windows.into_iter().filter(|other| *other != *window) {
