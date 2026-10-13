@@ -38,7 +38,22 @@ const CASCADE_OFFSET: f32 = 24.;
 pub fn register(cx: &mut App) {
     cx.on_action(|_: &New, cx| {
         cx.defer(|cx| {
-            open_window(cx, |view, window, cx| view.start_untitled(window, cx));
+            // The startup message isn't really a tab, so New replaces it.
+            let blank = frontmost_document_window(cx)
+                .filter(|window| window.read(cx).is_ok_and(|view| view.is_blank()));
+            match blank {
+                Some(window) => {
+                    window
+                        .update(cx, |view, window, cx| {
+                            view.start_untitled(window, cx);
+                            window.activate_window();
+                        })
+                        .ok();
+                }
+                None => {
+                    open_window(cx, |view, window, cx| view.start_untitled(window, cx));
+                }
+            }
         });
     });
     cx.on_action(|_: &Open, cx| cx.defer(choose_and_open));
@@ -61,18 +76,21 @@ pub fn register(cx: &mut App) {
     });
 }
 
+/// The frontmost document window, even if another window (such as
+/// Settings) is active.
+fn frontmost_document_window(cx: &App) -> Option<WindowHandle<DocumentView>> {
+    cx.active_window()
+        .into_iter()
+        .chain(cx.window_stack().unwrap_or_default())
+        .find_map(|window| window.downcast::<DocumentView>())
+}
+
 /// Opens a new document window (a tab, by default) and sets it up.
 pub fn open_window(
     cx: &mut App,
     setup: impl FnOnce(&mut DocumentView, &mut Window, &mut Context<DocumentView>),
 ) -> Option<WindowHandle<DocumentView>> {
-    // The frontmost document window, even if another window (such as
-    // Settings) is active.
-    let previous = cx
-        .active_window()
-        .into_iter()
-        .chain(cx.window_stack().unwrap_or_default())
-        .find_map(|window| window.downcast::<DocumentView>());
+    let previous = frontmost_document_window(cx);
     let previous_bounds =
         previous.and_then(|window| window.update(cx, |_, window, _| window.bounds()).ok());
     let layout = app_settings::launch_layout(cx);

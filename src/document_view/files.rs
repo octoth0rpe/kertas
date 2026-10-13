@@ -55,6 +55,12 @@ impl DocumentView {
         self.open.as_ref()?.editor.document().path()
     }
 
+    /// Whether the window shows the startup message rather than a document.
+    /// New starts its document in such a window instead of adding a tab.
+    pub fn is_blank(&self) -> bool {
+        self.builtin.is_none() && self.open.is_none()
+    }
+
     /// Whether the window holds nothing worth keeping: no document, or an
     /// untitled one that's still empty. Opening a file reuses such a window
     /// instead of adding a tab.

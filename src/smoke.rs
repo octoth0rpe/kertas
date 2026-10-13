@@ -351,7 +351,7 @@ fn percentiles(values: &mut [f64]) -> (f64, f64) {
 // The other modes.
 
 /// `KAMI_SMOKE=tabs`: New opens windows as tabs, ⌘-numbers switch tabs,
-/// and the tabs close again.
+/// the tabs close again, and New replaces the startup message.
 fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
@@ -434,6 +434,28 @@ fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
             pause(cx, 10).await;
         }
         checks.check("closing them leaves 1 window", window_count(cx) == 1);
+
+        // New in a tab showing the startup message starts the document
+        // there instead of adding a tab.
+        let blank = cx.update(|cx| crate::windows::open_window(cx, |_, _, _| {}));
+        pause(cx, 20).await;
+        if let Some(blank) = blank {
+            dispatch(blank, cx, Box::new(New));
+        }
+        pause(cx, 20).await;
+        checks.check(
+            "New replaces the startup message",
+            window_count(cx) == 2
+                && blank.is_some_and(|blank| {
+                    blank
+                        .read_with(cx, |view, _| !view.is_blank())
+                        .unwrap_or(false)
+                }),
+        );
+        if let Some(blank) = blank {
+            dispatch(blank, cx, Box::new(CloseWindow));
+        }
+        pause(cx, 10).await;
         checks.finish(cx);
     })
     .detach();
