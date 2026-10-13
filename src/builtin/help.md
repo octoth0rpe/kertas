@@ -19,6 +19,10 @@ Click any block, such as a paragraph, heading, list or table, to edit it. That b
 
 See **Help → Keyboard Shortcuts** for every shortcut.
 
+## When another app changes a file
+
+If another app changes a document's file, such as another editor or `git checkout`, Kami shows the new version straight away. **⌘Z** brings back what you had. If you have unsaved changes, Kami asks first: **Reload** replaces your changes with the new file, and **Keep Mine** keeps them, so saving writes over it. If the file is deleted or moved, Kami keeps the document open, and saving puts the file back.
+
 ## Tabs and windows
 
 Each document opens in its own tab. **⌘1** to **⌘9** go straight to a tab. To open documents in separate windows instead, choose **Windows** for "Open documents in" in **Kami → Settings…**. That takes effect the next time Kami starts.

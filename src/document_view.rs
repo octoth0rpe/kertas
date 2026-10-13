@@ -9,19 +9,21 @@
 //! platform's text input ([`input`]), and drawing ([`render`]).
 
 mod caret;
+mod disk;
 mod files;
 mod input;
 mod render;
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::{
     Context, FocusHandle, KeyBinding, ListAlignment, ListState, Pixels, Subscription,
-    SystemWindowTabController, Window, actions, px,
+    SystemWindowTabController, Task, Window, actions, px,
 };
-use kami::document::Document;
+use kami::document::{DiskChange, Document};
 use kami::editor::{Editor, RevealTarget};
 use kami::reveal::StyledSource;
 
@@ -207,6 +209,11 @@ struct OpenDocument {
     /// Whether to scroll the caret into view once the next frame is laid
     /// out.
     reveal_caret: bool,
+    /// The file being watched for changes by other apps, and the task
+    /// that handles them. Dropping it stops watching.
+    watched: Option<(PathBuf, Task<()>)>,
+    /// A change to the file that the bar at the top is asking about.
+    disk_change: Option<DiskChange>,
 }
 
 /// An item shown as source, or with the caret in the gap next to it.
@@ -318,7 +325,10 @@ impl DocumentView {
             revealed_layout: Rc::default(),
             anchor: None,
             reveal_caret: false,
+            watched: None,
+            disk_change: None,
         });
+        self.watch_file(window, cx);
         self.stop_blink();
         self.update_window_title(window, cx);
         cx.notify();

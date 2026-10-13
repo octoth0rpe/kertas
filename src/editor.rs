@@ -13,7 +13,7 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use crate::blocks::BlockKind;
-use crate::document::{Document, SaveError};
+use crate::document::{DiskChange, DiskChangeKind, Document, SaveError};
 use crate::editing;
 use crate::history::{EditKind, History};
 use crate::model::{Gap, Model, Splice};
@@ -26,6 +26,14 @@ pub use crate::movement::Selection;
 pub struct Change {
     pub splice: Splice,
     pub selection: Selection,
+}
+
+/// What reloading changed: which items to re-measure, if the text
+/// changed, and the selection afterwards.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reload {
+    pub splice: Option<Splice>,
+    pub selection: Option<Selection>,
 }
 
 /// A movement that doesn't depend on layout, forward or backward.
@@ -152,6 +160,64 @@ impl Editor {
         let result = self.document.save_as(path);
         self.dirty = self.document.is_dirty();
         result
+    }
+
+    /// Accepts a change another app made to the file without reloading
+    /// ("Keep Mine"). See [`Document::accept_disk_change`].
+    pub fn accept_disk_change(&mut self, change: &DiskChange) {
+        self.document.accept_disk_change(change);
+        self.dirty = self.document.is_dirty();
+    }
+
+    /// Replaces the text with the file's new text after another app
+    /// changed it, as one undo step, so it can be undone. Only the part
+    /// that differs is replaced, and the selection keeps its place in the
+    /// text around it; if it was inside that part, it moves to its start.
+    /// Returns `None` if `change` has no new text, or it's the same text.
+    pub fn reload(&mut self, change: &DiskChange) -> Option<Reload> {
+        let DiskChangeKind::Changed(new) = &change.kind else {
+            return None;
+        };
+        if self.read_only {
+            return None;
+        }
+        let old = self.text();
+        let range = differing_range(old, new);
+        let inserted = range.start..new.len() - (old.len() - range.end);
+        let map = |offset: usize| {
+            if offset <= range.start {
+                offset
+            } else if offset >= range.end {
+                offset - range.end + inserted.end
+            } else {
+                range.start
+            }
+        };
+        let selection = self.selection.map(|selection| Selection {
+            anchor: map(selection.anchor),
+            head: map(selection.head),
+        });
+        let mut splice = None;
+        if old != new {
+            let before = self.selection.unwrap_or(Selection::caret(range.start));
+            self.history.break_group();
+            self.history.replace(
+                self.document.buffer_mut(),
+                range.clone(),
+                &new[inserted],
+                EditKind::Other,
+                before,
+                Instant::now(),
+            );
+            let after = selection.unwrap_or(Selection::caret(range.start));
+            self.history.set_selection_after(after);
+            splice = Some(self.text_changed(after).splice);
+        }
+        self.marked = None;
+        self.selection = selection;
+        self.document.accept_disk_change(change);
+        self.dirty = self.document.is_dirty();
+        Some(Reload { splice, selection })
     }
 
     /// Forgets that there are unsaved changes, once the user has chosen not
@@ -545,6 +611,32 @@ impl Editor {
     }
 }
 
+/// The range of `old` that differs from `new`: everything between their
+/// common start and common end, on character boundaries in both.
+fn differing_range(old: &str, new: &str) -> Range<usize> {
+    let boundary = |at: usize| old.is_char_boundary(at) && new.is_char_boundary(at);
+    let mut start = old
+        .bytes()
+        .zip(new.bytes())
+        .take_while(|(a, b)| a == b)
+        .count();
+    while !boundary(start) {
+        start -= 1;
+    }
+    let longest_end = old.len().min(new.len()) - start;
+    let mut end = old
+        .bytes()
+        .rev()
+        .zip(new.bytes().rev())
+        .take(longest_end)
+        .take_while(|(a, b)| a == b)
+        .count();
+    while !(old.is_char_boundary(old.len() - end) && new.is_char_boundary(new.len() - end)) {
+        end -= 1;
+    }
+    start..old.len() - end
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -814,5 +906,85 @@ mod tests {
         editor.undo().unwrap();
         assert_eq!(editor.undo().unwrap().selection, Selection::caret(0));
         assert_eq!(editor.text(), "");
+    }
+
+    #[test]
+    fn differing_range_is_on_character_boundaries() {
+        assert_eq!(differing_range("abc", "abc"), 3..3);
+        assert_eq!(differing_range("a1c", "a22c"), 1..2);
+        assert_eq!(differing_range("ab", "abab"), 2..2);
+        assert_eq!(differing_range("abab", "ab"), 2..4);
+        // é and è share their first byte; ü and ä their last... neither
+        // may be split.
+        assert_eq!(differing_range("café", "cafè"), 3..5);
+        assert_eq!(differing_range("xéy", "xèy"), 1..3);
+        assert_eq!(differing_range("", "new"), 0..0);
+    }
+
+    /// An editor on a file holding `text`, and a change to `changed` made
+    /// by another app.
+    fn edited_elsewhere(name: &str, text: &str, changed: &str) -> (Editor, DiskChange) {
+        let dir = std::env::temp_dir().join(format!("kami-editor-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("notes.md");
+        std::fs::write(&path, text).unwrap();
+        let editor = Editor::new(Document::open(&path).unwrap(), false);
+        std::fs::write(&path, changed).unwrap();
+        let change = editor.document().disk_change().unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        (editor, change)
+    }
+
+    #[test]
+    fn reload_is_one_undo_step_and_keeps_the_caret_in_place() {
+        let (mut editor, change) = edited_elsewhere(
+            "reload",
+            "# One\n\nTwo\n\nThree\n",
+            "# One!\n\nTwo\n\nThree\n",
+        );
+        editor.select(Selection::caret(14));
+        let reload = editor.reload(&change).unwrap();
+        assert_eq!(editor.text(), "# One!\n\nTwo\n\nThree\n");
+        assert_eq!(
+            reload.selection,
+            Some(Selection::caret(15)),
+            "after the change"
+        );
+        assert!(reload.splice.is_some());
+        assert!(!editor.is_dirty());
+
+        let undone = editor.undo().unwrap();
+        assert_eq!(editor.text(), "# One\n\nTwo\n\nThree\n");
+        assert_eq!(undone.selection, Selection::caret(14));
+        assert!(editor.is_dirty(), "differs from the file again");
+        editor.redo().unwrap();
+        assert_eq!(editor.text(), "# One!\n\nTwo\n\nThree\n");
+        assert!(!editor.is_dirty());
+    }
+
+    #[test]
+    fn reload_without_a_caret_keeps_none() {
+        let (mut editor, change) = edited_elsewhere("no-caret", "a\n", "b\n");
+        let reload = editor.reload(&change).unwrap();
+        assert_eq!(reload.selection, None);
+        assert_eq!(editor.selection(), None);
+        assert_eq!(editor.text(), "b\n");
+    }
+
+    #[test]
+    fn reload_moves_a_caret_inside_the_change_to_its_start() {
+        let (mut editor, change) = edited_elsewhere("inside", "one two three", "one 2 three");
+        editor.select(Selection::caret(6));
+        let reload = editor.reload(&change).unwrap();
+        assert_eq!(reload.selection, Some(Selection::caret(4)));
+    }
+
+    #[test]
+    fn keeping_mine_marks_the_text_unsaved() {
+        let (mut editor, change) = edited_elsewhere("keep", "mine\n", "theirs\n");
+        assert!(!editor.is_dirty());
+        editor.accept_disk_change(&change);
+        assert!(editor.is_dirty());
+        assert_eq!(editor.text(), "mine\n");
     }
 }
