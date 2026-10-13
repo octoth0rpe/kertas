@@ -15,7 +15,7 @@ use crate::document_view::{
     Backspace, CloseWindow, Delete, DeleteWordLeft, DocumentView, IndentLines, IndentTab,
     InsertTab, LineBreak, MoveBlockDown, MoveBlockUp, MoveDocumentEnd, MoveDocumentStart, MoveDown,
     MoveLeft, MoveRight, MoveUp, New, Newline, OutdentTab, Quit, Redo, Save, SelectAll,
-    SelectBlockDown, SelectDown, SelectUp, Undo, Unreveal,
+    SelectBlockDown, SelectDown, SelectTab1, SelectTab3, SelectTab10, SelectUp, Undo, Unreveal,
 };
 
 const STEP: Duration = Duration::from_millis(16);
@@ -196,6 +196,42 @@ fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
             })
             .unwrap_or(0);
         println!("tabs in the tab strip: {strip_tabs}");
+        // ⌘1 from the last tab switches to the first, ⌘3 to the third, and
+        // ⌘0 (tab 10) does nothing.
+        let mut tab_switching = true;
+        for (action, expected) in [
+            (Box::new(SelectTab1) as Box<dyn Action>, Some(0)),
+            (Box::new(SelectTab3), Some(2)),
+            (Box::new(SelectTab10), None),
+        ] {
+            let active = cx.update(|cx| cx.active_window());
+            let Some(active) = active else {
+                tab_switching = false;
+                break;
+            };
+            active
+                .update(cx, |_, window, cx| window.dispatch_action(action, cx))
+                .ok();
+            cx.background_executor().timer(STEP * 20).await;
+            let now = cx.update(|cx| {
+                let tabs = cx
+                    .try_global::<gpui::SystemWindowTabController>()?
+                    .tabs(active.window_id())?
+                    .clone();
+                let now = cx.active_window()?;
+                Some((tabs.iter().position(|tab| tab.id == now.window_id())?, now))
+            });
+            let switched = match (expected, now) {
+                (Some(index), Some((position, _))) => position == index,
+                (None, Some((_, now))) => now == active,
+                _ => false,
+            };
+            println!(
+                "tab switch to {expected:?}: {}",
+                if switched { "ok" } else { "FAILED" }
+            );
+            tab_switching &= switched;
+        }
         #[cfg(target_os = "macos")]
         let tabbing_calls = {
             let visible = window
@@ -224,8 +260,12 @@ fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
         }
         let remaining = cx.update(|cx| cx.windows().len());
         println!("windows after closing them: {remaining}");
-        let ok =
-            opened == 4 && tabs == 4 && strip_tabs == 4 && tabbing_calls == 3 && remaining == 1;
+        let ok = opened == 4
+            && tabs == 4
+            && strip_tabs == 4
+            && tab_switching
+            && tabbing_calls == 3
+            && remaining == 1;
         println!("SMOKE {}", if ok { "OK" } else { "FAILED" });
         cx.update(|cx| cx.quit());
     })

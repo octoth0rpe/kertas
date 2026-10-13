@@ -25,7 +25,7 @@ use kami::reveal::{StyledSource, styled_source};
 
 use crate::rendered_block::{ClickTarget, render_block};
 use crate::revealed_block::{RevealedBlock, TextInput, render_gap, render_revealed};
-use crate::tab_strip::render_tab_strip;
+use crate::tab_strip::{render_tab_strip, select_tab};
 use crate::theme::Theme;
 
 actions!(
@@ -39,6 +39,16 @@ actions!(
         Quit,
         NextTab,
         PreviousTab,
+        SelectTab1,
+        SelectTab2,
+        SelectTab3,
+        SelectTab4,
+        SelectTab5,
+        SelectTab6,
+        SelectTab7,
+        SelectTab8,
+        SelectTab9,
+        SelectTab10,
         Unreveal,
         MoveLeft,
         MoveRight,
@@ -98,6 +108,16 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-shift-[", PreviousTab, None),
         KeyBinding::new("ctrl-tab", NextTab, None),
         KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
+        KeyBinding::new("cmd-1", SelectTab1, None),
+        KeyBinding::new("cmd-2", SelectTab2, None),
+        KeyBinding::new("cmd-3", SelectTab3, None),
+        KeyBinding::new("cmd-4", SelectTab4, None),
+        KeyBinding::new("cmd-5", SelectTab5, None),
+        KeyBinding::new("cmd-6", SelectTab6, None),
+        KeyBinding::new("cmd-7", SelectTab7, None),
+        KeyBinding::new("cmd-8", SelectTab8, None),
+        KeyBinding::new("cmd-9", SelectTab9, None),
+        KeyBinding::new("cmd-0", SelectTab10, None),
         KeyBinding::new("escape", Unreveal, None),
         KeyBinding::new("left", MoveLeft, None),
         KeyBinding::new("right", MoveRight, None),
@@ -1314,6 +1334,16 @@ impl Render for DocumentView {
                     window.window_handle().window_id(),
                 )
             })
+            .on_action(|_: &SelectTab1, window, cx| select_tab(0, window, cx))
+            .on_action(|_: &SelectTab2, window, cx| select_tab(1, window, cx))
+            .on_action(|_: &SelectTab3, window, cx| select_tab(2, window, cx))
+            .on_action(|_: &SelectTab4, window, cx| select_tab(3, window, cx))
+            .on_action(|_: &SelectTab5, window, cx| select_tab(4, window, cx))
+            .on_action(|_: &SelectTab6, window, cx| select_tab(5, window, cx))
+            .on_action(|_: &SelectTab7, window, cx| select_tab(6, window, cx))
+            .on_action(|_: &SelectTab8, window, cx| select_tab(7, window, cx))
+            .on_action(|_: &SelectTab9, window, cx| select_tab(8, window, cx))
+            .on_action(|_: &SelectTab10, window, cx| select_tab(9, window, cx))
             .on_action(cx.listener(Self::unreveal))
             .on_action(cx.listener(|this, _: &MoveLeft, _, cx| {
                 this.move_by(false, false, cx, movement::prev_grapheme)

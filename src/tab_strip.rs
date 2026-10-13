@@ -128,3 +128,28 @@ fn close(handle: AnyWindowHandle, cx: &mut App) {
             .ok();
     });
 }
+
+/// Switches to the tab at `index` (0-based) in `window`'s tab group, for
+/// ⌘1 to ⌘9 and ⌘0. Does nothing if there's no such tab, or in windows
+/// layout.
+pub fn select_tab(index: usize, window: &Window, cx: &mut App) {
+    if DOCUMENT_LAYOUT != DocumentLayout::Tabs {
+        return;
+    }
+    let id = window.window_handle().window_id();
+    let Some(handle) = cx
+        .try_global::<SystemWindowTabController>()
+        .and_then(|controller| controller.tabs(id))
+        .and_then(|tabs| tabs.get(index))
+        .map(|tab| tab.handle)
+    else {
+        return;
+    };
+    if handle.window_id() != id {
+        // Another window, so it can be updated while this one handles the
+        // key.
+        handle
+            .update(cx, |_, window, _| window.activate_window())
+            .ok();
+    }
+}
