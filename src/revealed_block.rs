@@ -6,19 +6,18 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, Bounds, ElementInputHandler, Entity, FocusHandle, Font, FontStyle, FontWeight,
-    MouseButton, SharedString, StrikethroughStyle, StyledText, TextLayout, TextRun, UnderlineStyle,
-    canvas, div, fill, prelude::*, px, relative, rems, size,
+    AnyElement, Bounds, ElementInputHandler, Entity, FocusHandle, Font, FontWeight, MouseButton,
+    SharedString, StyledText, TextLayout, TextRun, canvas, div, fill, prelude::*, px, rems, size,
 };
+use kami::inline::InlineStyle;
 use kami::model::Gap;
 use kami::reveal::{RevealFont, SpanStyle, StyledSource};
 
-use crate::document_view::{CODE_FONT, CODE_TEXT_SIZE, DocumentView};
+use crate::document_view::DocumentView;
+use crate::text_style::{CODE_FONT, code_text, heading_text, inline_run, underline};
 use kami::rendered::RenderedBlock;
 
-use crate::rendered_block::{
-    ClickTarget, block_frame, heading_scale, rendered_content, rendered_heading,
-};
+use crate::rendered_block::{ClickTarget, block_frame, rendered_content, rendered_heading};
 use crate::theme::Theme;
 
 const CARET_WIDTH: f32 = 2.;
@@ -206,20 +205,14 @@ fn revealed_content(
         .child(caret_overlay);
 
     let content = if monospace {
-        div()
+        code_text(div())
             .bg(theme.code_background)
             .rounded_md()
             .px_4()
             .py_3()
-            .font_family(CODE_FONT)
-            .text_size(rems(CODE_TEXT_SIZE))
-            .line_height(relative(1.5))
             .child(text_element)
     } else if let Some(level) = heading {
-        div()
-            .text_size(rems(heading_scale(level)))
-            .line_height(relative(1.25))
-            .child(text_element)
+        heading_text(div(), level).child(text_element)
     } else {
         div().child(text_element)
     };
@@ -278,40 +271,20 @@ fn text_runs(
 
     let mut runs = Vec::new();
     for span in &block.styled.spans {
-        let mut font = block_font.clone();
-        let mut color = base_color;
-        let mut background = None;
-        let mut underline = None;
-        let mut strikethrough = None;
-        match span.style {
-            SpanStyle::Syntax => color = theme.muted_text,
-            SpanStyle::Content(inline) => {
-                if inline.strong {
-                    font.weight = FontWeight::BOLD;
-                }
-                if inline.emphasis {
-                    font.style = FontStyle::Italic;
-                }
-                if inline.code && block.styled.font != RevealFont::Monospace {
-                    font.family = CODE_FONT.into();
-                    background = Some(theme.code_background);
-                }
-                if inline.link {
-                    color = theme.link;
-                    underline = Some(UnderlineStyle {
-                        thickness: px(1.),
-                        color: Some(color),
-                        wavy: false,
-                    });
-                }
-                if inline.strikethrough {
-                    strikethrough = Some(StrikethroughStyle {
-                        thickness: px(1.),
-                        color: Some(color),
-                    });
-                }
+        let run = match span.style {
+            SpanStyle::Syntax => inline_run(
+                InlineStyle::default(),
+                0,
+                &block_font,
+                theme.muted_text,
+                theme,
+            ),
+            SpanStyle::Content(mut inline) => {
+                // A code block is already in the code font, unhighlighted.
+                inline.code &= block.styled.font != RevealFont::Monospace;
+                inline_run(inline, 0, &block_font, base_color, theme)
             }
-        }
+        };
 
         // Split the span where the selection and marked text start and end.
         let marked = block.marked.clone().unwrap_or(0..0);
@@ -325,27 +298,17 @@ fn text_runs(
             let within = |range: &Range<usize>| {
                 !range.is_empty() && piece.start >= range.start && piece.end <= range.end
             };
-            let underline = if within(&marked) {
-                Some(UnderlineStyle {
-                    thickness: px(1.),
-                    color: Some(color),
-                    wavy: false,
-                })
-            } else {
-                underline
-            };
-            runs.push(TextRun {
+            let mut piece_run = TextRun {
                 len: piece.len(),
-                font: font.clone(),
-                color,
-                background_color: if within(&block.selection) {
-                    Some(theme.selection)
-                } else {
-                    background
-                },
-                underline,
-                strikethrough,
-            });
+                ..run.clone()
+            };
+            if within(&marked) {
+                piece_run.underline = Some(underline(run.color));
+            }
+            if within(&block.selection) {
+                piece_run.background_color = Some(theme.selection);
+            }
+            runs.push(piece_run);
         }
     }
     runs
@@ -369,6 +332,80 @@ fn split_at(range: Range<usize>, cuts: &[usize]) -> Vec<Range<usize>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::theme::Theme;
+    use kami::model::Model;
+    use kami::reveal::styled_source;
+
+    /// GPUI requires a revealed block's text runs to cover its text
+    /// exactly, whatever is selected or being composed (T2).
+    #[test]
+    fn text_runs_cover_the_text() {
+        let font = gpui::font("Helvetica");
+        let theme = Theme::light();
+        for name in ["showcase.md", "10k.md"] {
+            let path = format!("{}/spikes/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
+            let text = std::fs::read_to_string(path).unwrap();
+            let model = Model::new(&text);
+            for (index, item) in model.items.iter().enumerate() {
+                for range in [model.source_range(index), item.range.clone()] {
+                    let source = &text[range.clone()];
+                    let styled = styled_source(source, item.kind, &model.definitions);
+                    let heading = revealed_heading(&styled);
+                    let check = |selection: Range<usize>, marked: Option<Range<usize>>| {
+                        let block = RevealedBlock {
+                            source,
+                            styled: &styled,
+                            selection: selection.clone(),
+                            caret: None,
+                            marked: marked.clone(),
+                            first: false,
+                        };
+                        let covered: usize = text_runs(&block, &font, theme, heading)
+                            .iter()
+                            .map(|run| run.len)
+                            .sum();
+                        assert_eq!(
+                            covered,
+                            source.len(),
+                            "{name} item {index} {range:?}, selection {selection:?}, \
+                             marked {marked:?}"
+                        );
+                    };
+                    // Runs are only cut where the selection or marked text
+                    // starts or ends, so what matters is where those fall
+                    // relative to the spans: on, just before or just after
+                    // each span's edges.
+                    let mut offsets: Vec<usize> = styled
+                        .spans
+                        .iter()
+                        .flat_map(|span| [span.range.start, span.range.end])
+                        .chain([0, source.len()])
+                        .flat_map(|edge| [edge.saturating_sub(1), edge, edge + 1])
+                        .filter(|&offset| offset <= source.len() && source.is_char_boundary(offset))
+                        .collect();
+                    offsets.sort_unstable();
+                    offsets.dedup();
+                    // Every pair in small blocks; in large ones, every caret
+                    // and every selection to or from either end.
+                    let every_pair = offsets.len() <= 60;
+                    for (i, &start) in offsets.iter().enumerate() {
+                        if every_pair {
+                            for &end in &offsets[i..] {
+                                check(start..end, None);
+                            }
+                        } else {
+                            check(start..start, None);
+                            check(0..start, None);
+                            check(start..source.len(), None);
+                        }
+                        let end = offsets[(i + 2).min(offsets.len() - 1)];
+                        check(start..start, Some(start..end));
+                        check(0..source.len(), Some(start..end));
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn splits_at_cuts_inside_range() {

@@ -2,14 +2,14 @@
 //! source offsets.
 
 use gpui::{
-    AnyElement, App, Font, FontStyle, FontWeight, Hsla, MouseButton, Rems, SharedString,
-    StrikethroughStyle, StyledText, TextRun, UnderlineStyle, WeakEntity, Window, div, prelude::*,
-    px, relative, rems,
+    AnyElement, App, Font, FontWeight, Hsla, MouseButton, Rems, SharedString, StyledText,
+    WeakEntity, Window, div, prelude::*, px,
 };
 use kami::inline::InlineText;
 use kami::rendered::{ColumnAlignment, ListItem, RenderedBlock, Table};
 
-use crate::document_view::{CODE_FONT, CODE_TEXT_SIZE, DocumentView};
+use crate::document_view::DocumentView;
+use crate::text_style::{code_text, heading_text, inline_run};
 use crate::theme::Theme;
 
 /// Space between blocks inside lists and blockquotes.
@@ -138,33 +138,18 @@ pub fn block_frame(
         .into_any_element()
 }
 
-/// The text size multiplier for a heading level.
-pub fn heading_scale(level: u8) -> f32 {
-    match level {
-        1 => 2.0,
-        2 => 1.5,
-        3 => 1.25,
-        4 => 1.0,
-        5 => 0.875,
-        _ => 0.85,
-    }
-}
-
 /// Renders a block's content, without the spacing around it. `depth` is
 /// how many lists the block is nested in, which picks the bullet style.
 fn render_content(block: &RenderedBlock, style: &TextStyle, depth: usize) -> AnyElement {
     match block {
         RenderedBlock::Paragraph(text) => clickable_text(text, style),
         RenderedBlock::Heading { level, text } => {
-            let size = heading_scale(*level);
             let mut heading_style = style.clone();
             heading_style.font.weight = FontWeight::SEMIBOLD;
             if *level == 6 {
                 heading_style.color = style.theme.muted_text;
             }
-            div()
-                .text_size(rems(size))
-                .line_height(relative(1.25))
+            heading_text(div(), *level)
                 .child(clickable_text(text, &heading_style))
                 .into_any_element()
         }
@@ -186,14 +171,11 @@ fn render_content(block: &RenderedBlock, style: &TextStyle, depth: usize) -> Any
                 .child(render_children(children, &quote_style, depth))
                 .into_any_element()
         }
-        RenderedBlock::CodeBlock { code, .. } => div()
+        RenderedBlock::CodeBlock { code, .. } => code_text(div())
             .bg(style.theme.code_background)
             .rounded_md()
             .px_4()
             .py_3()
-            .font_family(CODE_FONT)
-            .text_size(rems(CODE_TEXT_SIZE))
-            .line_height(relative(1.5))
             .text_color(style.theme.text)
             .child({
                 let shown = code.text.trim_end_matches(['\n', '\r']);
@@ -202,10 +184,7 @@ fn render_content(block: &RenderedBlock, style: &TextStyle, depth: usize) -> Any
             })
             .into_any_element(),
         RenderedBlock::Table(table) => render_table(table, style),
-        RenderedBlock::Html(source) | RenderedBlock::Raw(source) => div()
-            .font_family(CODE_FONT)
-            .text_size(rems(CODE_TEXT_SIZE))
-            .line_height(relative(1.5))
+        RenderedBlock::Html(source) | RenderedBlock::Raw(source) => code_text(div())
             .text_color(style.theme.muted_text)
             .child(clickable_source(source, style, |index| index))
             .into_any_element(),
@@ -402,41 +381,13 @@ fn styled_text(text: &InlineText, style: &TextStyle) -> StyledText {
         .segments
         .iter()
         .map(|segment| {
-            let inline = segment.style;
-            let mut font = if inline.code {
-                Font {
-                    family: CODE_FONT.into(),
-                    ..style.font.clone()
-                }
-            } else {
-                style.font.clone()
-            };
-            if inline.strong {
-                font.weight = FontWeight::BOLD;
-            }
-            if inline.emphasis {
-                font.style = FontStyle::Italic;
-            }
-            let color: Hsla = if inline.link {
-                style.theme.link
-            } else {
-                style.color
-            };
-            TextRun {
-                len: segment.display.len(),
-                font,
-                color,
-                background_color: inline.code.then_some(style.theme.code_background),
-                underline: inline.link.then(|| UnderlineStyle {
-                    thickness: px(1.),
-                    color: Some(color),
-                    wavy: false,
-                }),
-                strikethrough: inline.strikethrough.then(|| StrikethroughStyle {
-                    thickness: px(1.),
-                    color: Some(color),
-                }),
-            }
+            inline_run(
+                segment.style,
+                segment.display.len(),
+                &style.font,
+                style.color,
+                style.theme,
+            )
         })
         .collect();
     StyledText::new(SharedString::from(text.text.clone())).with_runs(runs)

@@ -11,6 +11,7 @@ use std::ops::Range;
 
 use kami::model::Model;
 use kami::print_layout::{Alignment, Frame, PrintLayout};
+use kami::rendered::{CODE_FONT, heading_scale};
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{AnyThread, MainThreadMarker};
@@ -137,14 +138,12 @@ fn attributed(layout: &PrintLayout, mtm: MainThreadMarker) -> Retained<NSMutable
         }
         let style = run.style;
         let size = match style.heading {
-            Some(level) => {
-                BODY * [2.0, 1.5, 1.25, 1.0, 0.875, 0.85][usize::from(level.clamp(1, 6)) - 1]
-            }
+            Some(level) => BODY * heading_scale(level),
             None if style.code => CODE,
             None => BODY,
         };
         let mut font = if style.code {
-            NSFont::fontWithName_size(&NSString::from_str("Menlo"), size)
+            NSFont::fontWithName_size(&NSString::from_str(CODE_FONT), size)
                 .unwrap_or_else(|| NSFont::systemFontOfSize(size))
         } else {
             NSFont::systemFontOfSize(size)

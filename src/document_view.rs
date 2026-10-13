@@ -185,10 +185,6 @@ pub fn key_bindings() -> Vec<KeyBinding> {
     ]
 }
 
-/// Code's text size relative to body text (13 px at 16 px).
-pub const CODE_TEXT_SIZE: f32 = 0.8125;
-pub const CODE_FONT: &str = "Menlo";
-
 /// How long the caret stays on, and then off, while blinking.
 const CARET_BLINK_INTERVAL: Duration = Duration::from_millis(530);
 
