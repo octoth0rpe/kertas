@@ -1,0 +1,22 @@
+# Configuration for cargo-about, which scripts/acknowledgements.sh uses to
+# collect the license notices of Kami's dependencies.
+# The same licenses deny.toml allows. For a library offered under several,
+# the first one listed here is used: the short permissive ones first, so the
+# notices are as short as they can be.
+accepted = [
+    "MIT",
+    "ISC",
+    "Zlib",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BlueOak-1.0.0",
+    "Unicode-3.0",
+    "Apache-2.0",
+    "MPL-2.0",
+]
+targets = ["aarch64-apple-darwin"]
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+# A library's notices are in its top folder. Deeper, some keep notices for
+# individual source files, which their top-level license covers.
+max-depth = 1

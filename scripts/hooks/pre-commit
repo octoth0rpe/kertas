@@ -1,0 +1,17 @@
+#!/bin/sh
+# Keeps the About tab's acknowledgements up to date: when a commit changes
+# Cargo.lock, regenerates them, and stops the commit if they changed so
+# they can be added to it. Enable it once per clone with:
+#
+#   git config core.hooksPath scripts/hooks
+set -eu
+
+if ! git diff --cached --name-only | grep -qx 'Cargo.lock'; then
+    exit 0
+fi
+scripts/acknowledgements.sh
+if ! git diff --quiet -- src/builtin/acknowledgements.md; then
+    echo "pre-commit: the dependencies changed, so src/builtin/acknowledgements.md was" >&2
+    echo "regenerated. Review it, add it to the commit, and commit again." >&2
+    exit 1
+fi

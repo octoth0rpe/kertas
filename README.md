@@ -50,11 +50,13 @@ The View menu changes `theme` and `text_width` too.
 
 ### Dependencies
 
-The About tab lists the open-source libraries Kami uses. After adding or updating a dependency, run `scripts/acknowledgements.sh` to regenerate the list.
+The About tab lists the open-source libraries Kami uses, with the license notices their licenses ask to be included. `scripts/acknowledgements.sh` generates them with [cargo-about](https://github.com/EmbarkStudios/cargo-about) (`cargo install --locked cargo-about --features cli`), configured in `scripts/about.toml`. It needs the network, since a few libraries don't include their license files and cargo-about fetches them from the libraries' repositories.
+
+Run it after adding or updating a dependency, or let git do it: after `git config core.hooksPath scripts/hooks`, a commit that changes `Cargo.lock` regenerates the acknowledgements, and stops so you can add them. `scripts/check.sh` checks they list exactly the libraries in `Cargo.lock`.
 
 ### Checks
 
-`scripts/check.sh` runs every check a release must pass: formatting, clippy, the tests, and `cargo-deny`, which checks dependency licenses against the allow-list in `deny.toml` (REQUIREMENTS T6–T7), security advisories, and where crates come from. It needs `cargo install --locked cargo-deny`.
+`scripts/check.sh` runs every check a release must pass: formatting, clippy, the tests, and `cargo-deny`, which checks dependency licenses against the allow-list in `deny.toml` (REQUIREMENTS T6–T7), security advisories, and where crates come from, and that the About tab acknowledges every library. It needs `cargo install --locked cargo-deny` and cargo-about (see above).
 
 `scripts/smoke.sh` runs the smoke tests (`src/smoke.rs`): Kami drives itself through editing, tabs, settings, help, revealing blocks, printing and quitting, on scratch copies of the fixtures. It takes about two and a half minutes, opens windows and takes keyboard focus, so leave the keyboard alone while it runs.
 
