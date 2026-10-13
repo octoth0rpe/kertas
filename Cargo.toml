@@ -25,5 +25,7 @@ single_range_in_vec_init = "allow"
 # Native window tabs (see src/native_tabs.rs). Same versions GPUI uses.
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder", "NSView", "NSWindow", "NSWindowTabGroup"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSData", "NSString", "NSUserDefaults"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSData", "NSDistributedNotificationCenter", "NSNotification", "NSOperation", "NSString", "NSUserDefaults"] }
+block2 = "0.6"
+libc = "0.2"
 raw-window-handle = "0.6"

@@ -2,20 +2,21 @@
 //! global and kept up to date.
 //!
 //! The file is `~/Library/Application Support/kami/config.toml` (G1), or
-//! `config.toml` in `$KAMI_CONFIG_DIR` if that's set. It's checked for
-//! changes once a second, so edits made in any editor apply live (G3).
-//! Views observe [`AppSettings`] to update.
+//! `config.toml` in `$KAMI_CONFIG_DIR` if that's set. macOS reports
+//! changes to it, so edits made in any editor apply live (G3). Views
+//! observe [`AppSettings`] to update.
 
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
+
+use futures::StreamExt;
 
 use gpui::{App, BorrowAppContext, Global, WindowAppearance};
 use kami::settings::{self, Problem, Settings, ThemeSetting};
 
-/// How often to check the settings file for changes.
-const POLL_INTERVAL: Duration = Duration::from_secs(1);
+use crate::file_watch;
 
 /// The current settings, and any problems reading them.
 pub struct AppSettings {
@@ -39,22 +40,28 @@ pub fn get(cx: &App) -> Settings {
 /// Loads the settings and starts watching the file for changes.
 pub fn init(cx: &mut App) {
     let path = settings_path();
-    let state = load(path);
+    let state = load(path.clone());
     apply_appearance(state.settings, cx);
     cx.set_global(state);
 
-    cx.spawn(async move |cx| {
-        loop {
-            cx.background_executor().timer(POLL_INTERVAL).await;
-            cx.update(|cx| {
-                let state = cx.global::<AppSettings>();
-                if stamp(&state.path) != state.stamp {
-                    reload(cx);
-                }
-            });
-        }
-    })
-    .detach();
+    // Watching needs the folder to exist, though the file is only created
+    // when a setting is first changed.
+    if let Some(directory) = path.parent()
+        && fs::create_dir_all(directory).is_ok()
+    {
+        let mut changes = file_watch::watch(path);
+        cx.spawn(async move |cx| {
+            while changes.next().await.is_some() {
+                cx.update(|cx| {
+                    let state = cx.global::<AppSettings>();
+                    if stamp(&state.path) != state.stamp {
+                        reload(cx);
+                    }
+                });
+            }
+        })
+        .detach();
+    }
 }
 
 /// Changes a setting, like [`set`], reporting any problem in the bar
