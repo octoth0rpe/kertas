@@ -385,4 +385,40 @@ mod tests {
             InlineText::default()
         );
     }
+
+    // Edge cases (#38).
+
+    #[test]
+    fn images_show_their_alt_text() {
+        let inline = render_inline("See ![a diagram](d.png).", &Definitions::default());
+        assert_eq!(inline.text, "See a diagram.");
+    }
+
+    #[test]
+    fn autolinks_and_titles() {
+        let inline = render_inline("<https://example.com>", &Definitions::default());
+        assert_eq!(inline.text, "https://example.com");
+        assert!(inline.segments.iter().all(|segment| segment.style.link));
+        let inline = render_inline("[a](/x \"Title\")", &Definitions::default());
+        assert_eq!(inline.text, "a");
+        assert!(inline.segments[0].style.link);
+    }
+
+    #[test]
+    fn entities_map_back_to_their_source() {
+        let source = "a &amp; b";
+        let inline = render_inline(source, &Definitions::default());
+        assert_eq!(inline.text, "a & b");
+        // The "&" maps to the start of "&amp;", and the text after it lines
+        // up again.
+        assert_eq!(inline.source_offset(2), 2);
+        assert_eq!(inline.source_offset(4), 8);
+    }
+
+    #[test]
+    fn inline_html_inside_emphasis_is_kept_as_text() {
+        let inline = render_inline("*a <b>c</b>*", &Definitions::default());
+        assert_eq!(inline.text, "a <b>c</b>");
+        assert!(inline.segments.iter().all(|segment| segment.style.emphasis));
+    }
 }

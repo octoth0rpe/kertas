@@ -362,12 +362,25 @@ fn indent_list_item(
                 .trim()
                 .is_empty()
     };
-    // Columns are counted after any quote markers.
+    // Columns are visual (a tab reaches the next multiple of 4, as in
+    // CommonMark), counted after any quote markers.
+    let after_quotes = |i: usize, end: usize| {
+        let line = &text[lines[i].clone()];
+        width(&line[prefixes[i].quote_end..end])
+    };
     let column = |i: usize| {
         let start = marker(i).map_or(prefixes[i].end, |marker| marker.start);
-        start - prefixes[i].quote_end
+        after_quotes(i, start)
     };
-    let content_column = |i: usize| marker(i).map(|marker| marker.content - prefixes[i].quote_end);
+    let content_column = |i: usize| marker(i).map(|marker| after_quotes(i, marker.content));
+    // A line's indentation after its quote markers: where it starts and
+    // its text.
+    let indentation = |i: usize| {
+        let start = lines[i].start + prefixes[i].quote_end;
+        let rest = &text[start..lines[i].end];
+        let indent = &rest[..rest.len() - rest.trim_start_matches([' ', '\t']).len()];
+        (start, indent)
+    };
 
     // The item the caret is in: its own line, or the nearest item above
     // whose content the caret's line is indented under.
@@ -402,12 +415,13 @@ fn indent_list_item(
             .find(|&i| !blank(i) && marker(i).is_some() && column(i) < item_column);
         let delta = item_column - parent.map_or(0, column);
         for i in (item..=last).filter(|&i| !blank(i)) {
-            let start = lines[i].start + prefixes[i].quote_end;
-            let leading = text[start..lines[i].end]
-                .bytes()
-                .take_while(|&byte| byte == b' ')
-                .count();
-            patches.push(Patch::remove(start..start + leading.min(delta)));
+            let (start, indent) = indentation(i);
+            let narrower = narrow(indent, width(indent).saturating_sub(delta));
+            patches.push(Patch {
+                at: start,
+                remove: indent.len(),
+                insert: narrower,
+            });
         }
         parent.and_then(marker).map(Marker::next_token)
     } else {
@@ -429,8 +443,9 @@ fn indent_list_item(
         let new_column = content_column(sibling)?;
         let delta = new_column - item_column;
         for i in (item..=last).filter(|&i| !blank(i)) {
-            let start = lines[i].start + prefixes[i].quote_end;
-            patches.push(Patch::insert(start, " ".repeat(delta)));
+            // Add spaces after any existing indentation, keeping its tabs.
+            let (start, indent) = indentation(i);
+            patches.push(Patch::insert(start + indent.len(), " ".repeat(delta)));
         }
         // Continue a nested list that's already there, or start one.
         let nested = (sibling + 1..item)
@@ -543,6 +558,31 @@ fn indent_code(
         }
     }
     combine(text, patches, selection)
+}
+
+/// The visual width of leading whitespace: a tab reaches the next multiple
+/// of 4, as in CommonMark.
+fn width(indent: &str) -> usize {
+    indent.chars().fold(0, |column, character| match character {
+        '\t' => column + 4 - column % 4,
+        _ => column + 1,
+    })
+}
+
+/// `indent` cut down to `target` columns: its leading tabs and spaces that
+/// fit, then spaces.
+fn narrow(indent: &str, target: usize) -> String {
+    let mut kept = String::new();
+    for character in indent.chars() {
+        let mut candidate = kept.clone();
+        candidate.push(character);
+        if width(&candidate) > target {
+            break;
+        }
+        kept = candidate;
+    }
+    let padding = target - width(&kept);
+    kept + &" ".repeat(padding)
 }
 
 fn gcd(a: usize, b: usize) -> usize {
@@ -939,5 +979,79 @@ mod tests {
             content_start("A\n\n## B", 3..7, BlockKind::Heading { level: 2 }),
             6
         );
+    }
+
+    // Edge cases (#38).
+
+    #[test]
+    fn tab_indented_list_items_outdent() {
+        // A tab before the marker counts as indentation, like spaces.
+        assert_eq!(indent_at("- a\n\t- b|", LIST, true, false), "- a\n- b|");
+        // Two levels in, by a tab: back to the first level's spaces.
+        assert_eq!(
+            indent_at("- a\n  - b\n\t  - c|", LIST, true, false),
+            "- a\n  - b\n  - c|"
+        );
+    }
+
+    #[test]
+    fn tab_indented_list_items_indent() {
+        assert_eq!(
+            indent_at("- a\n\t- b\n\t- c|", LIST, false, false),
+            "- a\n\t- b\n\t  - c|"
+        );
+    }
+
+    #[test]
+    fn indent_with_crlf() {
+        assert_eq!(
+            indent_at("- a\r\n- b|", LIST, false, false),
+            "- a\r\n  - b|"
+        );
+        assert_eq!(indent_at("- a\r\n  - b|", LIST, true, false), "- a\r\n- b|");
+        let code = BlockKind::CodeBlock { fenced: true };
+        assert_eq!(
+            indent_at("```\r\n[a\r\nb]\r\n```", code, false, false),
+            "```\r\n[\ta\r\n\tb]\r\n```"
+        );
+    }
+
+    #[test]
+    fn enter_in_tables_html_and_front_matter_is_a_plain_newline() {
+        for kind in [
+            BlockKind::Table,
+            BlockKind::HtmlBlock,
+            BlockKind::FrontMatter,
+        ] {
+            assert_eq!(press("a\n- x|", kind, false), "a\n- x\n|", "{kind:?}");
+            assert_eq!(press("- x|", kind, true), "- x\n|", "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn content_start_for_indented_code() {
+        let code = BlockKind::CodeBlock { fenced: false };
+        assert_eq!(content_start("    let x;", 0..10, code), 4);
+    }
+
+    #[test]
+    fn nested_list_in_a_quote_outdents_once() {
+        let quote = BlockKind::BlockQuote;
+        assert_eq!(
+            indent_at("> - a\n>   - b|", quote, true, false),
+            "> - a\n> - b|"
+        );
+        assert_eq!(indent_at("> - a\n> - b|", quote, true, false), "unchanged");
+    }
+
+    #[test]
+    fn ordered_markers_up_to_nine_digits() {
+        let ordered = BlockKind::List { ordered: true };
+        assert_eq!(
+            press("123456789. a|", ordered, false),
+            "123456789. a\n123456790. |"
+        );
+        // Ten digits isn't a list marker, so Enter just adds a line.
+        assert_eq!(press("1234567890. a|", ordered, false), "1234567890. a\n|");
     }
 }

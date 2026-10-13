@@ -669,4 +669,17 @@ mod tests {
         // before definitions were looked up instead of re-parsed.
         assert!(elapsed.as_millis() < 100, "took {elapsed:?}");
     }
+
+    // Edge cases (#38).
+
+    #[test]
+    fn setext_underline_right_after_a_paragraph_line() {
+        // The underline turns the whole paragraph into the heading, its
+        // line break a space like any soft break.
+        let blocks = render("Para\nHeading\n===\n");
+        let [RenderedBlock::Heading { level: 1, text }] = blocks.as_slice() else {
+            panic!("{blocks:?}");
+        };
+        assert_eq!(text.text, "Para Heading");
+    }
 }
