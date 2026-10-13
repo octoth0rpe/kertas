@@ -26,6 +26,7 @@ use kami::reveal::{StyledSource, styled_source};
 use kami::settings::TextWidth;
 
 use crate::app_settings::{self, AppSettings};
+use crate::builtin::Builtin;
 use crate::rendered_block::{ClickTarget, render_block};
 use crate::revealed_block::{RevealedBlock, TextInput, render_gap, render_revealed};
 use crate::tab_strip::{render_tab_strip, select_tab};
@@ -224,6 +225,9 @@ enum LineGoal {
 pub struct DocumentView {
     focus_handle: FocusHandle,
     open: Option<OpenDocument>,
+    /// Set when showing one of Kami's built-in documents, which are
+    /// view-only.
+    builtin: Option<Builtin>,
     theme: Theme,
     text_width: TextWidth,
     /// Whether the blinking caret is currently drawn.
@@ -272,6 +276,7 @@ impl DocumentView {
         Self {
             focus_handle,
             open: None,
+            builtin: None,
             theme: Theme::current(window, cx),
             text_width: app_settings::get(cx).text_width,
             caret_visible: true,
@@ -311,7 +316,10 @@ impl DocumentView {
         let Some(open) = &self.open else {
             return;
         };
-        let name = open.document.display_name();
+        let name = match self.builtin {
+            Some(builtin) => builtin.title().to_owned(),
+            None => open.document.display_name(),
+        };
         window.set_window_title(&name);
         window.set_document_path(open.document.path());
         // GPUI doesn't update tab titles from the window title.
@@ -336,6 +344,23 @@ impl DocumentView {
         }
     }
 
+    /// The document's text, for the smoke test.
+    #[cfg(debug_assertions)]
+    pub fn text(&self) -> String {
+        self.open
+            .as_ref()
+            .map(|open| open.model.text.to_string())
+            .unwrap_or_default()
+    }
+
+    /// Whether there's a caret, for the smoke test.
+    #[cfg(debug_assertions)]
+    pub fn has_caret(&self) -> bool {
+        self.open
+            .as_ref()
+            .is_some_and(|open| open.selection.is_some())
+    }
+
     /// The theme the view is drawn with, for the smoke test.
     #[cfg(debug_assertions)]
     pub fn theme(&self) -> Theme {
@@ -351,6 +376,17 @@ impl DocumentView {
     // Files
 
     /// Starts a new untitled document, ready for typing.
+    /// Shows one of Kami's built-in documents, view-only.
+    pub fn open_builtin(&mut self, builtin: Builtin, window: &mut Window, cx: &mut Context<Self>) {
+        self.builtin = Some(builtin);
+        self.load(Document::from_text(builtin.text()), window, cx);
+    }
+
+    /// The built-in document shown, if any.
+    pub fn builtin(&self) -> Option<Builtin> {
+        self.builtin
+    }
+
     pub fn start_untitled(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.load(Document::untitled(), window, cx);
         self.move_caret(0, false, cx);
@@ -365,9 +401,10 @@ impl DocumentView {
     /// untitled one that's still empty. Opening a file reuses such a window
     /// instead of adding a tab.
     pub fn is_pristine(&self) -> bool {
-        self.open
-            .as_ref()
-            .is_none_or(|open| open.document.path().is_none() && open.document.buffer().is_empty())
+        self.builtin.is_none()
+            && self.open.as_ref().is_none_or(|open| {
+                open.document.path().is_none() && open.document.buffer().is_empty()
+            })
     }
 
     fn save(&mut self, _: &Save, window: &mut Window, cx: &mut Context<Self>) {
@@ -389,6 +426,10 @@ impl DocumentView {
         let Some(open) = &mut self.open else {
             return Task::ready(false);
         };
+        // Built-in documents have nothing to save.
+        if self.builtin.is_some() {
+            return Task::ready(false);
+        }
         let current_path = open.document.path().map(Path::to_owned);
         if !choose_path && current_path.is_some() {
             let result = open.document.save();
@@ -559,6 +600,11 @@ impl DocumentView {
     }
 
     fn set_selection(&mut self, selection: Selection, cx: &mut Context<Self>) {
+        // Built-in documents are view-only: no caret, so every movement,
+        // click and edit stops here.
+        if self.builtin.is_some() {
+            return;
+        }
         let Some(open) = &mut self.open else {
             return;
         };
@@ -807,6 +853,9 @@ impl DocumentView {
     /// Replaces `range` with `text`, records it for undo, and updates the
     /// display. The caret ends after the inserted text.
     fn replace(&mut self, range: Range<usize>, text: &str, kind: EditKind, cx: &mut Context<Self>) {
+        if self.builtin.is_some() {
+            return;
+        }
         let Some(open) = &mut self.open else {
             return;
         };

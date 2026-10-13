@@ -7,6 +7,7 @@ use gpui::{App, Menu, MenuItem, NoAction, actions};
 use kami::settings::{Settings, TextWidth, ThemeSetting};
 
 use crate::app_settings::{self, AppSettings};
+use crate::builtin::{self, Builtin};
 use crate::document_view::{CloseWindow, New, Open, Quit, Save, SaveAs};
 
 actions!(
@@ -18,6 +19,8 @@ actions!(
         UseStandardWidth,
         UseWideWidth,
         UseFullWidth,
+        OpenHelp,
+        OpenKeyboardShortcuts,
     ]
 );
 
@@ -42,6 +45,11 @@ pub fn init(cx: &mut App) {
     cx.on_action(move |_: &UseWideWidth, cx| wide(cx));
     let full = width(TextWidth::Full);
     cx.on_action(move |_: &UseFullWidth, cx| full(cx));
+
+    cx.on_action(|_: &OpenHelp, cx| cx.defer(|cx| builtin::open(Builtin::Help, cx)));
+    cx.on_action(|_: &OpenKeyboardShortcuts, cx| {
+        cx.defer(|cx| builtin::open(Builtin::KeyboardShortcuts, cx))
+    });
 
     cx.set_menus(menus(app_settings::get(cx)));
     cx.observe_global::<AppSettings>(|cx| cx.set_menus(menus(app_settings::get(cx))))
@@ -75,6 +83,10 @@ fn menus(settings: Settings) -> Vec<Menu> {
             // macOS adds Enter Full Screen, with an icon, at the end. In a
             // section of its own, its icon doesn't indent the items above.
             MenuItem::separator(),
+        ]),
+        Menu::new("Help").items([
+            MenuItem::action("Kami Help", OpenHelp),
+            MenuItem::action("Keyboard Shortcuts", OpenKeyboardShortcuts),
         ]),
     ]
 }
