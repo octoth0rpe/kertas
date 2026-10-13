@@ -20,6 +20,7 @@ mod settings_window;
 #[cfg(debug_assertions)]
 mod smoke;
 mod tab_strip;
+mod text_style;
 mod theme;
 mod windows;
 mod zoom;

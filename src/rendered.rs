@@ -11,6 +11,18 @@ use crate::blocks::{BlockKind, Blocks};
 use crate::definitions::Definitions;
 use crate::inline::{InlineBuilder, InlineText};
 
+/// Each heading level's text size, relative to body text, on screen and
+/// in print.
+pub const HEADING_SCALE: [f64; 6] = [2.0, 1.5, 1.25, 1.0, 0.875, 0.85];
+
+/// The text size for a heading `level` (1 to 6), relative to body text.
+pub fn heading_scale(level: u8) -> f64 {
+    HEADING_SCALE[usize::from(level.clamp(1, 6)) - 1]
+}
+
+/// The font code is shown in, on screen and in print.
+pub const CODE_FONT: &str = "Menlo";
+
 /// A block prepared for display.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RenderedBlock {
