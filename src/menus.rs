@@ -21,6 +21,7 @@ actions!(
         UseFullWidth,
         OpenHelp,
         OpenKeyboardShortcuts,
+        OpenAbout,
     ]
 );
 
@@ -46,6 +47,7 @@ pub fn init(cx: &mut App) {
     let full = width(TextWidth::Full);
     cx.on_action(move |_: &UseFullWidth, cx| full(cx));
 
+    cx.on_action(|_: &OpenAbout, cx| cx.defer(|cx| builtin::open(Builtin::About, cx)));
     cx.on_action(|_: &OpenHelp, cx| cx.defer(|cx| builtin::open(Builtin::Help, cx)));
     cx.on_action(|_: &OpenKeyboardShortcuts, cx| {
         cx.defer(|cx| builtin::open(Builtin::KeyboardShortcuts, cx))
@@ -60,7 +62,11 @@ fn menus(settings: Settings) -> Vec<Menu> {
     let theme = |value: ThemeSetting| settings.theme == value;
     let width = |value: TextWidth| settings.text_width == value;
     vec![
-        Menu::new("Kami").items([MenuItem::action("Quit Kami", Quit)]),
+        Menu::new("Kami").items([
+            MenuItem::action("About Kami", OpenAbout),
+            MenuItem::separator(),
+            MenuItem::action("Quit Kami", Quit),
+        ]),
         Menu::new("File").items([
             MenuItem::action("New", New),
             MenuItem::action("Open…", Open),
