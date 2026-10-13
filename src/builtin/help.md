@@ -41,7 +41,7 @@ Each document opens in its own tab. **⌘1** to **⌘9** go straight to a tab. T
 
 ## From the terminal
 
-**Kertas → Install Command Line Tool…** installs the `kertas` command. Then `kertas notes.md` opens a file in Kertas. A file that doesn't exist yet opens as a new document, and saving creates it.
+**Kertas → Install Command Line Tool…** installs the `kt` command. Then `kt notes.md` opens a file in Kertas. A file that doesn't exist yet opens as a new document, and saving creates it.
 
 ## Appearance
 

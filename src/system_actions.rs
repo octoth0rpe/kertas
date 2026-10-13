@@ -1,5 +1,5 @@
 //! The Kertas menu's one-time system actions: making Kertas the default app
-//! for Markdown files (#23) and installing the `kertas` command (#27).
+//! for Markdown files (#23) and installing the `kt` command (#27).
 //! Each reports what happened, or why it couldn't, in an alert.
 
 use gpui::{App, AppContext, MenuItem, PromptLevel, actions};
@@ -90,7 +90,7 @@ fn change_command(change: fn() -> Result<(), String>, installing: bool, cx: &mut
         _ => None,
     };
     if let Some(problem) = problem {
-        alert("Couldn't install the kertas command", &problem, cx);
+        alert("Couldn't install the kt command", &problem, cx);
         return;
     }
     let task = cx.background_spawn(async move { change() });
@@ -100,30 +100,26 @@ fn change_command(change: fn() -> Result<(), String>, installing: bool, cx: &mut
             menus::refresh(cx);
             match (result, installing) {
                 (Ok(()), true) => alert(
-                    "The kertas command is installed",
+                    "The kt command is installed",
                     &format!(
-                        "It's at {}. In Terminal, `kertas notes.md` opens a file in Kertas.",
+                        "It's at {}. In Terminal, `kt notes.md` opens a file in Kertas.",
                         cli_tool::LINK
                     ),
                     cx,
                 ),
                 (Ok(()), false) => alert(
-                    "The kertas command is uninstalled",
+                    "The kt command is uninstalled",
                     &format!("{} has been removed.", cli_tool::LINK),
                     cx,
                 ),
                 // Cancelling the password prompt isn't an error.
                 (Err(error), _) if error.contains("(-128)") => {}
-                (Err(error), true) => alert(
-                    "Couldn't install the kertas command",
-                    &capitalize(&error),
-                    cx,
-                ),
-                (Err(error), false) => alert(
-                    "Couldn't uninstall the kertas command",
-                    &capitalize(&error),
-                    cx,
-                ),
+                (Err(error), true) => {
+                    alert("Couldn't install the kt command", &capitalize(&error), cx)
+                }
+                (Err(error), false) => {
+                    alert("Couldn't uninstall the kt command", &capitalize(&error), cx)
+                }
             }
         });
     })

@@ -230,7 +230,7 @@ fn same_file(a: &Path, b: &Path) -> bool {
 }
 
 /// What a URL sent to Kertas asks for: from Finder and the Dock (`file://`),
-/// or from the `kertas` command (`kertas://`).
+/// or from the `kt` command (`kertas://`).
 #[derive(Debug, PartialEq, Eq)]
 pub enum UrlRequest {
     /// Open this file, or start a new document saved there if it doesn't

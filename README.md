@@ -98,7 +98,7 @@ scripts/bundle-macos.sh --release   # a release: runs every check and smoke test
 
 The app runs on Apple Silicon Macs, and opens Markdown files from Finder, Open With and the Dock. It's signed for the Mac it was built on only. Distributing it to others needs a Developer ID signature and notarization, which is planned for later.
 
-Kertas → Settings… can install a `kertas` command for the terminal (`kertas notes.md` opens files in Kertas). It's a link at `/usr/local/bin/kertas` to a script inside Kertas.app, `macos/kertas`.
+Kertas → Settings… can install a `kt` command for the terminal (`kt notes.md` opens files in Kertas). It's a link at `/usr/local/bin/kt` to a script inside Kertas.app, `macos/kt`.
 
 The icon is built from `macos/icon-light.svg` and `macos/icon-dark.svg`. After changing either, run `scripts/make-icon.sh`. Finder shows the light icon. While Kertas runs, its Dock icon follows the system's light or dark mode.
 
