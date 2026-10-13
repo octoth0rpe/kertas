@@ -8,6 +8,7 @@
 | ⌘O | Open a file |
 | ⌘S | Save |
 | ⇧⌘S | Save As |
+| ⌘P | Print |
 | ⌘W | Close the document |
 | ⌘Q | Quit Kami |
 | ⌘, | Settings |

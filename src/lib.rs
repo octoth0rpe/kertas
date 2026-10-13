@@ -8,6 +8,7 @@ pub mod history;
 pub mod inline;
 pub mod model;
 pub mod movement;
+pub mod print_layout;
 pub mod rendered;
 pub mod reveal;
 pub mod settings;

@@ -35,6 +35,7 @@ pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
         Ok("help") => return smoke_help(window, cx),
         Ok("settings-window") => return smoke_settings_window(window, cx),
         Ok("reveal") => return smoke_reveal(window, cx),
+        Ok("print") => return smoke_print(window, cx),
         Ok(_) => {}
     }
     let mut steps: Vec<Step> = Vec::new();
@@ -723,6 +724,26 @@ fn smoke_reveal(window: WindowHandle<DocumentView>, cx: &mut App) {
         );
         window.update(cx, |view, _, _| view.end_drag()).ok();
 
+        println!("SMOKE {}", if ok { "OK" } else { "FAILED" });
+        cx.update(|cx| cx.quit());
+    })
+    .detach();
+}
+
+/// `KAMI_SMOKE=print`, with `KAMI_PRINT_PDF` set: prints the document to
+/// that PDF without any panels.
+fn smoke_print(window: WindowHandle<DocumentView>, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        cx.background_executor().timer(STEP * 10).await;
+        let path = std::path::PathBuf::from(std::env::var_os("KAMI_PRINT_PDF").unwrap_or_default());
+        let model = window.read_with(cx, |view, _| view.model()).ok().flatten();
+        let printed = cx.update(|_| {
+            let mtm = objc2::MainThreadMarker::new()?;
+            Some(crate::print::save_pdf(&*model?, &path, mtm))
+        });
+        let size = std::fs::metadata(&path).map_or(0, |metadata| metadata.len());
+        println!("printed: {printed:?}, {size} bytes");
+        let ok = printed == Some(true) && size > 0;
         println!("SMOKE {}", if ok { "OK" } else { "FAILED" });
         cx.update(|cx| cx.quit());
     })

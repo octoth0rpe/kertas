@@ -9,7 +9,7 @@ use kami::settings::{Settings, TextWidth, ThemeSetting};
 use crate::app_settings::{self, AppSettings};
 use crate::builtin::{self, Builtin};
 use crate::document_view::{
-    CloseWindow, New, Open, Quit, ResetZoom, Save, SaveAs, ZoomIn, ZoomOut,
+    CloseWindow, New, Open, Print, Quit, ResetZoom, Save, SaveAs, ZoomIn, ZoomOut,
 };
 use crate::settings_window;
 
@@ -80,6 +80,8 @@ fn menus(settings: Settings) -> Vec<Menu> {
             MenuItem::separator(),
             MenuItem::action("Save", Save),
             MenuItem::action("Save As…", SaveAs),
+            MenuItem::separator(),
+            MenuItem::action("Print…", Print),
             MenuItem::separator(),
             MenuItem::action("Close", CloseWindow),
         ]),
