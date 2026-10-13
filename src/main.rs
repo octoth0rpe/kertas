@@ -1,6 +1,8 @@
 mod app_settings;
 mod builtin;
 #[cfg(target_os = "macos")]
+mod default_app;
+#[cfg(target_os = "macos")]
 mod dock_icon;
 mod document_view;
 #[cfg(target_os = "macos")]
