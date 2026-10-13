@@ -4,10 +4,10 @@
 | {{package.name}} | {{package.version}} | {{license}} |
 {{/each}}
 | Rust standard library | | MIT OR Apache-2.0 |
+@@@ licenses.md @@@
+# Licenses
 
-### License notices
-
-These are the notices the libraries' licenses ask to be included with Kami. Libraries that share a notice word for word are listed together.
+Kami is built on open-source libraries, listed in **Kami → About Kami**. These are the notices their licenses ask to be included with Kami. Libraries that share a notice word for word are listed together.
 
 {{#each licenses}}
 **{{#each used_by}}{{crate.name}} {{crate.version}}{{#unless @last}}, {{/unless}}{{/each}}** ({{name}})

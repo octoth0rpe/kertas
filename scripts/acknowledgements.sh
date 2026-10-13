@@ -1,7 +1,8 @@
 #!/bin/sh
-# Writes src/builtin/acknowledgements.md, the open-source libraries in
-# Kami's About tab: a list of them, then the license notices their licenses
-# ask to be included with Kami. Run it after changing dependencies (the
+# Writes the open-source libraries Kami uses: the list of them in the
+# About tab (src/builtin/acknowledgements.md), and the license notices
+# their licenses ask to be included with Kami, in the Licenses document
+# (src/builtin/licenses.md). Run it after changing dependencies (the
 # pre-commit hook in scripts/hooks runs it when Cargo.lock changes).
 #
 #   scripts/acknowledgements.sh           # write the file
@@ -16,6 +17,7 @@ set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
 out=src/builtin/acknowledgements.md
+licenses=src/builtin/licenses.md
 
 if ! command -v cargo-about >/dev/null 2>&1; then
     echo "acknowledgements.sh: cargo-about is missing; install it with:" >&2
@@ -50,5 +52,8 @@ cargo about generate --locked -c scripts/about.toml scripts/acknowledgements.hbs
     rm -f "$out.tmp"
     exit 1
 }
-mv "$out.tmp" "$out"
-echo "Wrote $out ($(libraries < "$out" | wc -l | tr -d ' ') libraries)"
+# The template writes both files, separated by a line naming the second.
+sed '/^@@@ licenses.md @@@$/,$d' "$out.tmp" > "$out"
+sed '1,/^@@@ licenses.md @@@$/d' "$out.tmp" > "$licenses"
+rm "$out.tmp"
+echo "Wrote $out ($(libraries < "$out" | wc -l | tr -d ' ') libraries) and $licenses"

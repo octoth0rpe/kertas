@@ -50,7 +50,7 @@ The View menu changes `theme` and `text_width` too.
 
 ### Dependencies
 
-The About tab lists the open-source libraries Kami uses, with the license notices their licenses ask to be included. `scripts/acknowledgements.sh` generates them with [cargo-about](https://github.com/EmbarkStudios/cargo-about) (`cargo install --locked cargo-about --features cli`), configured in `scripts/about.toml`. It needs the network, since a few libraries don't include their license files and cargo-about fetches them from the libraries' repositories.
+The About tab lists the open-source libraries Kami uses, and Help → Licenses shows the license notices their licenses ask to be included. `scripts/acknowledgements.sh` generates them with [cargo-about](https://github.com/EmbarkStudios/cargo-about) (`cargo install --locked cargo-about --features cli`), configured in `scripts/about.toml`. It needs the network, since a few libraries don't include their license files and cargo-about fetches them from the libraries' repositories.
 
 Run it after adding or updating a dependency, or let git do it: after `git config core.hooksPath scripts/hooks`, a commit that changes `Cargo.lock` regenerates the acknowledgements, and stops so you can add them. `scripts/check.sh` checks they list exactly the libraries in `Cargo.lock`.
 

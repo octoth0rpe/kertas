@@ -24,6 +24,7 @@ actions!(
         UseFullWidth,
         OpenHelp,
         OpenKeyboardShortcuts,
+        OpenLicenses,
         OpenAbout,
         OpenSettings,
     ]
@@ -54,6 +55,7 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &OpenSettings, cx| cx.defer(settings_window::open));
     cx.on_action(|_: &OpenAbout, cx| cx.defer(|cx| builtin::open(Builtin::About, cx)));
     cx.on_action(|_: &OpenHelp, cx| cx.defer(|cx| builtin::open(Builtin::Help, cx)));
+    cx.on_action(|_: &OpenLicenses, cx| cx.defer(|cx| builtin::open(Builtin::Licenses, cx)));
     cx.on_action(|_: &OpenKeyboardShortcuts, cx| {
         cx.defer(|cx| builtin::open(Builtin::KeyboardShortcuts, cx))
     });
@@ -116,6 +118,8 @@ fn menus(settings: Settings) -> Vec<Menu> {
         Menu::new("Help").items([
             MenuItem::action("Kami Help", OpenHelp),
             MenuItem::action("Keyboard Shortcuts", OpenKeyboardShortcuts),
+            MenuItem::separator(),
+            MenuItem::action("Licenses", OpenLicenses),
         ]),
     ]
 }
