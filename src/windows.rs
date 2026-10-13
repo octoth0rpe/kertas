@@ -249,7 +249,7 @@ pub fn parse_url(url: &str) -> Option<UrlRequest> {
         .or_else(|| url.strip_prefix("file://localhost"))
         .or_else(|| url.strip_prefix("file://"))?;
     path.starts_with('/')
-        .then(|| UrlRequest::Open(percent_decode(path)))
+        .then(|| UrlRequest::Open(kami::links::percent_decode(path)))
 }
 
 /// Handles a URL sent to Kami.
@@ -264,33 +264,6 @@ pub fn handle_url(url: &str, cx: &mut App) {
         }
         None => {}
     }
-}
-
-/// Percent-decodes a URL path to bytes, since paths aren't necessarily
-/// UTF-8.
-fn percent_decode(path: &str) -> PathBuf {
-    use std::os::unix::ffi::OsStringExt;
-
-    let bytes = path.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        let escaped = (bytes[index] == b'%')
-            .then(|| path.get(index + 1..index + 3))
-            .flatten()
-            .and_then(|hex| u8::from_str_radix(hex, 16).ok());
-        match escaped {
-            Some(byte) => {
-                decoded.push(byte);
-                index += 3;
-            }
-            None => {
-                decoded.push(bytes[index]);
-                index += 1;
-            }
-        }
-    }
-    PathBuf::from(std::ffi::OsString::from_vec(decoded))
 }
 
 #[cfg(test)]

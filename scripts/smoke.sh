@@ -75,6 +75,7 @@ run settings showcase.md
 run settings-window showcase.md
 run help showcase.md
 run reveal showcase.md
+run links links.md
 run print showcase.md KAMI_PRINT_PDF="$work/print/out.pdf"
 run disk showcase.md
 run autosave showcase.md

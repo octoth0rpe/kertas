@@ -65,7 +65,7 @@ A selection that spans several blocks reveals all of them.
 | E3 | Smart list continuation: Enter continues a list, Enter on an empty item ends it. | SHOULD |
 | E4 | Paste of rich text (e.g. from a browser) is converted to Markdown. | LATER |
 | E5 | Find and replace. | SHOULD |
-| E6 | Clicking a link while reading follows it; editing the link text does not. (Mechanism TBD, e.g. Cmd/Ctrl-click.) | MUST |
+| E6 | Clicking a link while reading follows it. A plain click always follows the link, so there's no setting for it; the link is edited by revealing its block another way (clicking elsewhere in the block, or the keyboard). | MUST |
 
 ## 5. Appearance
 
@@ -125,13 +125,13 @@ A selection that spans several blocks reveals all of them.
 | Editing hint | `true` / `false` | `true` | SHOULD |
 | Max line width | number of characters, or `none` for full width | TBD (A1) | SHOULD |
 | Front matter display | `hidden`, `collapsed`, `shown` | `collapsed` | LATER |
-| Link click | `click`, `modifier-click` | `modifier-click` | LATER |
 | Restore open files on launch | `true` / `false` | `true` | LATER |
 | Autosave | `off`, or seconds after typing pauses (1–300) | `off` | SHOULD |
 
 Deliberately **not** settings:
 - **Indentation and line-ending style.** Fidelity (F2) means Kami keeps whatever each file already uses.
 - **How much of a list or quote to reveal (Q7).** Choose a good default rather than offering an option.
+- **How links are followed.** A plain click always follows a link (E6).
 
 ## Open questions
 

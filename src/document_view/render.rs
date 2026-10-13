@@ -37,6 +37,24 @@ fn column_width(width: TextWidth) -> Option<Rems> {
 }
 
 impl DocumentView {
+    /// Where item `index`'s text starts in the window: the top left of its
+    /// text column, for the smoke test to click on.
+    #[cfg(debug_assertions)]
+    pub fn text_origin(&self, index: usize, window: &Window) -> Option<gpui::Point<gpui::Pixels>> {
+        let bounds = self.open.as_ref()?.list_state.bounds_for_item(index)?;
+        // The frame's padding (see `block_frame`).
+        let padding = px(32.);
+        let available = bounds.size.width - padding * 2.;
+        let column = column_width(self.text_settings.text_width).map_or(available, |width| {
+            width.to_pixels(window.rem_size()).min(available)
+        });
+        let top = if index == 0 { padding } else { px(0.) };
+        Some(gpui::point(
+            bounds.left() + padding + (available - column) / 2.,
+            bounds.top() + top,
+        ))
+    }
+
     /// A bar at the bottom of the window reporting problems in the settings
     /// file (G4), until the user closes it.
     fn render_settings_problems(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
