@@ -34,6 +34,7 @@ pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
         Ok("settings") => return smoke_settings(window, cx),
         Ok("help") => return smoke_help(window, cx),
         Ok("settings-window") => return smoke_settings_window(window, cx),
+        Ok("reveal") => return smoke_reveal(window, cx),
         Ok(_) => {}
     }
     let mut steps: Vec<Step> = Vec::new();
@@ -621,6 +622,109 @@ fn smoke_settings_window(window: WindowHandle<DocumentView>, cx: &mut App) {
                 window.dispatch_action(Box::new(Quit), cx)
             })
             .ok();
+    })
+    .detach();
+}
+
+/// `KAMI_SMOKE=reveal`: clicking a block below a revealed one keeps it in
+/// place (C7), a selection across blocks reveals them all, dragging extends
+/// the selection, and Page Down scrolls without moving the caret.
+fn smoke_reveal(window: WindowHandle<DocumentView>, cx: &mut App) {
+    use crate::document_view::PageDown;
+
+    cx.spawn(async move |cx| {
+        let executor = cx.background_executor().clone();
+        let wait = || executor.timer(STEP * 10);
+        let mut ok = true;
+        let mut check = |name: &str, passed: bool| {
+            println!("{name}: {}", if passed { "ok" } else { "FAILED" });
+            ok &= passed;
+        };
+        wait().await;
+        let position = |cx: &mut gpui::AsyncApp, index: usize| {
+            window
+                .read_with(cx, |view, _| view.item_position(index))
+                .ok()
+                .flatten()
+        };
+        let click = |cx: &mut gpui::AsyncApp, offset: usize, extend: bool| {
+            window
+                .update(cx, |view, window, cx| {
+                    view.click(offset, extend, window, cx)
+                })
+                .ok();
+        };
+
+        // Page Down scrolls without moving the caret.
+        click(cx, 0, false);
+        wait().await;
+        let state = |cx: &mut gpui::AsyncApp| {
+            window
+                .read_with(cx, |view, _| (view.scroll_top(), view.reveal_state().1))
+                .unwrap_or_default()
+        };
+        let (scroll_before, selection_before) = state(cx);
+        window
+            .update(cx, |_, window, cx| {
+                window.dispatch_action(Box::new(PageDown), cx)
+            })
+            .ok();
+        wait().await;
+        let (scroll_after, selection_after) = state(cx);
+        println!("scroll: {scroll_before:?} -> {scroll_after:?}");
+        check(
+            "Page Down scrolls, caret stays",
+            scroll_after != scroll_before && selection_after == selection_before,
+        );
+
+        // Now well away from the top, so there's room to scroll, reveal a
+        // block, then click one further down: the first collapses above
+        // it, and the clicked block should stay put.
+        for _ in 0..2 {
+            window
+                .update(cx, |_, window, cx| {
+                    window.dispatch_action(Box::new(PageDown), cx)
+                })
+                .ok();
+            wait().await;
+        }
+        let (scroll_now, _) = state(cx);
+        let first = scroll_now.map_or(0, |(item, _)| item) + 1;
+        let (start, _) = position(cx, first).unwrap_or_default();
+        click(cx, start, false);
+        wait().await;
+        let before = position(cx, first + 3);
+        if let Some((start, _)) = before {
+            click(cx, start, false);
+        }
+        wait().await;
+        let after = position(cx, first + 3);
+        println!("block {} top: {before:?} -> {after:?}", first + 3);
+        check(
+            "clicked block stays in place",
+            matches!((before, after), (Some((_, a)), Some((_, b))) if (a - b).abs() < gpui::px(1.)),
+        );
+
+        // Drag from there two blocks on: all three reveal.
+        let target = position(cx, first + 5).map(|(start, _)| start + 1);
+        if let Some(target) = target {
+            window
+                .update(cx, |view, _, cx| view.drag_to(target, cx))
+                .ok();
+        }
+        wait().await;
+        let (revealed, selection) = window
+            .read_with(cx, |view, _| view.reveal_state())
+            .unwrap_or_default();
+        println!("revealed after drag: {revealed}, selection {selection:?}");
+        check(
+            "dragging selects across blocks and reveals them",
+            revealed == 3 && selection.is_some_and(|selection| Some(selection.head) == target),
+        );
+        window.update(cx, |view, _, _| view.end_drag()).ok();
+
+        println!("SMOKE {}", if ok { "OK" } else { "FAILED" });
+        cx.update(|cx| cx.quit());
     })
     .detach();
 }

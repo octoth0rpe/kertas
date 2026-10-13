@@ -45,6 +45,15 @@ impl ClickTarget {
             .ok();
     }
 
+    /// Extends the selection to `offset` in the block's source while the
+    /// mouse is dragged.
+    pub fn drag(&self, offset: usize, cx: &mut App) {
+        let offset = self.block_start + offset;
+        self.view
+            .update(cx, |view, cx| view.drag_to(offset, cx))
+            .ok();
+    }
+
     /// Finishes editing, as Escape does.
     pub fn finish_editing(&self, cx: &mut App) {
         self.view
@@ -308,6 +317,7 @@ fn clickable_text(text: &InlineText, style: &TextStyle) -> AnyElement {
     let layout = styled.layout().clone();
     let inline = text.clone();
     let click = style.click.clone();
+    let (drag_layout, drag_inline, drag) = (layout.clone(), inline.clone(), click.clone());
     div()
         .on_mouse_down(MouseButton::Left, move |event, window, cx| {
             let (Ok(index) | Err(index)) = layout.index_for_position(event.position);
@@ -318,6 +328,12 @@ fn clickable_text(text: &InlineText, style: &TextStyle) -> AnyElement {
                 cx,
             );
             cx.stop_propagation();
+        })
+        .on_mouse_move(move |event, _, cx| {
+            if event.pressed_button == Some(MouseButton::Left) {
+                let (Ok(index) | Err(index)) = drag_layout.index_for_position(event.position);
+                drag.drag(drag_inline.source_offset(index), cx);
+            }
         })
         .child(styled)
         .into_any_element()
@@ -334,12 +350,26 @@ fn clickable_source(
     let styled = StyledText::new(SharedString::from(expand_tabs(text)));
     let layout = styled.layout().clone();
     let click = style.click.clone();
+    let to_source = std::rc::Rc::new(to_source);
+    let (drag_layout, drag_original, drag_to_source, drag) = (
+        layout.clone(),
+        original.clone(),
+        to_source.clone(),
+        click.clone(),
+    );
     div()
         .on_mouse_down(MouseButton::Left, move |event, window, cx| {
             let (Ok(index) | Err(index)) = layout.index_for_position(event.position);
             let index = unexpand_tabs(&original, index);
             click.report(to_source(index), event.modifiers.shift, window, cx);
             cx.stop_propagation();
+        })
+        .on_mouse_move(move |event, _, cx| {
+            if event.pressed_button == Some(MouseButton::Left) {
+                let (Ok(index) | Err(index)) = drag_layout.index_for_position(event.position);
+                let index = unexpand_tabs(&drag_original, index);
+                drag.drag(drag_to_source(index), cx);
+            }
         })
         .child(styled)
         .into_any_element()

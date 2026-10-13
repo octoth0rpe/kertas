@@ -58,13 +58,15 @@ pub struct TextInput {
     pub layout_slot: Rc<RefCell<Option<TextLayout>>>,
 }
 
-/// Renders the revealed block as a list item.
+/// Renders a revealed block as a list item. `input` is set for the block
+/// holding the caret; other blocks a selection reveals don't take input or
+/// show the hint.
 pub fn render_revealed(
     block: RevealedBlock,
     base_font: &Font,
     theme: Theme,
     click: ClickTarget,
-    input: TextInput,
+    input: Option<TextInput>,
 ) -> AnyElement {
     let heading = revealed_heading(block.styled);
     let first = block.first;
@@ -86,7 +88,7 @@ pub fn render_gap(
     let first = caret.first;
     let heading = rendered_heading(block);
     let rendered = rendered_content(block, base_font, theme, click.clone());
-    let line = revealed_content(caret, base_font, theme, click.clone(), input);
+    let line = revealed_content(caret, base_font, theme, click.clone(), Some(input));
     let content = match gap {
         Gap::Above => div()
             .child(div().mb(px(GAP_SPACE)).child(line))
@@ -112,15 +114,41 @@ fn revealed_content(
     base_font: &Font,
     theme: Theme,
     click: ClickTarget,
-    input: TextInput,
+    input: Option<TextInput>,
 ) -> AnyElement {
+    let has_input = input.is_some();
     let heading = revealed_heading(block.styled);
     let monospace = block.styled.font == RevealFont::Monospace;
 
     // Tabs are shown as single spaces so offsets stay identical to the
     // source.
     let text = SharedString::from(block.source.replace('\t', " "));
-    let runs = text_runs(&block, base_font, theme, heading);
+    let mut runs = text_runs(&block, base_font, theme, heading);
+    // GPUI requires the runs to cover the text exactly. If they ever don't,
+    // show the source unstyled rather than crash.
+    let covered: usize = runs.iter().map(|run| run.len).sum();
+    if covered != text.len() {
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "KAMI BUG: styled spans cover {covered} of {} bytes: {:?} spans {:?}",
+            text.len(),
+            block.source,
+            block
+                .styled
+                .spans
+                .iter()
+                .map(|span| span.range.clone())
+                .collect::<Vec<_>>()
+        );
+        runs = vec![TextRun {
+            len: text.len(),
+            font: base_font.clone(),
+            color: theme.text,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        }];
+    }
     let styled = StyledText::new(text).with_runs(runs);
     let layout = styled.layout().clone();
 
@@ -129,15 +157,17 @@ fn revealed_content(
     let caret_overlay = canvas(
         |_, _, _| {},
         move |bounds, _, window, cx| {
-            // Publish the layout only now that it's been painted: its
-            // position queries panic before prepaint, and the list can
-            // build an item just to measure it without painting it.
-            *input.layout_slot.borrow_mut() = Some(caret_layout.clone());
-            window.handle_input(
-                &input.focus_handle,
-                ElementInputHandler::new(bounds, input.view),
-                cx,
-            );
+            if let Some(input) = input {
+                // Publish the layout only now that it's been painted: its
+                // position queries panic before prepaint, and the list can
+                // build an item just to measure it without painting it.
+                *input.layout_slot.borrow_mut() = Some(caret_layout.clone());
+                window.handle_input(
+                    &input.focus_handle,
+                    ElementInputHandler::new(bounds, input.view),
+                    cx,
+                );
+            }
             let Some(caret) = caret else {
                 return;
             };
@@ -156,12 +186,19 @@ fn revealed_content(
     .size_full();
 
     let click_text = click.clone();
+    let (drag_layout, drag) = (layout.clone(), click.clone());
     let text_element = div()
         .relative()
         .on_mouse_down(MouseButton::Left, move |event, window, cx| {
             let (Ok(index) | Err(index)) = layout.index_for_position(event.position);
             click_text.report(index, event.modifiers.shift, window, cx);
             cx.stop_propagation();
+        })
+        .on_mouse_move(move |event, _, cx| {
+            if event.pressed_button == Some(MouseButton::Left) {
+                let (Ok(index) | Err(index)) = drag_layout.index_for_position(event.position);
+                drag.drag(index, cx);
+            }
         })
         .child(styled)
         .child(caret_overlay);
@@ -213,7 +250,7 @@ fn revealed_content(
             cx.stop_propagation();
         })
         .child(content)
-        .child(hint)
+        .when(has_input, |this| this.child(hint))
         .into_any_element()
 }
 
