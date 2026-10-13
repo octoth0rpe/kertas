@@ -1,0 +1,203 @@
+//! Editing: the edit actions, the clipboard, undo, and the platform's text
+//! input (typing and input methods).
+
+use std::ops::Range;
+
+use gpui::{
+    Bounds, ClipboardItem, Context, EntityInputHandler, Pixels, Point, UTF16Selection, Window, px,
+    size,
+};
+use kami::editor::{Change, Editor};
+
+use super::{Copy, Cut, DeleteToLineStart, DocumentView, Paste, Redo, Undo};
+
+impl DocumentView {
+    // Editing
+
+    /// Makes an edit with the editor and shows the result. The caret's
+    /// goal x position is reset.
+    pub(super) fn edit(
+        &mut self,
+        cx: &mut Context<Self>,
+        edit: impl FnOnce(&mut Editor) -> Option<Change>,
+    ) {
+        let Some(open) = &mut self.open else {
+            return;
+        };
+        if let Some(change) = edit(&mut open.editor) {
+            open.goal_x = None;
+            self.apply(change, cx);
+        }
+    }
+
+    /// Re-measures the items an edit changed and shows its selection,
+    /// which reveals its item again.
+    fn apply(&mut self, change: Change, cx: &mut Context<Self>) {
+        let Some(open) = &mut self.open else {
+            return;
+        };
+        open.list_state
+            .splice(change.splice.old, change.splice.new_count);
+        // The revealed items' indices and sources may have changed.
+        open.revealed.clear();
+        *open.revealed_layout.borrow_mut() = None;
+        self.set_selection(change.selection, cx);
+    }
+
+    pub(super) fn delete_to_line_start(
+        &mut self,
+        _: &DeleteToLineStart,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(line_start) = self.line_edge(false) else {
+            return;
+        };
+        self.edit(cx, |editor| editor.delete_to_line_start(line_start));
+    }
+
+    pub(super) fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(text) = self
+            .open
+            .as_ref()
+            .and_then(|open| open.editor.selected_text())
+        {
+            cx.write_to_clipboard(ClipboardItem::new_string(text.to_owned()));
+        }
+    }
+
+    pub(super) fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
+        self.copy(&Copy, window, cx);
+        self.edit(cx, Editor::cut);
+    }
+
+    pub(super) fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
+            return;
+        };
+        self.edit(cx, |editor| editor.paste(&text));
+    }
+
+    pub(super) fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(change) = self.open.as_mut().and_then(|open| open.editor.undo()) {
+            self.apply(change, cx);
+        }
+    }
+
+    pub(super) fn redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(change) = self.open.as_mut().and_then(|open| open.editor.redo()) {
+            self.apply(change, cx);
+        }
+    }
+
+    // UTF-16 conversion for the platform input handler.
+
+    fn offset_to_utf16(&self, offset: usize) -> usize {
+        self.open
+            .as_ref()
+            .map_or(0, |open| open.editor.to_utf16(offset))
+    }
+
+    fn range_from_utf16(&self, range: &Range<usize>) -> Range<usize> {
+        self.open
+            .as_ref()
+            .map_or(0..0, |open| open.editor.range_from_utf16(range))
+    }
+}
+
+impl EntityInputHandler for DocumentView {
+    fn text_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        actual_range: &mut Option<Range<usize>>,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Option<String> {
+        let editor = &self.open.as_ref()?.editor;
+        let range = editor.range_from_utf16(&range_utf16);
+        actual_range.replace(editor.range_to_utf16(&range));
+        Some(editor.text()[range].to_owned())
+    }
+
+    fn selected_text_range(
+        &mut self,
+        _ignore_disabled_input: bool,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Option<UTF16Selection> {
+        let editor = &self.open.as_ref()?.editor;
+        let selection = editor.selection()?;
+        Some(UTF16Selection {
+            range: editor.range_to_utf16(&selection.range()),
+            reversed: selection.head < selection.anchor,
+        })
+    }
+
+    fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
+        let editor = &self.open.as_ref()?.editor;
+        Some(editor.range_to_utf16(&editor.marked()?))
+    }
+
+    fn unmark_text(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(open) = &mut self.open {
+            open.editor.unmark();
+        }
+        cx.notify();
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        text: &str,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.edit(cx, |editor| editor.replace_text_in_range(range_utf16, text));
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        text: &str,
+        new_selected_range_utf16: Option<Range<usize>>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.edit(cx, |editor| {
+            editor.replace_and_mark_text_in_range(range_utf16, text, new_selected_range_utf16)
+        });
+    }
+
+    fn bounds_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        _element_bounds: Bounds<Pixels>,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Option<Bounds<Pixels>> {
+        let range = self.range_from_utf16(&range_utf16);
+        let (layout, item_start) = self.revealed_layout()?;
+        let start = layout.position_for_index(range.start.checked_sub(item_start)?)?;
+        let end = layout
+            .position_for_index(range.end.checked_sub(item_start)?)
+            .unwrap_or(start);
+        let line_height = layout.line_height();
+        let width = if end.y == start.y {
+            end.x - start.x
+        } else {
+            px(0.)
+        };
+        Some(Bounds::new(start, size(width, line_height)))
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        point: Point<Pixels>,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Option<usize> {
+        let (layout, item_start) = self.revealed_layout()?;
+        let (Ok(index) | Err(index)) = layout.index_for_position(point);
+        Some(self.offset_to_utf16(item_start + index))
+    }
+}
