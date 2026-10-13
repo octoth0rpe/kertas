@@ -46,7 +46,12 @@ pub fn open(cx: &mut App) {
             .update(cx, |_, window, _| window.activate_window())
             .ok();
     }
-    let bounds = Bounds::centered(None, size(px(540.), px(700.)), cx);
+    // Tall enough for every row, but never taller than the screen; then
+    // the rows scroll.
+    let height = cx.primary_display().map_or(px(SHEET_HEIGHT), |display| {
+        px(SHEET_HEIGHT).min(display.bounds().size.height - px(80.))
+    });
+    let bounds = Bounds::centered(None, size(px(540.), height), cx);
     let window = cx
         .open_window(
             WindowOptions {
@@ -83,6 +88,28 @@ struct Choice {
     /// The setting's value in the file when it's chosen.
     value: toml_edit::Value,
     selected: bool,
+}
+
+/// The settings sheet's height, enough for every row.
+const SHEET_HEIGHT: f32 = 840.;
+
+/// Where the rows end and the Done button's row starts, when the settings
+/// sheet was last laid out, for the smoke test: the rows should fit
+/// without scrolling.
+#[derive(Default)]
+pub struct RowsFit {
+    pub rows_bottom: gpui::Pixels,
+    pub footer_top: gpui::Pixels,
+}
+
+impl gpui::Global for RowsFit {}
+
+/// An empty element that records where it's laid out in [`RowsFit`].
+fn measure(record: fn(&mut RowsFit, gpui::Pixels)) -> impl IntoElement {
+    gpui::canvas(
+        move |bounds, _, cx| record(cx.default_global::<RowsFit>(), bounds.top()),
+        |_, _, _, _| {},
+    )
 }
 
 pub struct SettingsWindow {
@@ -327,7 +354,11 @@ impl SettingsWindow {
     }
 
     /// `content` with `note`, if any, beneath it.
-    fn with_note(&self, content: impl IntoElement, note: Option<&'static str>) -> gpui::Div {
+    fn with_note(
+        &self,
+        content: impl IntoElement,
+        note: Option<impl Into<SharedString>>,
+    ) -> gpui::Div {
         div()
             .flex()
             .flex_col()
@@ -504,7 +535,13 @@ impl SettingsWindow {
 
     /// A row: a label, then buttons for the choices with the current one
     /// selected. Choosing one sets the setting in the settings file.
-    fn choices(&self, setting: &'static Setting, choices: Vec<Choice>) -> impl IntoElement {
+    /// `note` is shown beneath them, if any.
+    fn choices(
+        &self,
+        setting: &'static Setting,
+        choices: Vec<Choice>,
+        note: Option<SharedString>,
+    ) -> impl IntoElement {
         let theme = self.theme;
         let key = setting.key;
         let buttons = choices.into_iter().map(|choice| {
@@ -546,7 +583,7 @@ impl SettingsWindow {
             .rounded_lg()
             .bg(theme.code_background)
             .children(buttons);
-        self.labelled(setting.label, self.with_note(buttons, setting.note))
+        self.labelled(setting.label, self.with_note(buttons, note))
     }
 
     /// The row for `setting`, showing its value in `settings`.
@@ -567,7 +604,8 @@ impl SettingsWindow {
                         selected: value == current,
                     })
                     .collect();
-                self.choices(setting, choices).into_any_element()
+                self.choices(setting, choices, setting.note.map(Into::into))
+                    .into_any_element()
             }
             Kind::Numbers { choices, get, .. } => {
                 let current = get(settings);
@@ -579,7 +617,8 @@ impl SettingsWindow {
                         selected: n == current,
                     })
                     .collect();
-                self.choices(setting, choices).into_any_element()
+                self.choices(setting, choices, setting.note.map(Into::into))
+                    .into_any_element()
             }
             Kind::Integer {
                 range, unit, get, ..
@@ -597,6 +636,31 @@ impl SettingsWindow {
                 .font(setting, default, get(settings), cx)
                 .into_any_element(),
             Kind::Bool { get, .. } => self.checkbox(setting, get(settings)).into_any_element(),
+            Kind::OffOrInteger { on, get, .. } => {
+                let current = get(settings);
+                let choices = vec![
+                    Choice {
+                        label: "Off".into(),
+                        value: "off".into(),
+                        selected: current.is_none(),
+                    },
+                    Choice {
+                        label: "After a pause".into(),
+                        value: i64::from(current.unwrap_or(*on)).into(),
+                        selected: current.is_some(),
+                    },
+                ];
+                let note = match current {
+                    Some(seconds) => format!(
+                        "Saves {seconds} {} after you stop typing, and when you switch \
+                         away or quit.",
+                        if seconds == 1 { "second" } else { "seconds" }
+                    ),
+                    None => "Documents are saved only when you save them.".to_owned(),
+                };
+                self.choices(setting, choices, Some(note.into()))
+                    .into_any_element()
+            }
         }
     }
 }
@@ -655,9 +719,28 @@ impl Render for SettingsWindow {
             .bg(self.theme.background)
             .text_color(self.theme.text)
             .text_size(px(13.))
-            .children(rows)
-            .children(system_rows)
-            .child(div().flex_1())
-            .child(div().flex().justify_end().child(done))
+            .child(
+                div()
+                    .id("rows")
+                    .flex_1()
+                    .min_h(px(0.))
+                    .overflow_y_scroll()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_5()
+                            .children(rows)
+                            .children(system_rows)
+                            .child(measure(|fit, top| fit.rows_bottom = top)),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .child(measure(|fit, top| fit.footer_top = top))
+                    .child(done),
+            )
     }
 }

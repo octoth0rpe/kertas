@@ -19,6 +19,10 @@ Click any block, such as a paragraph, heading, list or table, to edit it. That b
 
 See **Help → Keyboard Shortcuts** for every shortcut.
 
+## Saving
+
+**⌘S** saves, and **⇧⌘S** (Save As) saves under another name or in another folder. To save automatically, choose **After a pause** for **Autosave** in **Kami → Settings…**. Documents then save a few seconds after you stop typing, when you switch to another tab, window or app, and when you close them or quit. A new document is only saved automatically once you've saved it the first time.
+
 ## When another app changes a file
 
 If another app changes a document's file, such as another editor or `git checkout`, Kami shows the new version straight away. **⌘Z** brings back what you had. If you have unsaved changes, Kami asks first: **Reload** replaces your changes with the new file, and **Keep Mine** keeps them, so saving writes over it. If the file is deleted or moved, Kami keeps the document open, and saving puts the file back.
@@ -54,6 +58,7 @@ body_font = "Charter" # any installed font; the system font if not set
 code_font = "SF Mono" # Menlo if not set
 tab_width = 2         # how wide tab characters in code look: 2, 4 or 8 spaces
 editing_hint = false  # hide keyboard hints on the block being edited
+autosave = 5          # save 5 seconds after typing stops; "off" if not set
 ```
 
 If the file has a mistake, Kami uses the default for that setting and shows what's wrong at the bottom of the window.

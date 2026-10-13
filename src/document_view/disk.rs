@@ -107,6 +107,7 @@ impl DocumentView {
         if let Some(change) = open.disk_change.take() {
             open.editor.accept_disk_change(&change);
         }
+        self.schedule_autosave(cx);
         cx.notify();
     }
 

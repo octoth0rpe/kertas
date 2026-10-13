@@ -42,6 +42,7 @@ impl DocumentView {
         open.revealed.clear();
         *open.revealed_layout.borrow_mut() = None;
         self.set_selection(change.selection, cx);
+        self.schedule_autosave(cx);
     }
 
     pub(super) fn delete_to_line_start(

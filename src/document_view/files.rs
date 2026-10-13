@@ -132,6 +132,7 @@ impl DocumentView {
             Ok(()) => {
                 if let Some(open) = &mut self.open {
                     open.disk_change = None;
+                    open.autosave_paused = false;
                 }
                 // Save As moves the document to another file.
                 self.watch_file(window, cx);
@@ -193,7 +194,8 @@ impl DocumentView {
     /// Whether the window may close now. With unsaved changes, asks first
     /// and closes the window itself once that's resolved.
     pub(super) fn should_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if !self.is_dirty() {
+        // With autosave on, changes are saved rather than asked about.
+        if !self.is_dirty() || self.autosave(window, cx) {
             return true;
         }
         let confirmed = self.confirm_discard(window, cx);
@@ -255,7 +257,7 @@ fn show_save_error(err: &SaveError, window: &mut Window, cx: &mut Context<Docume
     cx.spawn(async move |_, _| answer.await.ok()).detach();
 }
 
-fn capitalize(text: &str) -> String {
+pub(super) fn capitalize(text: &str) -> String {
     let mut chars = text.chars();
     match chars.next() {
         Some(first) => first.to_uppercase().chain(chars).collect(),
