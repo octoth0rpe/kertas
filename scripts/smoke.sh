@@ -76,6 +76,7 @@ run settings-window showcase.md
 run help showcase.md
 run reveal showcase.md
 run print showcase.md KAMI_PRINT_PDF="$work/print/out.pdf"
+run disk showcase.md
 run quit showcase.md --exits
 run bench 10k.md
 echo "All smoke tests passed."

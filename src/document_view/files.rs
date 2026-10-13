@@ -130,6 +130,11 @@ impl DocumentView {
     ) -> bool {
         match result {
             Ok(()) => {
+                if let Some(open) = &mut self.open {
+                    open.disk_change = None;
+                }
+                // Save As moves the document to another file.
+                self.watch_file(window, cx);
                 self.update_window_title(window, cx);
                 cx.notify();
                 true

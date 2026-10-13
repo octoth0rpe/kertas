@@ -12,9 +12,10 @@
 //!   saves, so the text can be checked.
 //! - `bench`: times 500 inserts in the middle of the document.
 //! - `tabs`, `settings`, `settings-window`, `help`, `reveal`, `print`,
-//!   `quit`: see each function.
+//!   `disk`, `quit`: see each function.
 
 use std::cell::Cell;
+use std::path::Path;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -42,6 +43,7 @@ pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
         "settings-window" => smoke_settings_window(window, cx),
         "reveal" => smoke_reveal(window, cx),
         "print" => smoke_print(window, cx),
+        "disk" => smoke_disk(window, cx),
         "bench" => smoke_bench(window, cx),
         _ => smoke_steps(window, &mode, cx),
     }
@@ -800,6 +802,153 @@ fn smoke_print(window: WindowHandle<DocumentView>, cx: &mut App) {
         checks.check(
             &format!("printed to a PDF ({size} bytes)"),
             printed == Some(true) && size > 0,
+        );
+        checks.finish(cx);
+    })
+    .detach();
+}
+
+/// Waits until `done` holds, for up to two seconds. Returns whether it
+/// did.
+async fn wait_until(cx: &mut AsyncApp, mut done: impl FnMut(&mut AsyncApp) -> bool) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        if done(cx) {
+            return true;
+        }
+        pause(cx, 2).await;
+    }
+    done(cx)
+}
+
+/// `KAMI_SMOKE=disk`: changes made to the file by "another app" (F5). With
+/// no unsaved changes it reloads, as one undo step; with unsaved changes
+/// the bar asks, and Keep Mine and Reload work; Kami's own saves aren't
+/// reported; a deleted file is reported, and saving puts it back.
+fn smoke_disk(window: WindowHandle<DocumentView>, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        let mut checks = Checks::default();
+        pause(cx, 10).await;
+        let Some(path) = window
+            .read_with(cx, |view, _| view.document_path().map(Path::to_owned))
+            .ok()
+            .flatten()
+        else {
+            checks.check("the document has a file", false);
+            return checks.finish(cx);
+        };
+        let original = std::fs::read_to_string(&path).unwrap_or_default();
+        let state = |cx: &mut AsyncApp| {
+            window
+                .read_with(cx, |view, _| {
+                    (view.text(), view.is_dirty(), view.disk_change_shown())
+                })
+                .unwrap_or_default()
+        };
+
+        // Scrolled down, a block added at the top keeps the same text in
+        // view.
+        for _ in 0..2 {
+            dispatch(window, cx, Box::new(crate::document_view::PageDown));
+            pause(cx, 5).await;
+        }
+        let scroll = |cx: &mut AsyncApp| {
+            window
+                .read_with(cx, |view, _| view.scroll_top())
+                .ok()
+                .flatten()
+        };
+        let before = scroll(cx);
+        let theirs = format!("# Changed elsewhere\n\n{original}");
+        std::fs::write(&path, &theirs).ok();
+        let reloaded = wait_until(cx, |cx| state(cx).0 == theirs).await;
+        let (_, dirty, bar) = state(cx);
+        checks.check(
+            "reloads a change with no unsaved changes",
+            reloaded && !dirty && !bar,
+        );
+        let after = scroll(cx);
+        checks.check(
+            &format!("keeps the scroll position ({before:?} -> {after:?})"),
+            matches!((before, after), (Some((a, x)), Some((b, y))) if b == a + 1 && x == y && a > 0),
+        );
+        dispatch(window, cx, Box::new(Undo));
+        pause(cx, 5).await;
+        let (text, dirty, _) = state(cx);
+        checks.check(
+            "undo goes back to before the reload, as unsaved",
+            text == original && dirty,
+        );
+        dispatch(window, cx, Box::new(Redo));
+        pause(cx, 5).await;
+        checks.check("redo reloads again", state(cx).0 == theirs && !state(cx).1);
+
+        // Editors often save by renaming a new file over the old one.
+        let replaced = format!("{theirs}Replaced.\n");
+        let temp = path.with_extension("md.tmp");
+        std::fs::write(&temp, &replaced).ok();
+        std::fs::rename(&temp, &path).ok();
+        checks.check(
+            "reloads a file replaced by renaming",
+            wait_until(cx, |cx| state(cx).0 == replaced).await,
+        );
+
+        // With unsaved changes, the bar asks.
+        let type_text = |cx: &mut AsyncApp, text: &'static str| {
+            window
+                .update(cx, |view, window, cx| {
+                    view.click(0, false, window, cx);
+                    view.replace_text_in_range(None, text, window, cx);
+                })
+                .ok();
+        };
+        type_text(cx, "Mine. ");
+        let mine = state(cx).0;
+        std::fs::write(&path, "Theirs.\n").ok();
+        let asked = wait_until(cx, |cx| state(cx).2).await;
+        checks.check(
+            "asks when there are unsaved changes, keeping them",
+            asked && state(cx).0 == mine,
+        );
+        window.update(cx, |view, _, cx| view.keep_mine(cx)).ok();
+        pause(cx, 2).await;
+        let (text, dirty, bar) = state(cx);
+        checks.check("Keep Mine keeps the text", text == mine && dirty && !bar);
+
+        std::fs::write(&path, "Theirs again.\n").ok();
+        wait_until(cx, |cx| state(cx).2).await;
+        window
+            .update(cx, |view, _, cx| view.reload_pending(cx))
+            .ok();
+        pause(cx, 2).await;
+        let (text, dirty, bar) = state(cx);
+        checks.check(
+            "Reload replaces unsaved changes",
+            text == "Theirs again.\n" && !dirty && !bar,
+        );
+
+        // Kami's own saves aren't reported.
+        type_text(cx, "Saved. ");
+        dispatch(window, cx, Box::new(Save));
+        pause(cx, 20).await;
+        let (text, dirty, bar) = state(cx);
+        checks.check(
+            "Kami's own save isn't reported",
+            text == "Saved. Theirs again.\n" && !dirty && !bar,
+        );
+
+        std::fs::remove_file(&path).ok();
+        let reported = wait_until(cx, |cx| state(cx).2).await;
+        checks.check(
+            "a deleted file is reported, keeping the text",
+            reported && state(cx).0 == "Saved. Theirs again.\n",
+        );
+        dispatch(window, cx, Box::new(Save));
+        pause(cx, 5).await;
+        checks.check(
+            "saving puts a deleted file back",
+            std::fs::read_to_string(&path).ok().as_deref() == Some("Saved. Theirs again.\n")
+                && !state(cx).2,
         );
         checks.finish(cx);
     })

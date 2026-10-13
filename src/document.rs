@@ -2,6 +2,7 @@
 
 use std::fmt;
 use std::fs;
+use std::hash::Hasher;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -17,6 +18,41 @@ pub struct Document {
     /// changes. Comparing text (rather than counting edits) means undoing
     /// back to the saved text counts as unchanged, as on macOS.
     saved: String,
+    /// The version of the file last loaded, saved or accepted, or `None`
+    /// if there was no file then. Changes made by other apps show up as a
+    /// different version (F5).
+    disk_version: Option<DiskVersion>,
+}
+
+/// Identifies a file's contents, to notice when they change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DiskVersion(u64);
+
+impl DiskVersion {
+    fn of(bytes: &[u8]) -> Self {
+        let mut hasher = std::hash::DefaultHasher::new();
+        hasher.write(bytes);
+        Self(hasher.finish())
+    }
+}
+
+/// How a document's file differs from the version Kami last loaded, saved
+/// or accepted: another app changed it (F5).
+#[derive(Debug)]
+pub struct DiskChange {
+    pub kind: DiskChangeKind,
+    /// The file's new version, or `None` if it's gone.
+    version: Option<DiskVersion>,
+}
+
+#[derive(Debug)]
+pub enum DiskChangeKind {
+    /// The file has new text.
+    Changed(String),
+    /// The file is gone: deleted, or renamed or moved elsewhere.
+    Missing,
+    /// The file changed, but can't be read as text.
+    Unreadable(LoadError),
 }
 
 impl Document {
@@ -26,6 +62,7 @@ impl Document {
             path: None,
             buffer: Buffer::default(),
             saved: String::new(),
+            disk_version: None,
         }
     }
 
@@ -46,19 +83,24 @@ impl Document {
             path: None,
             buffer,
             saved: text.to_owned(),
+            disk_version: None,
         }
     }
 
     /// Opens the file at `path`.
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, OpenError> {
         let path = path.into();
-        match Buffer::load(&path) {
-            Ok(buffer) => {
+        let loaded = std::fs::read(&path)
+            .map_err(LoadError::Io)
+            .and_then(|bytes| Ok((Buffer::from_bytes(&bytes)?, DiskVersion::of(&bytes))));
+        match loaded {
+            Ok((buffer, version)) => {
                 let saved = buffer.slice(0..buffer.len_bytes());
                 Ok(Self {
                     path: Some(path),
                     buffer,
                     saved,
+                    disk_version: Some(version),
                 })
             }
             Err(source) => Err(OpenError { path, source }),
@@ -115,8 +157,54 @@ impl Document {
             source,
         })?;
         self.saved = self.buffer.slice(0..self.buffer.len_bytes());
+        self.disk_version = Some(DiskVersion::of(self.saved.as_bytes()));
         self.path = Some(path);
         Ok(())
+    }
+
+    /// How the file now differs from the version last loaded, saved or
+    /// accepted, or `None` if it doesn't, or the document has no file.
+    /// Kami's own saves never count as changes.
+    pub fn disk_change(&self) -> Option<DiskChange> {
+        let path = self.path.as_deref()?;
+        let bytes = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                return self.disk_version.is_some().then_some(DiskChange {
+                    kind: DiskChangeKind::Missing,
+                    version: None,
+                });
+            }
+            Err(err) => {
+                return Some(DiskChange {
+                    kind: DiskChangeKind::Unreadable(LoadError::Io(err)),
+                    version: self.disk_version,
+                });
+            }
+        };
+        let version = Some(DiskVersion::of(&bytes));
+        if version == self.disk_version {
+            return None;
+        }
+        let kind = match String::from_utf8(bytes) {
+            Ok(text) => DiskChangeKind::Changed(text),
+            // Buffer says where the bad bytes are.
+            Err(err) => match Buffer::from_bytes(err.as_bytes()) {
+                Err(err) => DiskChangeKind::Unreadable(err),
+                Ok(buffer) => DiskChangeKind::Changed(buffer.slice(0..buffer.len_bytes())),
+            },
+        };
+        Some(DiskChange { kind, version })
+    }
+
+    /// Accepts `change` without reloading ("Keep Mine"): it's no longer
+    /// reported, and the next save overwrites the file. The document's
+    /// text now counts as unsaved if it differs from the file's.
+    pub fn accept_disk_change(&mut self, change: &DiskChange) {
+        if let DiskChangeKind::Changed(text) = &change.kind {
+            self.saved.clone_from(text);
+        }
+        self.disk_version = change.version;
     }
 }
 
@@ -247,5 +335,69 @@ mod tests {
         document.buffer_mut().replace(0..0, "text");
         assert!(document.is_dirty());
         assert!(document.save().is_err(), "untitled needs save_as");
+        assert!(document.disk_change().is_none(), "untitled has no file");
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("kami-document-{name}-{}", std::process::id()));
+        fs::remove_dir_all(&dir).ok();
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn notices_changes_by_other_apps_but_not_its_own_saves() {
+        let dir = temp_dir("disk-change");
+        let path = dir.join("notes.md");
+        fs::write(&path, "one\n").unwrap();
+        let mut document = Document::open(&path).unwrap();
+        assert!(document.disk_change().is_none());
+
+        document.buffer_mut().replace(0..0, "zero\n");
+        document.save().unwrap();
+        assert!(document.disk_change().is_none(), "Kami's own save");
+
+        fs::write(&path, "two\n").unwrap();
+        let change = document.disk_change().expect("changed by another app");
+        assert!(matches!(&change.kind, DiskChangeKind::Changed(text) if text == "two\n"));
+        assert!(!document.is_dirty());
+
+        // Keep Mine: no longer reported, and the text now differs from the
+        // file's.
+        document.accept_disk_change(&change);
+        assert!(document.disk_change().is_none());
+        assert!(document.is_dirty());
+
+        fs::write(&path, b"\xff").unwrap();
+        let change = document.disk_change().expect("unreadable");
+        assert!(matches!(change.kind, DiskChangeKind::Unreadable(_)));
+        document.accept_disk_change(&change);
+        assert!(document.disk_change().is_none());
+
+        fs::remove_file(&path).unwrap();
+        let change = document.disk_change().expect("deleted");
+        assert!(matches!(change.kind, DiskChangeKind::Missing));
+        document.accept_disk_change(&change);
+        assert!(document.disk_change().is_none());
+
+        // Saving recreates it.
+        document.save().unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "zero\none\n");
+        assert!(document.disk_change().is_none());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_new_file_is_missing_until_created() {
+        let dir = temp_dir("new-file");
+        let path = dir.join("new.md");
+        let document = Document::new_at(&path);
+        assert!(document.disk_change().is_none(), "not created yet");
+        fs::write(&path, "made elsewhere").unwrap();
+        assert!(matches!(
+            document.disk_change().map(|change| change.kind),
+            Some(DiskChangeKind::Changed(_))
+        ));
+        fs::remove_dir_all(&dir).ok();
     }
 }

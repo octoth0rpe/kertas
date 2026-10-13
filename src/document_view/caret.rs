@@ -352,7 +352,7 @@ impl DocumentView {
 
 /// Reveals the items the selection touches (or none), re-measuring the
 /// items that change. Returns whether anything changed.
-fn reveal(open: &mut OpenDocument) -> bool {
+pub(super) fn reveal(open: &mut OpenDocument) -> bool {
     let targets = open.editor.reveal_targets();
     if open
         .revealed

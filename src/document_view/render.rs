@@ -366,6 +366,7 @@ impl Render for DocumentView {
             self.shown_edited = Some(edited);
         }
         let tab_strip = render_tab_strip(window, cx, self.theme, edited);
+        let disk_bar = self.render_disk_change(cx);
         let problems_bar = self.render_settings_problems(cx);
 
         let content = match &self.open {
@@ -389,6 +390,7 @@ impl Render for DocumentView {
             .flex()
             .flex_col()
             .children(tab_strip)
+            .children(disk_bar)
             .child(
                 div()
                     .flex_1()

@@ -11,8 +11,6 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use futures::StreamExt;
-
 use gpui::{App, BorrowAppContext, Global, WindowAppearance};
 use kami::settings::{self, Layout, Problem, Settings, ThemeSetting};
 
@@ -80,7 +78,7 @@ pub fn init(cx: &mut App) {
     {
         let mut changes = file_watch::watch(path);
         cx.spawn(async move |cx| {
-            while changes.next().await.is_some() {
+            while changes.changed().await {
                 cx.update(|cx| {
                     let state = cx.global::<AppSettings>();
                     if stamp(&state.path) != state.stamp {
