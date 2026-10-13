@@ -1,16 +1,17 @@
 //! The settings window (G5), opened with Kami > Settings… (⌘,).
 //!
-//! It shows the same settings as the settings file and the View menu, and
-//! changing one here writes it to the file, so all three always agree.
+//! It's a sheet on the front document window, so it can't get lost behind
+//! it. It shows the same settings as the settings file and the View menu,
+//! and changing one here writes it to the file, so all three always agree.
 
 use gpui::{
-    App, Bounds, Context, FocusHandle, Global, MouseButton, SharedString, Subscription,
-    TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, div, prelude::*, px, size,
+    App, Bounds, Context, FocusHandle, Global, KeyBinding, MouseButton, SharedString, Subscription,
+    Window, WindowBounds, WindowHandle, WindowKind, WindowOptions, div, prelude::*, px, size,
 };
 use kami::settings::{Layout, Settings, TextWidth, ThemeSetting};
 
 use crate::app_settings::{self, AppSettings};
-use crate::document_view::CloseWindow;
+use crate::document_view::{CloseWindow, DocumentView};
 use crate::theme::Theme;
 
 /// The settings window, if it's open.
@@ -29,15 +30,24 @@ pub fn open(cx: &mut App) {
     {
         return;
     }
-    let bounds = Bounds::centered(None, size(px(520.), px(250.)), cx);
+    // A sheet attaches to the main window, so make sure one is in front.
+    if let Some(document) = cx
+        .window_stack()
+        .unwrap_or_default()
+        .into_iter()
+        .find_map(|window| window.downcast::<DocumentView>())
+    {
+        document
+            .update(cx, |_, window, _| window.activate_window())
+            .ok();
+    }
+    let bounds = Bounds::centered(None, size(px(520.), px(290.)), cx);
     let window = cx
         .open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(TitlebarOptions {
-                    title: Some("Settings".into()),
-                    ..Default::default()
-                }),
+                titlebar: None,
+                kind: WindowKind::Dialog,
                 is_resizable: false,
                 is_minimizable: false,
                 ..Default::default()
@@ -48,6 +58,16 @@ pub fn open(cx: &mut App) {
     cx.set_global(OpenSettingsWindow(window));
     cx.activate(true);
 }
+
+/// Keys that close the settings window, as for any sheet.
+pub fn key_bindings() -> Vec<KeyBinding> {
+    vec![
+        KeyBinding::new("escape", CloseWindow, Some(KEY_CONTEXT)),
+        KeyBinding::new("enter", CloseWindow, Some(KEY_CONTEXT)),
+    ]
+}
+
+const KEY_CONTEXT: &str = "SettingsWindow";
 
 pub struct SettingsWindow {
     focus_handle: FocusHandle,
@@ -127,6 +147,8 @@ impl SettingsWindow {
                 div()
                     .flex()
                     .flex_col()
+                    // Keep the buttons as wide as their labels, not the note.
+                    .items_start()
                     .gap_1()
                     .child(
                         div()
@@ -154,8 +176,21 @@ impl Render for SettingsWindow {
             layout,
             text_width,
         } = app_settings::get(cx);
+        let done = div()
+            .id("done")
+            .px_4()
+            .py(px(4.))
+            .rounded_md()
+            .cursor_pointer()
+            .bg(self.theme.caret)
+            .text_color(gpui::white())
+            .on_mouse_down(MouseButton::Left, |_, window, cx| {
+                window.dispatch_action(Box::new(CloseWindow), cx)
+            })
+            .child("Done");
         div()
             .track_focus(&self.focus_handle)
+            .key_context(KEY_CONTEXT)
             .on_action(|_: &CloseWindow, window, _| window.remove_window())
             .size_full()
             .flex()
@@ -197,5 +232,7 @@ impl Render for SettingsWindow {
                 ],
                 Some("Applies to documents opened from now on."),
             ))
+            .child(div().flex_1())
+            .child(div().flex().justify_end().child(done))
     }
 }

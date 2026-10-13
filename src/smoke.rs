@@ -551,6 +551,25 @@ fn smoke_settings_window(window: WindowHandle<DocumentView>, cx: &mut App) {
             .unwrap_or(0);
         check("New from Settings opens a tab", count(cx) == 3 && tabs == 2);
 
+        // Esc closes the settings sheet.
+        if let Some(settings) = settings {
+            settings
+                .update(cx, |_, window, cx| {
+                    window.dispatch_keystroke(gpui::Keystroke::parse("escape").unwrap(), cx);
+                })
+                .ok();
+        }
+        wait().await;
+        check("Esc closes Settings", count(cx) == 2);
+
+        // Quit with Settings open still quits.
+        window
+            .update(cx, |_, window, cx| {
+                window.dispatch_action(Box::new(OpenSettings), cx)
+            })
+            .ok();
+        wait().await;
+
         println!("SMOKE {}", if ok { "OK" } else { "FAILED" });
         println!("dispatching Quit");
         window
