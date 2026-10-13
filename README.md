@@ -71,6 +71,22 @@ Release builds are roughly ten times faster.
 
 ### Installing Kami.app
 
+To build and install a release on an Apple Silicon Mac that has only [Homebrew](https://brew.sh), paste this into Terminal, with the URL of Kami's git repository in place of `<repo-url>`:
+
+```sh
+brew install rustup
+export PATH="$(brew --prefix rustup)/bin:$PATH"
+git clone --branch v0.2.0 <repo-url> kami
+cd kami
+rustup toolchain install
+scripts/bundle-macos.sh --install
+open ~/Applications/Kami.app
+```
+
+`rustup toolchain install` installs the Rust version that `rust-toolchain.toml` pins. The `export PATH` line lasts only for that Terminal window, since Homebrew doesn't put rustup on the `PATH`. The first build downloads every dependency and takes several minutes. A note from `git clone` about a "detached HEAD" is normal: it means you're on the release tag rather than a branch. To update later, open a new Terminal window, run the `export PATH` line, then in `kami` run `git fetch --tags`, `git checkout <new tag>` and `scripts/bundle-macos.sh --install`.
+
+For development:
+
 ```sh
 scripts/bundle-macos.sh             # builds target/release/Kami.app
 scripts/bundle-macos.sh --install   # ...and installs it in ~/Applications
