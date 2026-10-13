@@ -17,7 +17,7 @@ use super::{
     SelectTab4, SelectTab5, SelectTab6, SelectTab7, SelectTab8, SelectTab9, SelectUp,
     SelectWordLeft, SelectWordRight, ZoomIn, ZoomOut,
 };
-use crate::app_settings::AppSettings;
+use crate::app_settings::{self, AppSettings};
 use crate::rendered_block::{ClickTarget, render_block};
 use crate::revealed_block::{RevealedBlock, TextInput, render_gap, render_revealed};
 use crate::tab_strip::{render_tab_strip, select_tab};
@@ -102,6 +102,7 @@ impl DocumentView {
         let theme = self.theme;
         let view = cx.entity();
         let focus_handle = self.focus_handle.clone();
+        let hint = app_settings::get(cx).editing_hint;
         list(open.list_state.clone(), move |index, _, _| {
             let item = &model.items[index];
             match revealed
@@ -138,6 +139,7 @@ impl DocumentView {
                         focus_handle: focus_handle.clone(),
                         view: view.clone(),
                         layout_slot: layout_slot.clone(),
+                        hint,
                     });
                     match gap {
                         Some(gap) if let Some(input) = input => render_gap(
