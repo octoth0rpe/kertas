@@ -250,6 +250,9 @@ pub struct DocumentView {
     /// Whether the mouse button went down in the document and is still
     /// down, so moving it extends the selection.
     dragging: bool,
+    /// The checkbox the mouse button went down on, by where its `[ ]`
+    /// starts, so it toggles when the button goes up on it.
+    pressed_task: Option<usize>,
     /// Whether a "save changes?" prompt is already showing.
     confirming: bool,
     /// The edited state last shown in the window's close button.
@@ -320,6 +323,7 @@ impl DocumentView {
             text_settings: TextSettings::from(&app_settings::get(cx)),
             caret_visible: true,
             dragging: false,
+            pressed_task: None,
             blink_epoch: 0,
             confirming: false,
             shown_edited: None,

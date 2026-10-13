@@ -28,6 +28,7 @@ impl DocumentView {
             open.editor.unmark();
         }
         self.dragging = true;
+        self.pressed_task = None;
         self.move_caret(offset, extend, cx);
     }
 

@@ -55,9 +55,17 @@ pub enum RenderedBlock {
 /// One item in a list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListItem {
-    /// `Some(checked)` for a task list item.
-    pub task: Option<bool>,
+    /// The checkbox, for a task list item.
+    pub task: Option<Task>,
     pub children: Vec<RenderedBlock>,
+}
+
+/// A task list item's checkbox.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Task {
+    pub checked: bool,
+    /// Where its `[ ]` or `[x]` starts in the block's source.
+    pub marker: usize,
 }
 
 /// A GFM table.
@@ -124,7 +132,7 @@ enum Frame {
         items: Vec<ListItem>,
     },
     Item {
-        task: Option<bool>,
+        task: Option<Task>,
         children: Vec<RenderedBlock>,
         /// Text directly in a tight list item, which has no paragraph tags.
         inline: InlineBuilder,
@@ -165,7 +173,7 @@ impl TreeBuilder {
                 | Frame::Cell(inline)
                 | Frame::Item { inline, .. },
             ) => {
-                if inline.handle(&event, range) {
+                if inline.handle(&event, range.clone()) {
                     return;
                 }
             }
@@ -190,7 +198,10 @@ impl TreeBuilder {
             Event::Rule => self.push_block(RenderedBlock::ThematicBreak),
             Event::TaskListMarker(checked) => {
                 if let Some(Frame::Item { task, .. }) = self.stack.last_mut() {
-                    *task = Some(checked);
+                    *task = Some(Task {
+                        checked,
+                        marker: range.start,
+                    });
                 }
             }
             _ => {}
@@ -387,7 +398,7 @@ mod tests {
                 let items: Vec<String> = items
                     .iter()
                     .map(|item| {
-                        let marker = match item.task {
+                        let marker = match item.task.map(|task| task.checked) {
                             Some(true) => "[x] ",
                             Some(false) => "[ ] ",
                             None => "",
@@ -470,6 +481,27 @@ mod tests {
         assert_renders(
             "- [ ] todo\n- [x] done\n- plain\n",
             &["ul[[ ] p(todo), [x] p(done), p(plain)]"],
+        );
+    }
+
+    #[test]
+    fn task_markers_point_at_their_source() {
+        let source = "- [ ] todo\n  - [X] nested\n";
+        let RenderedBlock::List { items, .. } = render_one(source) else {
+            panic!("expected a list");
+        };
+        let outer = items[0].task.expect("a task");
+        assert_eq!(
+            (outer.checked, &source[outer.marker..outer.marker + 3]),
+            (false, "[ ]")
+        );
+        let RenderedBlock::List { items: nested, .. } = &items[0].children[1] else {
+            panic!("expected a nested list: {:?}", items[0].children);
+        };
+        let inner = nested[0].task.expect("a task");
+        assert_eq!(
+            (inner.checked, &source[inner.marker..inner.marker + 3]),
+            (true, "[X]")
         );
     }
 

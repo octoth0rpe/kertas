@@ -45,6 +45,31 @@ impl DocumentView {
         self.schedule_autosave(cx);
     }
 
+    /// Notes that the mouse went down on the checkbox whose `[ ]` starts
+    /// at document offset `marker`.
+    pub fn press_task(&mut self, marker: usize) {
+        self.pressed_task = Some(marker);
+    }
+
+    /// Toggles the checkbox at `marker` when the mouse goes up on the one
+    /// it went down on. The selection stays as it is, so the list stays
+    /// rendered.
+    pub fn release_task(&mut self, marker: usize, cx: &mut Context<Self>) {
+        if self.pressed_task.take() != Some(marker) {
+            return;
+        }
+        let Some(open) = &mut self.open else {
+            return;
+        };
+        let Some(splice) = open.editor.toggle_task(marker) else {
+            return;
+        };
+        open.list_state.splice(splice.old, splice.new_count);
+        super::caret::reveal(open);
+        self.schedule_autosave(cx);
+        cx.notify();
+    }
+
     pub(super) fn delete_to_line_start(
         &mut self,
         _: &DeleteToLineStart,

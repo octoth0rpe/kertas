@@ -12,6 +12,8 @@ Click any block, such as a paragraph, heading, list or table, to edit it. That b
 
 Clicking a link follows it. Links to Markdown files open in Kami, and other links open in their own apps: web pages in your browser, for example. To edit a link, click elsewhere in its block, or move to it with **⌥↓** and **⌥↑**.
 
+Clicking a task's checkbox (☐) ticks or unticks it. Click the task's text to edit it.
+
 ## Writing
 
 - **↩** starts a new line. A single line break inside a paragraph shows as a space, as in all Markdown, so press **↩** twice to start a new paragraph.

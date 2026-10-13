@@ -47,6 +47,8 @@ pub struct ClickTarget {
     pub block_start: usize,
     /// The text column's maximum width, or `None` for the full window.
     pub column_width: Option<Rems>,
+    /// Whether the document can be edited, so checkboxes can be toggled.
+    pub editable: bool,
 }
 
 impl ClickTarget {
@@ -65,6 +67,22 @@ impl ClickTarget {
         let offset = self.block_start + offset;
         self.view
             .update(cx, |view, cx| view.drag_to(offset, cx))
+            .ok();
+    }
+
+    /// Notes that the mouse went down on the checkbox whose `[ ]` starts at
+    /// `marker` in the block's source.
+    pub fn press_task(&self, marker: usize, cx: &mut App) {
+        let marker = self.block_start + marker;
+        self.view.update(cx, |view, _| view.press_task(marker)).ok();
+    }
+
+    /// Toggles the checkbox at `marker` in the block's source, if the mouse
+    /// went down on it.
+    pub fn release_task(&self, marker: usize, cx: &mut App) {
+        let marker = self.block_start + marker;
+        self.view
+            .update(cx, |view, cx| view.release_task(marker, cx))
             .ok();
     }
 
@@ -236,8 +254,8 @@ fn render_list(
         .iter()
         .enumerate()
         .map(|(index, item)| match (item.task, start) {
-            (Some(true), _) => "☑".to_owned(),
-            (Some(false), _) => "☐".to_owned(),
+            (Some(task), _) if task.checked => "☑".to_owned(),
+            (Some(_), _) => "☐".to_owned(),
             (None, Some(start)) => format!("{}.", start + index as u64),
             (None, None) => bullet.to_owned(),
         })
@@ -257,7 +275,12 @@ fn render_list(
                         .pr(rems(MARKER_GAP))
                         .text_right()
                         .text_color(style.color)
-                        .child(marker),
+                        .child(match item.task {
+                            Some(task) if style.click.editable => {
+                                task_checkbox(marker, task.marker, &style.click)
+                            }
+                            _ => marker.into_any_element(),
+                        }),
                 )
                 .child(div().flex_1().min_w(px(0.)).child(render_children(
                     &item.children,
@@ -265,6 +288,29 @@ fn render_list(
                     depth + 1,
                 )))
         }))
+        .into_any_element()
+}
+
+/// A task list item's checkbox, which toggles when clicked. `marker` is
+/// where its `[ ]` starts in the block's source.
+fn task_checkbox(checkbox: String, marker: usize, click: &ClickTarget) -> AnyElement {
+    let (press, release) = (click.clone(), click.clone());
+    div()
+        .flex()
+        .justify_end()
+        .child(
+            div()
+                .cursor_pointer()
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    // Leave the list rendered.
+                    press.press_task(marker, cx);
+                    cx.stop_propagation();
+                })
+                .on_mouse_up(MouseButton::Left, move |_, _, cx| {
+                    release.release_task(marker, cx);
+                })
+                .child(checkbox),
+        )
         .into_any_element()
 }
 
