@@ -8,6 +8,7 @@
 use std::ops::Range;
 
 use crate::blocks::BlockKind;
+use crate::definitions::Definitions;
 use crate::inline::{InlineStyle, InlineText};
 use crate::rendered::{RenderedBlock, render_block};
 
@@ -45,7 +46,7 @@ pub struct StyledSource {
 }
 
 /// Styles the source of a top-level block for display while revealed.
-pub fn styled_source(source: &str, kind: BlockKind, definitions: &str) -> StyledSource {
+pub fn styled_source(source: &str, kind: BlockKind, definitions: &Definitions) -> StyledSource {
     let font = match kind {
         BlockKind::Heading { level } => RevealFont::Prose {
             heading: Some(level),
@@ -151,7 +152,7 @@ mod tests {
         let blocks = Blocks::parse(text);
         let block = &blocks.as_slice()[0];
         let source = &text[block.range.clone()];
-        let styled = styled_source(source, block.kind, "");
+        let styled = styled_source(source, block.kind, &Definitions::default());
         let spans = styled
             .spans
             .iter()
@@ -237,7 +238,7 @@ mod tests {
         let blocks = Blocks::parse(text);
         let block = &blocks.as_slice()[0];
         let source = &text[block.range.clone()];
-        let styled = styled_source(source, block.kind, "[d]: /x");
+        let styled = styled_source(source, block.kind, &Definitions::from_text("[d]: /x"));
         let mut position = 0;
         for span in &styled.spans {
             assert_eq!(span.range.start, position, "{styled:?}");

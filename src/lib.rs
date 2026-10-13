@@ -2,6 +2,7 @@
 
 pub mod blocks;
 pub mod buffer;
+pub mod definitions;
 pub mod document;
 pub mod editing;
 pub mod history;

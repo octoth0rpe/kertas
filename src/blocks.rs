@@ -21,6 +21,8 @@ use std::ops::Range;
 
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag};
 
+use crate::definitions::Definitions;
+
 /// The kind of a top-level block. See REQUIREMENTS §1.1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockKind {
@@ -66,6 +68,8 @@ const BYTE_ORDER_MARK: char = '\u{FEFF}';
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Blocks {
     blocks: Vec<Block>,
+    /// The document's link reference definitions, wherever they are.
+    definitions: Definitions,
 }
 
 impl Blocks {
@@ -118,6 +122,7 @@ impl Blocks {
             }
         }
 
+        let link_definitions = Definitions::from_parser(iter.reference_definitions());
         // Link reference definitions produce no events, so add them from the
         // parser's definition table. That table also includes definitions
         // nested inside lists and blockquotes; those are already part of
@@ -139,7 +144,16 @@ impl Blocks {
         blocks.append(&mut definitions);
         blocks.sort_by_key(|block| block.range.start);
 
-        Self { blocks }
+        Self {
+            blocks,
+            definitions: link_definitions,
+        }
+    }
+
+    /// The document's link reference definitions, for rendering blocks on
+    /// their own.
+    pub fn definitions(&self) -> &Definitions {
+        &self.definitions
     }
 
     /// All blocks, in source order.

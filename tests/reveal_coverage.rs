@@ -1,6 +1,7 @@
 //! Revealed source styling must cover exactly its source, for every way a
 //! block can be revealed (GPUI panics otherwise).
 
+use kami::definitions::Definitions;
 use kami::model::Model;
 use kami::reveal::styled_source;
 
@@ -74,7 +75,7 @@ fn list_with_indented_code_is_covered() {
     let styled = styled_source(
         source,
         kami::blocks::BlockKind::List { ordered: false },
-        "[docs]: https://example.com/docs",
+        &Definitions::from_text("[docs]: https://example.com/docs"),
     );
     let end = styled.spans.last().map_or(0, |span| span.range.end);
     assert_eq!(end, source.len());
