@@ -387,6 +387,9 @@ mod tests {
         let (_, splice) = model.updated(&edited);
         let elapsed = start.elapsed();
         assert!(splice.new_count <= 2, "{splice:?}");
+        // Typically 13 ms in a debug build and 1.2 ms in release (M2,
+        // 2026-10-13); the bound leaves room for a slow or busy machine.
+        assert!(elapsed.as_millis() < 100, "took {elapsed:?}");
         eprintln!("updated 10k-line model after one keystroke in {elapsed:?}");
     }
 }

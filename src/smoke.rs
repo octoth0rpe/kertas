@@ -1,15 +1,24 @@
-//! A debug-only smoke test that drives the app with key actions and typing.
+//! Debug-only smoke tests that drive the real app, which unit tests can't:
+//! the view, the list, text layout, windows, menus and macOS integration.
 //!
-//! Run `KAMI_SMOKE=1 cargo run -- some/file.md`: Kami opens the file, sends
-//! itself a long sequence of movement and editing steps one frame apart,
-//! then prints `SMOKE OK` and quits. A panic along the way fails it. This
-//! exercises the real view, list and text layout, which unit tests can't.
-//! It doesn't save unless `KAMI_SMOKE=save` (or `write`, which runs only the
-//! writing steps), and it doesn't touch the clipboard.
+//! `KAMI_SMOKE=<mode> cargo run -- some/file.md` runs one mode, prints a line
+//! per check, then `SMOKE OK` (or `SMOKE FAILED`) and quits. A panic fails
+//! it. `scripts/smoke.sh` runs every mode. The modes:
+//!
+//! - `1`: a long sequence of movement and editing steps, one frame apart.
+//!   It doesn't save or touch the clipboard.
+//! - `save`: the same, then types a line and saves.
+//! - `write`: only the writing steps (Enter, lists, quotes, code), then
+//!   saves, so the text can be checked.
+//! - `bench`: times 500 inserts in the middle of the document.
+//! - `tabs`, `settings`, `settings-window`, `help`, `reveal`, `print`,
+//!   `quit`: see each function.
 
-use std::time::Duration;
+use std::cell::Cell;
+use std::rc::Rc;
+use std::time::{Duration, Instant};
 
-use gpui::{Action, App, EntityInputHandler, WindowHandle};
+use gpui::{Action, App, AsyncApp, EntityInputHandler, WindowHandle};
 
 use crate::document_view::{
     Backspace, CloseWindow, Delete, DeleteWordLeft, DocumentView, IndentLines, IndentTab,
@@ -20,140 +29,111 @@ use crate::document_view::{
 
 const STEP: Duration = Duration::from_millis(16);
 
+/// Starts the smoke test if `KAMI_SMOKE` is set.
+pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
+    let Ok(mode) = std::env::var("KAMI_SMOKE") else {
+        return;
+    };
+    match mode.as_str() {
+        "tabs" => smoke_tabs(window, cx),
+        "quit" => smoke_quit(window, cx),
+        "settings" => smoke_settings(window, cx),
+        "help" => smoke_help(window, cx),
+        "settings-window" => smoke_settings_window(window, cx),
+        "reveal" => smoke_reveal(window, cx),
+        "print" => smoke_print(window, cx),
+        "bench" => smoke_bench(window, cx),
+        _ => smoke_steps(window, &mode, cx),
+    }
+}
+
+// The harness.
+
+/// A smoke mode's checks.
+#[derive(Default)]
+struct Checks {
+    failed: bool,
+}
+
+impl Checks {
+    /// Reports one check.
+    fn check(&mut self, name: &str, passed: bool) {
+        println!("{name}: {}", if passed { "ok" } else { "FAILED" });
+        self.failed |= !passed;
+    }
+
+    /// Prints the overall result.
+    fn report(&self) {
+        println!("SMOKE {}", if self.failed { "FAILED" } else { "OK" });
+    }
+
+    /// Prints the overall result and quits.
+    fn finish(self, cx: &mut AsyncApp) {
+        self.report();
+        cx.update(|cx| cx.quit());
+    }
+}
+
+/// Waits for `frames` frames' worth of time.
+async fn pause(cx: &mut AsyncApp, frames: u32) {
+    cx.background_executor().timer(STEP * frames).await;
+}
+
+/// Dispatches `action` in `window`, as a key press or menu command would.
+fn dispatch(window: impl Into<gpui::AnyWindowHandle>, cx: &mut AsyncApp, action: Box<dyn Action>) {
+    window
+        .into()
+        .update(cx, |_, window, cx| window.dispatch_action(action, cx))
+        .ok();
+}
+
+fn window_count(cx: &mut AsyncApp) -> usize {
+    cx.update(|cx| cx.windows().len())
+}
+
+/// How many tabs are in `window`'s tab group, per GPUI's tab controller.
+fn tab_count(window: WindowHandle<DocumentView>, cx: &mut AsyncApp) -> usize {
+    window
+        .update(cx, |_, window, cx| {
+            let id = window.window_handle().window_id();
+            cx.try_global::<gpui::SystemWindowTabController>()
+                .and_then(|controller| controller.tabs(id))
+                .map_or(1, |tabs| tabs.len())
+        })
+        .unwrap_or(0)
+}
+
+// Step-by-step editing: `1`, `save` and `write`.
+
 enum Step {
     Action(Box<dyn Action>),
     Type(&'static str),
-}
-
-/// Starts the smoke test if `KAMI_SMOKE` is set.
-pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
-    match std::env::var("KAMI_SMOKE").as_deref() {
-        Err(_) => return,
-        Ok("tabs") => return smoke_tabs(window, cx),
-        Ok("quit") => return smoke_quit(window, cx),
-        Ok("settings") => return smoke_settings(window, cx),
-        Ok("help") => return smoke_help(window, cx),
-        Ok("settings-window") => return smoke_settings_window(window, cx),
-        Ok("reveal") => return smoke_reveal(window, cx),
-        Ok("print") => return smoke_print(window, cx),
-        Ok(_) => {}
-    }
-    let mut steps: Vec<Step> = Vec::new();
-    let steps_ref = &mut steps;
-    // Movement.
-    repeat(steps_ref, &MoveDocumentStart, 1);
-    repeat(steps_ref, &MoveDown, 200);
-    repeat(steps_ref, &MoveUp, 200);
-    repeat(steps_ref, &MoveRight, 300);
-    repeat(steps_ref, &MoveLeft, 300);
-    repeat(steps_ref, &MoveDocumentEnd, 1);
-    repeat(steps_ref, &SelectUp, 30);
-    repeat(steps_ref, &SelectDown, 30);
-    repeat(steps_ref, &Unreveal, 1);
-    repeat(steps_ref, &MoveBlockDown, 150);
-    repeat(steps_ref, &MoveBlockUp, 150);
-    repeat(steps_ref, &SelectBlockDown, 5);
-
-    // Writing at the end: paragraphs through the gap, a list and a quote.
-    // `KAMI_SMOKE=write` runs only this and saves, to check the text.
-    let write_only = std::env::var("KAMI_SMOKE").as_deref() == Ok("write");
-    if write_only {
-        steps_ref.clear();
-    }
-    // The first key press only places the caret.
-    repeat(steps_ref, &MoveDocumentEnd, 2);
-    repeat(steps_ref, &Newline, 2);
-    repeat(steps_ref, &MoveUp, 3);
-    repeat(steps_ref, &MoveDown, 3);
-    repeat(steps_ref, &Newline, 1);
-    steps_ref.push(Step::Type("New paragraph"));
-    repeat(steps_ref, &LineBreak, 1);
-    steps_ref.push(Step::Type("second line"));
-    repeat(steps_ref, &Newline, 2);
-    steps_ref.push(Step::Type("- item"));
-    repeat(steps_ref, &Newline, 1);
-    steps_ref.push(Step::Type("[ ] task"));
-    repeat(steps_ref, &IndentTab, 1);
-    repeat(steps_ref, &Newline, 1);
-    steps_ref.push(Step::Type("sub"));
-    repeat(steps_ref, &OutdentTab, 1);
-    repeat(steps_ref, &Newline, 2);
-    steps_ref.push(Step::Type("> quote"));
-    repeat(steps_ref, &LineBreak, 1);
-    repeat(steps_ref, &Newline, 3);
-    repeat(steps_ref, &MoveBlockUp, 4);
-    repeat(steps_ref, &MoveBlockDown, 4);
-    // A code block with indentation.
-    repeat(steps_ref, &MoveDocumentEnd, 1);
-    steps_ref.push(Step::Type("```"));
-    repeat(steps_ref, &Newline, 1);
-    steps_ref.push(Step::Type("fn"));
-    repeat(steps_ref, &IndentTab, 1);
-    repeat(steps_ref, &Newline, 1);
-    steps_ref.push(Step::Type("    x"));
-    repeat(steps_ref, &IndentLines, 1);
-    repeat(steps_ref, &Newline, 1);
-    steps_ref.push(Step::Type("y"));
-    repeat(steps_ref, &OutdentTab, 1);
-    repeat(steps_ref, &InsertTab, 1);
-    repeat(steps_ref, &Undo, 1);
-    if write_only {
-        steps_ref.push(Step::Action(Box::new(Save)));
-    } else {
-        edit_steps(steps_ref);
-    }
-
-    run(window, steps, cx);
 }
 
 fn repeat(steps: &mut Vec<Step>, action: &dyn Action, count: usize) {
     steps.extend((0..count).map(|_| Step::Action(action.boxed_clone())));
 }
 
-/// Edits all over the document, undo and redo, and replacing everything.
-fn edit_steps(steps_ref: &mut Vec<Step>) {
-    // Editing at the start: a new heading and paragraph, then undo/redo.
-    repeat(steps_ref, &MoveDocumentStart, 1);
-    steps_ref.push(Step::Type("# Smoke"));
-    repeat(steps_ref, &Newline, 2);
-    steps_ref.push(Step::Type("Typed **bold** text"));
-    repeat(steps_ref, &Newline, 2);
-    repeat(steps_ref, &Backspace, 5);
-    repeat(steps_ref, &Undo, 4);
-    repeat(steps_ref, &Redo, 2);
-    // Edits sprinkled through the document, including joining blocks.
-    for _ in 0..40 {
-        repeat(steps_ref, &MoveDown, 3);
-        steps_ref.push(Step::Type("x"));
-        repeat(steps_ref, &Backspace, 2);
-        repeat(steps_ref, &Delete, 1);
-        repeat(steps_ref, &DeleteWordLeft, 1);
-        repeat(steps_ref, &Newline, 1);
+fn smoke_steps(window: WindowHandle<DocumentView>, mode: &str, cx: &mut App) {
+    let mut steps = Vec::new();
+    if mode != "write" {
+        movement_steps(&mut steps);
     }
-    for _ in 0..30 {
-        repeat(steps_ref, &Undo, 1);
+    writing_steps(&mut steps);
+    if mode == "write" {
+        steps.push(Step::Action(Box::new(Save)));
+    } else {
+        edit_steps(&mut steps);
     }
-    // Replace everything, then empty the document entirely.
-    repeat(steps_ref, &SelectAll, 1);
-    steps_ref.push(Step::Type("Replaced"));
-    repeat(steps_ref, &SelectAll, 1);
-    repeat(steps_ref, &Backspace, 1);
-    steps_ref.push(Step::Type("a"));
-    repeat(steps_ref, &Backspace, 3);
-    repeat(steps_ref, &Undo, 3);
+    if mode == "save" {
+        steps.push(Step::Type("Saved by smoke test.\n"));
+        steps.push(Step::Action(Box::new(Save)));
+    }
 
-    // `KAMI_SMOKE=save` ends by saving, to check the file on disk.
-    if std::env::var("KAMI_SMOKE").as_deref() == Ok("save") {
-        steps_ref.push(Step::Type("Saved by smoke test.\n"));
-        steps_ref.push(Step::Action(Box::new(Save)));
-    }
-}
-
-fn run(window: WindowHandle<DocumentView>, steps: Vec<Step>, cx: &mut App) {
     cx.spawn(async move |cx| {
         let total = steps.len();
         for step in steps {
-            cx.background_executor().timer(STEP).await;
+            pause(cx, 1).await;
             window
                 .update(cx, |view, window, cx| match step {
                     Step::Action(action) => window.dispatch_action(action, cx),
@@ -167,58 +147,247 @@ fn run(window: WindowHandle<DocumentView>, steps: Vec<Step>, cx: &mut App) {
     .detach();
 }
 
-/// `KAMI_SMOKE=tabs`: New opens windows (tabs), and they close again.
-fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
+/// Moving around the whole document, by character, line and block.
+fn movement_steps(steps: &mut Vec<Step>) {
+    repeat(steps, &MoveDocumentStart, 1);
+    repeat(steps, &MoveDown, 200);
+    repeat(steps, &MoveUp, 200);
+    repeat(steps, &MoveRight, 300);
+    repeat(steps, &MoveLeft, 300);
+    repeat(steps, &MoveDocumentEnd, 1);
+    repeat(steps, &SelectUp, 30);
+    repeat(steps, &SelectDown, 30);
+    repeat(steps, &Unreveal, 1);
+    repeat(steps, &MoveBlockDown, 150);
+    repeat(steps, &MoveBlockUp, 150);
+    repeat(steps, &SelectBlockDown, 5);
+}
+
+/// Writing at the end: paragraphs through the gap, a list, a quote and a
+/// code block with indentation.
+fn writing_steps(steps: &mut Vec<Step>) {
+    // The first key press only places the caret.
+    repeat(steps, &MoveDocumentEnd, 2);
+    repeat(steps, &Newline, 2);
+    repeat(steps, &MoveUp, 3);
+    repeat(steps, &MoveDown, 3);
+    repeat(steps, &Newline, 1);
+    steps.push(Step::Type("New paragraph"));
+    repeat(steps, &LineBreak, 1);
+    steps.push(Step::Type("second line"));
+    repeat(steps, &Newline, 2);
+    steps.push(Step::Type("- item"));
+    repeat(steps, &Newline, 1);
+    steps.push(Step::Type("[ ] task"));
+    repeat(steps, &IndentTab, 1);
+    repeat(steps, &Newline, 1);
+    steps.push(Step::Type("sub"));
+    repeat(steps, &OutdentTab, 1);
+    repeat(steps, &Newline, 2);
+    steps.push(Step::Type("> quote"));
+    repeat(steps, &LineBreak, 1);
+    repeat(steps, &Newline, 3);
+    repeat(steps, &MoveBlockUp, 4);
+    repeat(steps, &MoveBlockDown, 4);
+    repeat(steps, &MoveDocumentEnd, 1);
+    steps.push(Step::Type("```"));
+    repeat(steps, &Newline, 1);
+    steps.push(Step::Type("fn"));
+    repeat(steps, &IndentTab, 1);
+    repeat(steps, &Newline, 1);
+    steps.push(Step::Type("    x"));
+    repeat(steps, &IndentLines, 1);
+    repeat(steps, &Newline, 1);
+    steps.push(Step::Type("y"));
+    repeat(steps, &OutdentTab, 1);
+    repeat(steps, &InsertTab, 1);
+    repeat(steps, &Undo, 1);
+}
+
+/// Edits all over the document, undo and redo, and replacing everything.
+fn edit_steps(steps: &mut Vec<Step>) {
+    // Editing at the start: a new heading and paragraph, then undo/redo.
+    repeat(steps, &MoveDocumentStart, 1);
+    steps.push(Step::Type("# Smoke"));
+    repeat(steps, &Newline, 2);
+    steps.push(Step::Type("Typed **bold** text"));
+    repeat(steps, &Newline, 2);
+    repeat(steps, &Backspace, 5);
+    repeat(steps, &Undo, 4);
+    repeat(steps, &Redo, 2);
+    // Edits sprinkled through the document, including joining blocks.
+    for _ in 0..40 {
+        repeat(steps, &MoveDown, 3);
+        steps.push(Step::Type("x"));
+        repeat(steps, &Backspace, 2);
+        repeat(steps, &Delete, 1);
+        repeat(steps, &DeleteWordLeft, 1);
+        repeat(steps, &Newline, 1);
+    }
+    repeat(steps, &Undo, 30);
+    // Replace everything, then empty the document entirely.
+    repeat(steps, &SelectAll, 1);
+    steps.push(Step::Type("Replaced"));
+    repeat(steps, &SelectAll, 1);
+    repeat(steps, &Backspace, 1);
+    steps.push(Step::Type("a"));
+    repeat(steps, &Backspace, 3);
+    repeat(steps, &Undo, 3);
+}
+
+// `bench`: typing speed.
+
+/// Inserts timed by `bench`.
+const BENCH_INSERTS: usize = 500;
+
+/// The slowest acceptable 95th percentiles in a debug build, in
+/// milliseconds: the time to handle one insert, and the time until the
+/// frame showing it has been drawn (which includes waiting for the
+/// display). Typical on an M2 MacBook Air (2026-10-13), debug, 10k.md:
+/// about 14 ms and 30 ms. Release builds handle inserts about ten times
+/// faster.
+const BENCH_MAX_INSERT_MS: f64 = 60.;
+const BENCH_MAX_FRAME_MS: f64 = 120.;
+
+/// `KAMI_SMOKE=bench`: types `BENCH_INSERTS` characters in the middle of
+/// the document, one per frame, and reports the median and 95th percentile
+/// time per insert and until its frame is drawn.
+fn smoke_bench(window: WindowHandle<DocumentView>, cx: &mut App) {
+    // macOS slows drawing for windows that aren't in front.
+    cx.activate(true);
     cx.spawn(async move |cx| {
-        for _ in 0..3 {
-            cx.background_executor().timer(STEP * 10).await;
-            window
-                .update(cx, |_, window, cx| {
-                    window.dispatch_action(Box::new(New), cx)
+        pause(cx, 10).await;
+        // Place the caret at the start of a block in the middle.
+        let middle = window
+            .read_with(cx, |view, _| {
+                let count = view.item_count();
+                view.item_start(count / 2)
+            })
+            .ok()
+            .flatten()
+            .unwrap_or(0);
+        window
+            .update(cx, |view, window, cx| view.click(middle, false, window, cx))
+            .ok();
+        pause(cx, 10).await;
+
+        let mut insert_ms = Vec::with_capacity(BENCH_INSERTS);
+        let mut frame_ms = Vec::with_capacity(BENCH_INSERTS);
+        for index in 0..BENCH_INSERTS {
+            let drawn: Rc<Cell<Option<Instant>>> = Rc::default();
+            let started = Instant::now();
+            let handled = window
+                .update(cx, |view, window, cx| {
+                    let text = if index % 40 == 39 { " " } else { "x" };
+                    view.replace_text_in_range(None, text, window, cx);
+                    let handled = started.elapsed();
+                    // A next-frame callback runs before that frame is drawn,
+                    // so wait for the one after: the insert's frame has
+                    // then been drawn. That adds up to one display refresh.
+                    let drawn = drawn.clone();
+                    window.on_next_frame(move |window, _| {
+                        window.on_next_frame(move |_, _| drawn.set(Some(Instant::now())));
+                        // GPUI only draws when something changed, so ask
+                        // for that next frame.
+                        window.refresh();
+                    });
+                    handled
                 })
                 .ok();
+            // Wait for the frame, up to a second.
+            for _ in 0..1000 {
+                if drawn.get().is_some() {
+                    break;
+                }
+                cx.background_executor()
+                    .timer(Duration::from_millis(1))
+                    .await;
+            }
+            if let (Some(handled), Some(drawn)) = (handled, drawn.get()) {
+                insert_ms.push(handled.as_secs_f64() * 1000.);
+                frame_ms.push((drawn - started).as_secs_f64() * 1000.);
+            }
+        }
+
+        let mut checks = Checks::default();
+        // Allow a few missed frames, e.g. if another window covered Kami.
+        checks.check(
+            &format!(
+                "inserts drew frames ({} of {BENCH_INSERTS})",
+                frame_ms.len()
+            ),
+            frame_ms.len() >= BENCH_INSERTS * 95 / 100,
+        );
+        let (insert_p50, insert_p95) = percentiles(&mut insert_ms);
+        let (frame_p50, frame_p95) = percentiles(&mut frame_ms);
+        println!("insert: p50 {insert_p50:.1} ms, p95 {insert_p95:.1} ms");
+        println!("insert to frame: p50 {frame_p50:.1} ms, p95 {frame_p95:.1} ms");
+        checks.check(
+            &format!("insert p95 under {BENCH_MAX_INSERT_MS} ms"),
+            insert_p95 < BENCH_MAX_INSERT_MS,
+        );
+        checks.check(
+            &format!("insert to frame p95 under {BENCH_MAX_FRAME_MS} ms"),
+            frame_p95 < BENCH_MAX_FRAME_MS,
+        );
+        checks.finish(cx);
+    })
+    .detach();
+}
+
+/// The median and 95th percentile of `values`.
+fn percentiles(values: &mut [f64]) -> (f64, f64) {
+    if values.is_empty() {
+        return (f64::NAN, f64::NAN);
+    }
+    values.sort_by(f64::total_cmp);
+    let at = |fraction: f64| values[((values.len() - 1) as f64 * fraction).round() as usize];
+    (at(0.5), at(0.95))
+}
+
+// The other modes.
+
+/// `KAMI_SMOKE=tabs`: New opens windows as tabs, ⌘-numbers switch tabs,
+/// and the tabs close again.
+fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        let mut checks = Checks::default();
+        for _ in 0..3 {
+            pause(cx, 10).await;
+            dispatch(window, cx, Box::new(New));
         }
         // Hold so the windows can be inspected from outside.
         cx.background_executor().timer(Duration::from_secs(2)).await;
-        let opened = cx.update(|cx| cx.windows().len());
-        println!("windows after 3 x New: {opened}");
+        checks.check("3 x New opens 4 windows", window_count(cx) == 4);
         #[cfg(target_os = "macos")]
-        let tabs = window
-            .update(cx, |_, window, _| {
-                crate::native_tabs::NativeWindow::of(window)
-                    .map_or(0, |native| crate::native_tabs::tab_group_size(&native))
-            })
-            .unwrap_or(0);
-        #[cfg(not(target_os = "macos"))]
-        let tabs = opened;
-        println!("tabs in the first window's group: {tabs}");
-        let strip_tabs = window
-            .update(cx, |_, window, cx| {
-                let id = window.window_handle().window_id();
-                cx.try_global::<gpui::SystemWindowTabController>()
-                    .and_then(|controller| controller.tabs(id))
-                    .map_or(0, |tabs| tabs.len())
-            })
-            .unwrap_or(0);
-        println!("tabs in the tab strip: {strip_tabs}");
+        {
+            let native_tabs = window
+                .update(cx, |_, window, _| {
+                    crate::native_tabs::NativeWindow::of(window)
+                        .map_or(0, |native| crate::native_tabs::tab_group_size(&native))
+                })
+                .unwrap_or(0);
+            checks.check("they're tabs in one macOS tab group", native_tabs == 4);
+        }
+        checks.check("the tab strip shows them", tab_count(window, cx) == 4);
         // With automatic tabbing on, macOS adds "Show Tab Bar" to the View
         // menu.
         #[cfg(target_os = "macos")]
-        let automatic_tabbing_off = !cx.update(|_| crate::native_tabs::automatic_tabbing());
-        #[cfg(not(target_os = "macos"))]
-        let automatic_tabbing_off = true;
-        println!("automatic tabbing off: {automatic_tabbing_off}");
+        checks.check(
+            "automatic tabbing is off",
+            !cx.update(|_| crate::native_tabs::automatic_tabbing()),
+        );
+
         // ⌘1 switches to the first tab, ⌘3 to the third, and ⌘9 does
-        // nothing with four tabs. The selected tab is read from macOS, which doesn't
-        // depend on Kami being the frontmost app.
-        let mut tab_switching = true;
+        // nothing with four tabs. The selected tab is read from macOS,
+        // which doesn't depend on Kami being the frontmost app.
         #[cfg(target_os = "macos")]
         for (action, expected) in [
             (Box::new(SelectTab1) as Box<dyn Action>, Some(0)),
             (Box::new(SelectTab3), Some(2)),
             (Box::new(SelectTab9), None),
         ] {
-            let selected = |cx: &mut gpui::AsyncApp| {
+            let selected = |cx: &mut AsyncApp| {
                 window
                     .update(cx, |_, window, _| {
                         crate::native_tabs::NativeWindow::of(window)
@@ -240,155 +409,116 @@ fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
                 .ok()
                 .flatten();
             if let Some(target) = target {
-                target
-                    .update(cx, |_, window, cx| window.dispatch_action(action, cx))
-                    .ok();
+                dispatch(target, cx, action);
             }
-            cx.background_executor().timer(STEP * 20).await;
+            pause(cx, 20).await;
             let after = selected(cx);
-            let switched = after.is_some() && after == expected.or(before);
-            println!(
-                "tab switch to {expected:?}: {} ({before:?} -> {after:?})",
-                if switched { "ok" } else { "FAILED" }
+            checks.check(
+                &format!("tab switch to {expected:?} ({before:?} -> {after:?})"),
+                after.is_some() && after == expected.or(before),
             );
-            tab_switching &= switched;
         }
-        #[cfg(target_os = "macos")]
-        let tabbing_calls = {
-            let visible = window
-                .update(cx, |_, window, _| {
-                    crate::native_tabs::NativeWindow::of(window)
-                        .is_some_and(|native| crate::native_tabs::tab_bar_visible(&native))
-                })
-                .unwrap_or(false);
-            println!("native tab bar visible: {visible}");
-            let calls =
-                crate::native_tabs::TABBING_CALLS.load(std::sync::atomic::Ordering::Relaxed);
-            println!("kami tabbing calls: {calls}");
-            calls
-        };
         // Kami must group the tabs itself, whatever the macOS preference.
-        #[cfg(not(target_os = "macos"))]
-        let tabbing_calls = 3;
+        #[cfg(target_os = "macos")]
+        checks.check(
+            "Kami grouped each new window",
+            crate::native_tabs::TABBING_CALLS.load(std::sync::atomic::Ordering::Relaxed) == 3,
+        );
+
         let windows = cx.update(|cx| cx.windows());
         for other in windows.into_iter().filter(|other| *other != *window) {
-            other
-                .update(cx, |_, window, cx| {
-                    window.dispatch_action(Box::new(CloseWindow), cx)
-                })
-                .ok();
-            cx.background_executor().timer(STEP * 10).await;
+            dispatch(other, cx, Box::new(CloseWindow));
+            pause(cx, 10).await;
         }
-        let remaining = cx.update(|cx| cx.windows().len());
-        println!("windows after closing them: {remaining}");
-        let ok = opened == 4
-            && tabs == 4
-            && strip_tabs == 4
-            && tab_switching
-            && tabbing_calls == 3
-            && remaining == 1;
-        println!("SMOKE {}", if ok { "OK" } else { "FAILED" });
-        cx.update(|cx| cx.quit());
+        checks.check("closing them leaves 1 window", window_count(cx) == 1);
+        checks.finish(cx);
     })
     .detach();
 }
 
 /// `KAMI_SMOKE=settings`, with `KAMI_CONFIG_DIR` set to an empty
 /// directory: edits to the settings file apply live, problems are
-/// reported, and changing a setting keeps the file's comments.
+/// reported, changing a setting keeps the file's comments, the View menu
+/// and zoom work, and the layout setting waits for a restart.
 fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
     use crate::app_settings::{self, AppSettings};
+    use crate::document_view::{ResetZoom, ZoomIn, ZoomOut};
     use crate::theme::Theme;
 
     let path = std::path::PathBuf::from(std::env::var_os("KAMI_CONFIG_DIR").unwrap_or_default())
         .join("config.toml");
     cx.spawn(async move |cx| {
-        let executor = cx.background_executor().clone();
-        let wait = || executor.timer(Duration::from_millis(1500));
-        let theme = |cx: &mut gpui::AsyncApp| window.read_with(cx, |view, _| view.theme()).ok();
-        let problems =
-            |cx: &mut gpui::AsyncApp| cx.update(|cx| cx.global::<AppSettings>().problems.len());
-        let mut ok = true;
-        let mut check = |name: &str, passed: bool| {
-            println!("{name}: {}", if passed { "ok" } else { "FAILED" });
-            ok &= passed;
+        let mut checks = Checks::default();
+        // Settings apply when macOS reports the file changed.
+        let settle = async |cx: &mut AsyncApp| {
+            cx.background_executor()
+                .timer(Duration::from_millis(1500))
+                .await
         };
+        let theme = |cx: &mut AsyncApp| window.read_with(cx, |view, _| view.theme()).ok();
+        let problems =
+            |cx: &mut AsyncApp| cx.update(|cx| cx.global::<AppSettings>().problems.len());
 
-        check("no file, no problems", problems(cx) == 0);
+        checks.check("no file, no problems", problems(cx) == 0);
 
         std::fs::write(&path, "# Mine\ntheme = \"dark\"  # at night\n").ok();
-        wait().await;
-        check("edit applies live", theme(cx) == Some(Theme::dark()));
+        settle(cx).await;
+        checks.check("edit applies live", theme(cx) == Some(Theme::dark()));
 
         // Editors often save by renaming a new file over the old one.
         let temp = path.with_extension("tmp");
         std::fs::write(&temp, "theme = \"light\"\n").ok();
         std::fs::rename(&temp, &path).ok();
-        wait().await;
-        check(
+        settle(cx).await;
+        checks.check(
             "replaced file applies live",
             theme(cx) == Some(Theme::light()),
         );
 
         std::fs::write(&path, "theme = \"blue\"\nfont = 1\n").ok();
-        wait().await;
-        let reported = problems(cx);
-        println!("problems reported: {reported}");
-        check("bad file reports problems", reported == 2);
+        settle(cx).await;
+        checks.check("bad file reports 2 problems", problems(cx) == 2);
 
         std::fs::write(&path, "# Mine\ntheme = \"dark\"  # at night\n").ok();
-        wait().await;
+        settle(cx).await;
         let set = cx.update(|cx| app_settings::set("theme", "light", cx));
-        check("setting is written", set.is_ok());
+        checks.check("setting is written", set.is_ok());
         let text = std::fs::read_to_string(&path).unwrap_or_default();
-        check(
+        checks.check(
             "comments are kept",
             text == "# Mine\ntheme = \"light\"  # at night\n",
         );
-        wait().await;
-        check("written setting applies", theme(cx) == Some(Theme::light()));
+        settle(cx).await;
+        checks.check("written setting applies", theme(cx) == Some(Theme::light()));
 
         // The View menu's commands change settings.
-        for action in [
-            Box::new(crate::menus::UseDarkTheme) as Box<dyn Action>,
-            Box::new(crate::menus::UseFullWidth),
-        ] {
-            window
-                .update(cx, |_, window, cx| window.dispatch_action(action, cx))
-                .ok();
-        }
-        wait().await;
+        dispatch(window, cx, Box::new(crate::menus::UseDarkTheme));
+        dispatch(window, cx, Box::new(crate::menus::UseFullWidth));
+        settle(cx).await;
         let text = std::fs::read_to_string(&path).unwrap_or_default();
-        check(
+        checks.check(
             "View menu writes settings",
             text == "# Mine\ntheme = \"dark\"  # at night\ntext_width = \"full\"\n",
         );
-        check("View menu theme applies", theme(cx) == Some(Theme::dark()));
-        window
-            .update(cx, |_, window, cx| {
-                window.dispatch_action(Box::new(crate::menus::UseStandardWidth), cx)
-            })
-            .ok();
-        wait().await;
+        checks.check("View menu theme applies", theme(cx) == Some(Theme::dark()));
+        dispatch(window, cx, Box::new(crate::menus::UseStandardWidth));
+        settle(cx).await;
 
         // Zoom steps through sizes, stops at the limits, and Reset Zoom
-        // returns to the font_size setting, which also resets it.
-        // Each step waits for a frame: zoom commands are only available
-        // when the last frame allowed them.
+        // returns to the font_size setting, which also resets it. Each step
+        // waits for a frame: zoom commands are only available when the last
+        // frame allowed them.
         async fn zoom(
             window: WindowHandle<DocumentView>,
-            cx: &mut gpui::AsyncApp,
+            cx: &mut AsyncApp,
             action: Box<dyn Action>,
         ) -> u32 {
-            window
-                .update(cx, |_, window, cx| window.dispatch_action(action, cx))
-                .ok();
-            cx.background_executor().timer(STEP * 3).await;
+            dispatch(window, cx, action);
+            pause(cx, 3).await;
             cx.update(|cx| crate::zoom::size(cx))
         }
-        use crate::document_view::{ResetZoom, ZoomIn, ZoomOut};
-        check("zoom in", zoom(window, cx, Box::new(ZoomIn)).await == 17);
-        check(
+        checks.check("zoom in", zoom(window, cx, Box::new(ZoomIn)).await == 17);
+        checks.check(
             "reset zoom",
             zoom(window, cx, Box::new(ResetZoom)).await == 16,
         );
@@ -403,13 +533,13 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
                 )
             })
             .ok();
-        check(
+        checks.check(
             "zoom out stops at 10, disabled",
             at_limit == Some((10, false)),
         );
         cx.update(|cx| app_settings::set("font_size", 20, cx)).ok();
-        wait().await;
-        check(
+        settle(cx).await;
+        checks.check(
             "font_size setting sets the size",
             cx.update(|cx| crate::zoom::size(cx)) == 20,
         );
@@ -418,52 +548,26 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
         // tab.
         cx.update(|cx| app_settings::set("layout", "windows", cx))
             .ok();
-        window
-            .update(cx, |_, window, cx| {
-                window.dispatch_action(Box::new(New), cx)
-            })
-            .ok();
-        wait().await;
-        let windows = cx.update(|cx| cx.windows().len());
-        let grouped = window
-            .update(cx, |_, window, cx| {
-                let id = window.window_handle().window_id();
-                cx.try_global::<gpui::SystemWindowTabController>()
-                    .and_then(|controller| controller.tabs(id))
-                    .map_or(1, |tabs| tabs.len())
-            })
-            .unwrap_or(0);
-        check(
+        dispatch(window, cx, Box::new(New));
+        settle(cx).await;
+        checks.check(
             "layout change waits for a restart",
-            windows == 2 && grouped == 2,
+            window_count(cx) == 2 && tab_count(window, cx) == 2,
         );
-
-        println!("SMOKE {}", if ok { "OK" } else { "FAILED" });
-        cx.update(|cx| cx.quit());
+        checks.finish(cx);
     })
     .detach();
 }
 
-/// `KAMI_SMOKE=help`: the Help menu opens built-in documents once each,
-/// and they can't be edited.
+/// `KAMI_SMOKE=help`: the Help and Kami menus open built-in documents once
+/// each, they can't be edited, and they close without asking.
 fn smoke_help(window: WindowHandle<DocumentView>, cx: &mut App) {
     use crate::builtin::Builtin;
-    use crate::menus::{OpenHelp, OpenKeyboardShortcuts};
+    use crate::menus::{OpenAbout, OpenHelp, OpenKeyboardShortcuts};
 
     cx.spawn(async move |cx| {
-        let executor = cx.background_executor().clone();
-        let wait = || executor.timer(STEP * 20);
-        let mut ok = true;
-        let mut check = |name: &str, passed: bool| {
-            println!("{name}: {}", if passed { "ok" } else { "FAILED" });
-            ok &= passed;
-        };
-        let dispatch = |cx: &mut gpui::AsyncApp, action: Box<dyn Action>| {
-            window
-                .update(cx, |_, window, cx| window.dispatch_action(action, cx))
-                .ok();
-        };
-        let help_window = |cx: &mut gpui::AsyncApp| {
+        let mut checks = Checks::default();
+        let help_window = |cx: &mut AsyncApp| {
             cx.update(|cx| {
                 cx.windows()
                     .into_iter()
@@ -476,21 +580,19 @@ fn smoke_help(window: WindowHandle<DocumentView>, cx: &mut App) {
             })
         };
 
-        dispatch(cx, Box::new(OpenHelp));
-        wait().await;
+        dispatch(window, cx, Box::new(OpenHelp));
+        pause(cx, 20).await;
         let help = help_window(cx);
-        check("Kami Help opens", help.is_some());
+        checks.check("Kami Help opens", help.is_some());
         let Some(help) = help else {
-            println!("SMOKE FAILED");
-            cx.update(|cx| cx.quit());
-            return;
+            return checks.finish(cx);
         };
-        let text = |cx: &mut gpui::AsyncApp| {
+        let text = |cx: &mut AsyncApp| {
             help.read_with(cx, |view, _| view.text())
                 .unwrap_or_default()
         };
         let before = text(cx);
-        check("it shows the help text", before == Builtin::Help.text());
+        checks.check("it shows the help text", before == Builtin::Help.text());
 
         // Try to edit it every way there is.
         help.update(cx, |view, window, cx| {
@@ -509,70 +611,47 @@ fn smoke_help(window: WindowHandle<DocumentView>, cx: &mut App) {
             view.replace_text_in_range(Some(0..5), "typed", window, cx);
         })
         .ok();
-        wait().await;
-        check("it can't be edited", text(cx) == before);
+        pause(cx, 20).await;
+        checks.check("it can't be edited", text(cx) == before);
         let state = help
             .read_with(cx, |view, _| (view.has_caret(), view.is_dirty()))
             .unwrap_or((true, true));
-        check("no caret, nothing to save", state == (false, false));
+        checks.check("no caret, nothing to save", state == (false, false));
 
-        dispatch(cx, Box::new(OpenHelp));
-        wait().await;
-        let count = cx.update(|cx| cx.windows().len());
-        check("opening it again switches to it", count == 2);
-        dispatch(cx, Box::new(OpenKeyboardShortcuts));
-        wait().await;
-        let count = cx.update(|cx| cx.windows().len());
-        check("Keyboard Shortcuts opens", count == 3);
-        dispatch(cx, Box::new(crate::menus::OpenAbout));
-        wait().await;
-        let count = cx.update(|cx| cx.windows().len());
-        check("About Kami opens", count == 4);
+        dispatch(window, cx, Box::new(OpenHelp));
+        pause(cx, 20).await;
+        checks.check("opening it again switches to it", window_count(cx) == 2);
+        dispatch(window, cx, Box::new(OpenKeyboardShortcuts));
+        pause(cx, 20).await;
+        checks.check("Keyboard Shortcuts opens", window_count(cx) == 3);
+        dispatch(window, cx, Box::new(OpenAbout));
+        pause(cx, 20).await;
+        checks.check("About Kami opens", window_count(cx) == 4);
 
-        // Closing them doesn't ask about saving.
         let windows = cx.update(|cx| cx.windows());
         for other in windows.into_iter().filter(|other| *other != *window) {
-            other
-                .update(cx, |_, window, cx| {
-                    window.dispatch_action(Box::new(CloseWindow), cx)
-                })
-                .ok();
-            wait().await;
+            dispatch(other, cx, Box::new(CloseWindow));
+            pause(cx, 20).await;
         }
-        let count = cx.update(|cx| cx.windows().len());
-        check("they close without asking", count == 1);
-
-        println!("SMOKE {}", if ok { "OK" } else { "FAILED" });
-        cx.update(|cx| cx.quit());
+        checks.check("they close without asking", window_count(cx) == 1);
+        checks.finish(cx);
     })
     .detach();
 }
 
-/// `KAMI_SMOKE=settings-window`: ⌘, opens one settings window; New from it
-/// still opens a tab; and Quit closes everything. The caller checks that
-/// the process ends.
+/// `KAMI_SMOKE=settings-window`: ⌘, opens one settings sheet; New from it
+/// still opens a tab; Esc closes it; and Quit with it open quits. The
+/// caller checks that the process ends.
 fn smoke_settings_window(window: WindowHandle<DocumentView>, cx: &mut App) {
     use crate::menus::OpenSettings;
 
     cx.spawn(async move |cx| {
-        let executor = cx.background_executor().clone();
-        let wait = || executor.timer(STEP * 20);
-        let mut ok = true;
-        let mut check = |name: &str, passed: bool| {
-            println!("{name}: {}", if passed { "ok" } else { "FAILED" });
-            ok &= passed;
-        };
-        let count = |cx: &mut gpui::AsyncApp| cx.update(|cx| cx.windows().len());
-
+        let mut checks = Checks::default();
         for _ in 0..2 {
-            window
-                .update(cx, |_, window, cx| {
-                    window.dispatch_action(Box::new(OpenSettings), cx)
-                })
-                .ok();
-            wait().await;
+            dispatch(window, cx, Box::new(OpenSettings));
+            pause(cx, 20).await;
         }
-        check("⌘, opens one settings window", count(cx) == 2);
+        checks.check("⌘, opens one settings window", window_count(cx) == 2);
 
         let settings = cx.update(|cx| {
             cx.windows()
@@ -580,24 +659,14 @@ fn smoke_settings_window(window: WindowHandle<DocumentView>, cx: &mut App) {
                 .find(|other| other.downcast::<DocumentView>().is_none())
         });
         if let Some(settings) = settings {
-            settings
-                .update(cx, |_, window, cx| {
-                    window.dispatch_action(Box::new(New), cx)
-                })
-                .ok();
+            dispatch(settings, cx, Box::new(New));
         }
-        wait().await;
-        let tabs = window
-            .update(cx, |_, window, cx| {
-                let id = window.window_handle().window_id();
-                cx.try_global::<gpui::SystemWindowTabController>()
-                    .and_then(|controller| controller.tabs(id))
-                    .map_or(1, |tabs| tabs.len())
-            })
-            .unwrap_or(0);
-        check("New from Settings opens a tab", count(cx) == 3 && tabs == 2);
+        pause(cx, 20).await;
+        checks.check(
+            "New from Settings opens a tab",
+            window_count(cx) == 3 && tab_count(window, cx) == 2,
+        );
 
-        // Esc closes the settings sheet.
         if let Some(settings) = settings {
             settings
                 .update(cx, |_, window, cx| {
@@ -605,76 +674,53 @@ fn smoke_settings_window(window: WindowHandle<DocumentView>, cx: &mut App) {
                 })
                 .ok();
         }
-        wait().await;
-        check("Esc closes Settings", count(cx) == 2);
+        pause(cx, 20).await;
+        checks.check("Esc closes Settings", window_count(cx) == 2);
 
         // Quit with Settings open still quits.
-        window
-            .update(cx, |_, window, cx| {
-                window.dispatch_action(Box::new(OpenSettings), cx)
-            })
-            .ok();
-        wait().await;
-
-        println!("SMOKE {}", if ok { "OK" } else { "FAILED" });
+        dispatch(window, cx, Box::new(OpenSettings));
+        pause(cx, 20).await;
+        checks.report();
         println!("dispatching Quit");
-        window
-            .update(cx, |_, window, cx| {
-                window.dispatch_action(Box::new(Quit), cx)
-            })
-            .ok();
+        dispatch(window, cx, Box::new(Quit));
     })
     .detach();
 }
 
-/// `KAMI_SMOKE=reveal`: clicking a block below a revealed one keeps it in
-/// place (C7), a selection across blocks reveals them all, dragging extends
-/// the selection, and Page Down scrolls without moving the caret.
+/// `KAMI_SMOKE=reveal`: Page Down scrolls without moving the caret,
+/// clicking a block below a revealed one keeps it in place (C7), and
+/// dragging selects across blocks and reveals them all.
 fn smoke_reveal(window: WindowHandle<DocumentView>, cx: &mut App) {
     use crate::document_view::PageDown;
 
     cx.spawn(async move |cx| {
-        let executor = cx.background_executor().clone();
-        let wait = || executor.timer(STEP * 10);
-        let mut ok = true;
-        let mut check = |name: &str, passed: bool| {
-            println!("{name}: {}", if passed { "ok" } else { "FAILED" });
-            ok &= passed;
-        };
-        wait().await;
-        let position = |cx: &mut gpui::AsyncApp, index: usize| {
+        let mut checks = Checks::default();
+        pause(cx, 10).await;
+        let position = |cx: &mut AsyncApp, index: usize| {
             window
                 .read_with(cx, |view, _| view.item_position(index))
                 .ok()
                 .flatten()
         };
-        let click = |cx: &mut gpui::AsyncApp, offset: usize, extend: bool| {
+        let click = |cx: &mut AsyncApp, offset: usize| {
             window
-                .update(cx, |view, window, cx| {
-                    view.click(offset, extend, window, cx)
-                })
+                .update(cx, |view, window, cx| view.click(offset, false, window, cx))
                 .ok();
         };
-
-        // Page Down scrolls without moving the caret.
-        click(cx, 0, false);
-        wait().await;
-        let state = |cx: &mut gpui::AsyncApp| {
+        let state = |cx: &mut AsyncApp| {
             window
                 .read_with(cx, |view, _| (view.scroll_top(), view.reveal_state().1))
                 .unwrap_or_default()
         };
+
+        click(cx, 0);
+        pause(cx, 10).await;
         let (scroll_before, selection_before) = state(cx);
-        window
-            .update(cx, |_, window, cx| {
-                window.dispatch_action(Box::new(PageDown), cx)
-            })
-            .ok();
-        wait().await;
+        dispatch(window, cx, Box::new(PageDown));
+        pause(cx, 10).await;
         let (scroll_after, selection_after) = state(cx);
-        println!("scroll: {scroll_before:?} -> {scroll_after:?}");
-        check(
-            "Page Down scrolls, caret stays",
+        checks.check(
+            &format!("Page Down scrolls, caret stays ({scroll_before:?} -> {scroll_after:?})"),
             scroll_after != scroll_before && selection_after == selection_before,
         );
 
@@ -682,27 +728,22 @@ fn smoke_reveal(window: WindowHandle<DocumentView>, cx: &mut App) {
         // block, then click one further down: the first collapses above
         // it, and the clicked block should stay put.
         for _ in 0..2 {
-            window
-                .update(cx, |_, window, cx| {
-                    window.dispatch_action(Box::new(PageDown), cx)
-                })
-                .ok();
-            wait().await;
+            dispatch(window, cx, Box::new(PageDown));
+            pause(cx, 10).await;
         }
         let (scroll_now, _) = state(cx);
         let first = scroll_now.map_or(0, |(item, _)| item) + 1;
         let (start, _) = position(cx, first).unwrap_or_default();
-        click(cx, start, false);
-        wait().await;
+        click(cx, start);
+        pause(cx, 10).await;
         let before = position(cx, first + 3);
         if let Some((start, _)) = before {
-            click(cx, start, false);
+            click(cx, start);
         }
-        wait().await;
+        pause(cx, 10).await;
         let after = position(cx, first + 3);
-        println!("block {} top: {before:?} -> {after:?}", first + 3);
-        check(
-            "clicked block stays in place",
+        checks.check(
+            &format!("clicked block stays in place ({before:?} -> {after:?})"),
             matches!((before, after), (Some((_, a)), Some((_, b))) if (a - b).abs() < gpui::px(1.)),
         );
 
@@ -713,19 +754,16 @@ fn smoke_reveal(window: WindowHandle<DocumentView>, cx: &mut App) {
                 .update(cx, |view, _, cx| view.drag_to(target, cx))
                 .ok();
         }
-        wait().await;
+        pause(cx, 10).await;
         let (revealed, selection) = window
             .read_with(cx, |view, _| view.reveal_state())
             .unwrap_or_default();
-        println!("revealed after drag: {revealed}, selection {selection:?}");
-        check(
-            "dragging selects across blocks and reveals them",
+        checks.check(
+            &format!("dragging selects across blocks and reveals them ({revealed} revealed)"),
             revealed == 3 && selection.is_some_and(|selection| Some(selection.head) == target),
         );
         window.update(cx, |view, _, _| view.end_drag()).ok();
-
-        println!("SMOKE {}", if ok { "OK" } else { "FAILED" });
-        cx.update(|cx| cx.quit());
+        checks.finish(cx);
     })
     .detach();
 }
@@ -734,7 +772,8 @@ fn smoke_reveal(window: WindowHandle<DocumentView>, cx: &mut App) {
 /// that PDF without any panels.
 fn smoke_print(window: WindowHandle<DocumentView>, cx: &mut App) {
     cx.spawn(async move |cx| {
-        cx.background_executor().timer(STEP * 10).await;
+        let mut checks = Checks::default();
+        pause(cx, 10).await;
         let path = std::path::PathBuf::from(std::env::var_os("KAMI_PRINT_PDF").unwrap_or_default());
         let model = window.read_with(cx, |view, _| view.model()).ok().flatten();
         let printed = cx.update(|_| {
@@ -742,10 +781,11 @@ fn smoke_print(window: WindowHandle<DocumentView>, cx: &mut App) {
             Some(crate::print::save_pdf(&*model?, &path, mtm))
         });
         let size = std::fs::metadata(&path).map_or(0, |metadata| metadata.len());
-        println!("printed: {printed:?}, {size} bytes");
-        let ok = printed == Some(true) && size > 0;
-        println!("SMOKE {}", if ok { "OK" } else { "FAILED" });
-        cx.update(|cx| cx.quit());
+        checks.check(
+            &format!("printed to a PDF ({size} bytes)"),
+            printed == Some(true) && size > 0,
+        );
+        checks.finish(cx);
     })
     .detach();
 }
@@ -754,13 +794,9 @@ fn smoke_print(window: WindowHandle<DocumentView>, cx: &mut App) {
 /// caller checks that the process ends.
 fn smoke_quit(window: WindowHandle<DocumentView>, cx: &mut App) {
     cx.spawn(async move |cx| {
-        cx.background_executor().timer(STEP * 20).await;
+        pause(cx, 20).await;
         println!("dispatching Quit");
-        window
-            .update(cx, |_, window, cx| {
-                window.dispatch_action(Box::new(Quit), cx)
-            })
-            .ok();
+        dispatch(window, cx, Box::new(Quit));
     })
     .detach();
 }

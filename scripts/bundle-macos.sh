@@ -5,7 +5,8 @@
 #   scripts/bundle-macos.sh --install   # ...and copy it to ~/Applications
 #   scripts/bundle-macos.sh --release   # build from a clean checkout of the
 #                                       # current commit, after every check
-#                                       # (scripts/check.sh) passes
+#                                       # (scripts/check.sh) and smoke test
+#                                       # (scripts/smoke.sh) passes
 #
 # The options can be combined: --release --install.
 set -eu
@@ -38,6 +39,9 @@ if $release; then
     trap 'git -C "$root" worktree remove --force "$worktree"' EXIT
     echo "Release build of $(git rev-parse --short HEAD)"
     "$worktree/scripts/check.sh"
+    # The smoke tests open windows and take keyboard focus for about two
+    # minutes.
+    "$worktree/scripts/smoke.sh"
     cd "$worktree"
 fi
 

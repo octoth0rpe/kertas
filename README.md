@@ -56,13 +56,26 @@ The About tab lists the open-source libraries Kami uses. After adding or updatin
 
 `scripts/check.sh` runs every check a release must pass: formatting, clippy, the tests, and `cargo-deny`, which checks dependency licenses against the allow-list in `deny.toml` (REQUIREMENTS T6–T7), security advisories, and where crates come from. It needs `cargo install --locked cargo-deny`.
 
+`scripts/smoke.sh` runs the smoke tests (`src/smoke.rs`): Kami drives itself through editing, tabs, settings, help, revealing blocks, printing and quitting, on scratch copies of the fixtures. It takes about two and a half minutes, opens windows and takes keyboard focus, so leave the keyboard alone while it runs.
+
+Speed is checked too, so Kami doesn't get slower without anyone noticing. Baselines on an M2 MacBook Air (2026-10-13), debug build, with `spikes/fixtures/10k.md`:
+
+| Check | Typical | Fails above |
+|---|---|---|
+| Parse and render the whole document (`large_document_renders_quickly`) | 34 ms | 150 ms |
+| Update the model after one keystroke (`typing_in_large_document_is_fast`) | 13 ms | 100 ms |
+| Smoke `bench`: handle one insert, 95th percentile | 14 ms | 60 ms |
+| Smoke `bench`: insert until its frame is drawn, 95th percentile | 30 ms | 120 ms |
+
+Release builds are roughly ten times faster.
+
 ### Installing Kami.app
 
 ```sh
 scripts/bundle-macos.sh             # builds target/release/Kami.app
 scripts/bundle-macos.sh --install   # ...and installs it in ~/Applications
-scripts/bundle-macos.sh --release   # a release: runs every check on a clean checkout of
-                                    # the current commit, then builds from it
+scripts/bundle-macos.sh --release   # a release: runs every check and smoke test on a clean
+                                    # checkout of the current commit, then builds from it
 ```
 
 The app runs on Apple Silicon Macs, and opens Markdown files from Finder, Open With and the Dock. It's signed for the Mac it was built on only. Distributing it to others needs a Developer ID signature and notarization, which is planned for later.
