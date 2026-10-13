@@ -6,19 +6,20 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, Bounds, ElementInputHandler, Entity, FocusHandle, Font, FontWeight, MouseButton,
-    SharedString, StyledText, TextLayout, TextRun, canvas, div, fill, prelude::*, px, rems, size,
+    AnyElement, Bounds, ElementInputHandler, Entity, FocusHandle, FontWeight, MouseButton, Pixels,
+    Point, SharedString, StyledText, TextLayout, TextRun, canvas, div, fill, prelude::*, px, rems,
+    size,
 };
 use kami::inline::InlineStyle;
 use kami::model::Gap;
 use kami::reveal::{RevealFont, SpanStyle, StyledSource};
+use kami::tabs::ExpandedTabs;
 
 use crate::document_view::DocumentView;
-use crate::text_style::{CODE_FONT, code_text, heading_text, inline_run, underline};
+use crate::text_style::{CODE_FONT, Look, code_text, heading_text, inline_run, underline};
 use kami::rendered::RenderedBlock;
 
 use crate::rendered_block::{ClickTarget, block_frame, rendered_content, rendered_heading};
-use crate::theme::Theme;
 
 const CARET_WIDTH: f32 = 2.;
 
@@ -54,9 +55,41 @@ pub struct RevealedBlock<'a> {
 pub struct TextInput {
     pub focus_handle: FocusHandle,
     pub view: Entity<DocumentView>,
-    pub layout_slot: Rc<RefCell<Option<TextLayout>>>,
+    pub layout_slot: Rc<RefCell<Option<RevealedLayout>>>,
     /// Whether to show the editing hint (the `editing_hint` setting).
     pub hint: bool,
+}
+
+/// The revealed block's text layout, in source offsets: tabs are shown as
+/// spaces, so offsets in the layout differ from the source after a tab.
+#[derive(Clone)]
+pub struct RevealedLayout {
+    layout: TextLayout,
+    tabs: Rc<ExpandedTabs>,
+}
+
+impl RevealedLayout {
+    /// Where the source `offset` is drawn.
+    pub fn position_for_index(&self, offset: usize) -> Option<Point<Pixels>> {
+        self.layout.position_for_index(self.tabs.to_shown(offset))
+    }
+
+    /// The source offset nearest `position`: `Ok` if it's over the text.
+    /// A position over a tab's spaces is the tab.
+    pub fn index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
+        self.layout
+            .index_for_position(position)
+            .map(|shown| self.tabs.to_source(shown))
+            .map_err(|shown| self.tabs.to_source(shown))
+    }
+
+    pub fn line_height(&self) -> Pixels {
+        self.layout.line_height()
+    }
+
+    pub fn bounds(&self) -> Bounds<Pixels> {
+        self.layout.bounds()
+    }
 }
 
 /// Renders a revealed block as a list item. `input` is set for the block
@@ -64,14 +97,13 @@ pub struct TextInput {
 /// show the hint.
 pub fn render_revealed(
     block: RevealedBlock,
-    base_font: &Font,
-    theme: Theme,
+    look: &Look,
     click: ClickTarget,
     input: Option<TextInput>,
 ) -> AnyElement {
     let heading = revealed_heading(block.styled);
     let first = block.first;
-    let content = revealed_content(block, base_font, theme, click.clone(), input);
+    let content = revealed_content(block, look, click.clone(), input);
     block_frame(content, heading, first, click)
 }
 
@@ -81,15 +113,14 @@ pub fn render_gap(
     block: &RenderedBlock,
     gap: Gap,
     caret: RevealedBlock,
-    base_font: &Font,
-    theme: Theme,
+    look: &Look,
     click: ClickTarget,
     input: TextInput,
 ) -> AnyElement {
     let first = caret.first;
     let heading = rendered_heading(block);
-    let rendered = rendered_content(block, base_font, theme, click.clone());
-    let line = revealed_content(caret, base_font, theme, click.clone(), Some(input));
+    let rendered = rendered_content(block, look, click.clone());
+    let line = revealed_content(caret, look, click.clone(), Some(input));
     let content = match gap {
         Gap::Above => div()
             .child(div().mb(px(GAP_SPACE)).child(line))
@@ -112,8 +143,7 @@ fn revealed_heading(styled: &StyledSource) -> Option<u8> {
 /// item's spacing.
 fn revealed_content(
     block: RevealedBlock,
-    base_font: &Font,
-    theme: Theme,
+    look: &Look,
     click: ClickTarget,
     input: Option<TextInput>,
 ) -> AnyElement {
@@ -121,18 +151,20 @@ fn revealed_content(
     let heading = revealed_heading(block.styled);
     let monospace = block.styled.font == RevealFont::Monospace;
 
-    // Tabs are shown as single spaces so offsets stay identical to the
-    // source.
-    let text = SharedString::from(block.source.replace('\t', " "));
-    let mut runs = text_runs(&block, base_font, theme, heading);
+    let theme = look.theme;
+    // Tabs are shown as spaces, as when rendered; the layout maps offsets
+    // back to the source.
+    let tabs = Rc::new(ExpandedTabs::new(block.source, look.tab_width));
+    let text = SharedString::from(tabs.text.clone());
+    let mut runs = text_runs(&block, look, heading);
     // GPUI requires the runs to cover the text exactly. If they ever don't,
     // show the source unstyled rather than crash.
     let covered: usize = runs.iter().map(|run| run.len).sum();
-    if covered != text.len() {
+    if covered != block.source.len() {
         #[cfg(debug_assertions)]
         eprintln!(
             "KAMI BUG: styled spans cover {covered} of {} bytes: {:?} spans {:?}",
-            text.len(),
+            block.source.len(),
             block.source,
             block
                 .styled
@@ -142,16 +174,20 @@ fn revealed_content(
                 .collect::<Vec<_>>()
         );
         runs = vec![TextRun {
-            len: text.len(),
-            font: base_font.clone(),
+            len: block.source.len(),
+            font: look.font.clone(),
             color: theme.text,
             background_color: None,
             underline: None,
             strikethrough: None,
         }];
     }
+    stretch_over_tabs(&mut runs, &tabs);
     let styled = StyledText::new(text).with_runs(runs);
-    let layout = styled.layout().clone();
+    let layout = RevealedLayout {
+        layout: styled.layout().clone(),
+        tabs,
+    };
 
     let caret = block.caret;
     let caret_layout = layout.clone();
@@ -250,13 +286,9 @@ fn revealed_content(
 }
 
 /// Text runs for the styled source, with the selection as a background.
-fn text_runs(
-    block: &RevealedBlock,
-    base_font: &Font,
-    theme: Theme,
-    heading: Option<u8>,
-) -> Vec<TextRun> {
-    let mut block_font = base_font.clone();
+fn text_runs(block: &RevealedBlock, look: &Look, heading: Option<u8>) -> Vec<TextRun> {
+    let theme = look.theme;
+    let mut block_font = look.font.clone();
     if matches!(block.styled.font, RevealFont::Monospace) {
         block_font.family = CODE_FONT.into();
     }
@@ -314,6 +346,17 @@ fn text_runs(
     runs
 }
 
+/// Lengthens `runs`, which measure the source, to cover its tabs shown as
+/// spaces.
+fn stretch_over_tabs(runs: &mut [TextRun], tabs: &ExpandedTabs) {
+    let mut start = 0;
+    for run in runs {
+        let end = start + run.len;
+        run.len = tabs.to_shown(end) - tabs.to_shown(start);
+        start = end;
+    }
+}
+
 /// Splits `range` at any of `cuts` that fall inside it, dropping empty
 /// pieces.
 fn split_at(range: Range<usize>, cuts: &[usize]) -> Vec<Range<usize>> {
@@ -340,8 +383,11 @@ mod tests {
     /// exactly, whatever is selected or being composed (T2).
     #[test]
     fn text_runs_cover_the_text() {
-        let font = gpui::font("Helvetica");
-        let theme = Theme::light();
+        let look = Look {
+            font: gpui::font("Helvetica"),
+            theme: Theme::light(),
+            tab_width: 4,
+        };
         for name in ["showcase.md", "10k.md"] {
             let path = format!("{}/spikes/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
             let text = std::fs::read_to_string(path).unwrap();
@@ -360,7 +406,7 @@ mod tests {
                             marked: marked.clone(),
                             first: false,
                         };
-                        let covered: usize = text_runs(&block, &font, theme, heading)
+                        let covered: usize = text_runs(&block, &look, heading)
                             .iter()
                             .map(|run| run.len)
                             .sum();
@@ -405,6 +451,25 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn runs_stretch_over_tabs() {
+        let tabs = ExpandedTabs::new("\ta\tb", 4);
+        let run = |len| TextRun {
+            len,
+            font: gpui::font("Helvetica"),
+            color: gpui::black(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        // "\t" | "a\t" | "b"
+        let mut runs = vec![run(1), run(2), run(1)];
+        stretch_over_tabs(&mut runs, &tabs);
+        let lens: Vec<usize> = runs.iter().map(|run| run.len).collect();
+        assert_eq!(lens, [4, 5, 1]);
+        assert_eq!(lens.iter().sum::<usize>(), tabs.text.len());
     }
 
     #[test]

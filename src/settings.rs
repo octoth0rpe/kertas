@@ -11,6 +11,8 @@ use std::ops::RangeInclusive;
 
 use toml_edit::{DocumentMut, Item, Value};
 
+use crate::tabs::{DEFAULT_TAB_WIDTH, TAB_WIDTHS};
+
 /// The color scheme (A2).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ThemeSetting {
@@ -55,6 +57,8 @@ pub struct Settings {
     pub text_width: TextWidth,
     /// The text size documents start at, in pixels.
     pub font_size: u32,
+    /// How many spaces a tab is shown as.
+    pub tab_width: u32,
     /// Whether the block being edited shows its keyboard hints.
     pub editing_hint: bool,
 }
@@ -66,6 +70,7 @@ impl Default for Settings {
             layout: Layout::default(),
             text_width: TextWidth::default(),
             font_size: DEFAULT_FONT_SIZE,
+            tab_width: DEFAULT_TAB_WIDTH,
             editing_hint: true,
         }
     }
@@ -115,6 +120,12 @@ pub enum Kind {
         range: RangeInclusive<u32>,
         /// Shown after the number in the settings sheet, e.g. "px".
         unit: &'static str,
+        get: fn(&Settings) -> u32,
+        apply: fn(&mut Settings, u32),
+    },
+    /// One of several whole numbers.
+    Numbers {
+        choices: &'static [u32],
         get: fn(&Settings) -> u32,
         apply: fn(&mut Settings, u32),
     },
@@ -178,6 +189,16 @@ pub const SETTINGS: &[Setting] = &[
         },
     },
     Setting {
+        key: "tab_width",
+        label: "Tab width",
+        note: Some("Spaces shown for each tab."),
+        kind: Kind::Numbers {
+            choices: TAB_WIDTHS,
+            get: |settings| settings.tab_width,
+            apply: |settings, width| settings.tab_width = width,
+        },
+    },
+    Setting {
         key: "editing_hint",
         label: "Editing hint",
         note: Some("Show keyboard hints on the block being edited"),
@@ -236,6 +257,15 @@ impl Kind {
                     _ => false,
                 }
             }
+            Self::Numbers { choices, apply, .. } => {
+                match value.as_integer().and_then(|n| u32::try_from(n).ok()) {
+                    Some(n) if choices.contains(&n) => {
+                        apply(settings, n);
+                        true
+                    }
+                    _ => false,
+                }
+            }
             Self::Bool { apply, .. } => match value.as_bool() {
                 Some(value) => {
                     apply(settings, value);
@@ -255,6 +285,10 @@ impl Kind {
             }
             Self::Integer { range, .. } => {
                 format!("a whole number from {} to {}", range.start(), range.end())
+            }
+            Self::Numbers { choices, .. } => {
+                let values: Vec<String> = choices.iter().map(u32::to_string).collect();
+                one_of(&values.iter().map(String::as_str).collect::<Vec<_>>())
             }
             Self::Bool { .. } => one_of(&["true", "false"]),
         }
@@ -426,6 +460,7 @@ mod tests {
                 layout: Layout::Windows,
                 text_width: TextWidth::Wide,
                 font_size: DEFAULT_FONT_SIZE,
+                tab_width: DEFAULT_TAB_WIDTH,
                 editing_hint: true,
             }
         );
@@ -519,6 +554,19 @@ mod tests {
     }
 
     #[test]
+    fn tab_width() {
+        assert_eq!(Settings::default().tab_width, 4);
+        assert_eq!(parse("tab_width = 8\n").0.tab_width, 8);
+        let (settings, problems) = parse("tab_width = 3\n");
+        assert_eq!(settings.tab_width, 4);
+        assert_eq!(
+            problems[0].to_string(),
+            "line 1: `tab_width` must be `2`, `4` or `8`; using the default"
+        );
+        assert!(set("", "tab_width", 3).is_err());
+    }
+
+    #[test]
     fn integer_edge_cases() {
         for text in ["font_size = 16.0\n", "font_size = -1\n", "font_size = 9\n"] {
             let (settings, problems) = parse(text);
@@ -584,6 +632,12 @@ mod tests {
                 }
                 Kind::Integer { range, get, .. } => {
                     for n in [*range.start(), *range.end()] {
+                        let text = set("", setting.key, i64::from(n)).unwrap();
+                        assert_eq!(get(&parse(&text).0), n, "{}", setting.key);
+                    }
+                }
+                Kind::Numbers { choices, get, .. } => {
+                    for &n in *choices {
                         let text = set("", setting.key, i64::from(n)).unwrap();
                         assert_eq!(get(&parse(&text).0), n, "{}", setting.key);
                     }

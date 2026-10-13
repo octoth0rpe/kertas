@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use gpui::{
     Context, FocusHandle, KeyBinding, ListAlignment, ListState, Pixels, Subscription,
-    SystemWindowTabController, TextLayout, Window, actions, px,
+    SystemWindowTabController, Window, actions, px,
 };
 use kami::document::Document;
 use kami::editor::{Editor, RevealTarget};
@@ -29,6 +29,7 @@ use kami::settings::TextWidth;
 use crate::app_settings::{self, AppSettings};
 use crate::builtin::Builtin;
 use crate::menus::OpenSettings;
+use crate::revealed_block::RevealedLayout;
 use crate::theme::Theme;
 use crate::zoom::Zoom;
 
@@ -198,7 +199,7 @@ struct OpenDocument {
     /// and any others the selection touches.
     revealed: Vec<Revealed>,
     /// The caret's revealed item's text layout from the last frame.
-    revealed_layout: Rc<RefCell<Option<TextLayout>>>,
+    revealed_layout: Rc<RefCell<Option<RevealedLayout>>>,
     /// An item to keep at the same place on screen once the next frame is
     /// laid out, and where it was (C7): revealing blocks changes their
     /// heights, which would otherwise move the text under the pointer.
@@ -230,6 +231,8 @@ pub struct DocumentView {
     builtin: Option<Builtin>,
     theme: Theme,
     text_width: TextWidth,
+    /// The `tab_width` setting, to notice when it changes.
+    tab_width: u32,
     /// Whether the blinking caret is currently drawn.
     caret_visible: bool,
     /// Bumped to stop the current blink loop.
@@ -267,9 +270,10 @@ impl DocumentView {
         let settings_observer = cx.observe_global_in::<AppSettings>(window, |this, window, cx| {
             this.theme = Theme::current(window, cx);
             this.settings_problems_dismissed = false;
-            let text_width = app_settings::get(cx).text_width;
-            if text_width != this.text_width {
-                this.text_width = text_width;
+            let settings = app_settings::get(cx);
+            if (settings.text_width, settings.tab_width) != (this.text_width, this.tab_width) {
+                this.text_width = settings.text_width;
+                this.tab_width = settings.tab_width;
                 this.layout_changed();
             }
             cx.notify();
@@ -287,6 +291,7 @@ impl DocumentView {
             builtin: None,
             theme: Theme::current(window, cx),
             text_width: app_settings::get(cx).text_width,
+            tab_width: app_settings::get(cx).tab_width,
             caret_visible: true,
             dragging: false,
             blink_epoch: 0,

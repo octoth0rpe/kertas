@@ -14,3 +14,4 @@ pub mod print_layout;
 pub mod rendered;
 pub mod reveal;
 pub mod settings;
+pub mod tabs;

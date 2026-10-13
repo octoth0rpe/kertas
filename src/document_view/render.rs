@@ -21,6 +21,7 @@ use crate::app_settings::{self, AppSettings};
 use crate::rendered_block::{ClickTarget, render_block};
 use crate::revealed_block::{RevealedBlock, TextInput, render_gap, render_revealed};
 use crate::tab_strip::{render_tab_strip, select_tab};
+use crate::text_style::Look;
 use crate::zoom;
 
 /// The text column's maximum width for each `text_width` setting (A1), or
@@ -98,8 +99,11 @@ impl DocumentView {
         let layout_slot = open.revealed_layout.clone();
         let caret_visible = self.caret_visible;
         let column_width = column_width(self.text_width);
-        let base_font = window.text_style().font();
-        let theme = self.theme;
+        let look = Look {
+            font: window.text_style().font(),
+            theme: self.theme,
+            tab_width: self.tab_width,
+        };
         let view = cx.entity();
         let focus_handle = self.focus_handle.clone();
         let hint = app_settings::get(cx).editing_hint;
@@ -146,8 +150,7 @@ impl DocumentView {
                             &item.rendered,
                             *gap,
                             block,
-                            &base_font,
-                            theme,
+                            &look,
                             // Clicks on the block place the caret in it.
                             ClickTarget {
                                 view: view.downgrade(),
@@ -158,8 +161,7 @@ impl DocumentView {
                         ),
                         _ => render_revealed(
                             block,
-                            &base_font,
-                            theme,
+                            &look,
                             ClickTarget {
                                 view: view.downgrade(),
                                 block_start: range.start,
@@ -172,8 +174,7 @@ impl DocumentView {
                 _ => render_block(
                     &item.rendered,
                     index == 0,
-                    &base_font,
-                    theme,
+                    &look,
                     ClickTarget {
                         view: view.downgrade(),
                         block_start: item.block.start,
