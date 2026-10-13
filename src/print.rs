@@ -100,8 +100,17 @@ fn operation(model: &Model, mtm: MainThreadMarker) -> Retained<NSPrintOperation>
 /// The layout as an attributed string, in black on white.
 fn attributed(layout: &PrintLayout, mtm: MainThreadMarker) -> Retained<NSMutableAttributedString> {
     let text = &layout.text;
-    // Attributed string ranges are in UTF-16 code units.
-    let utf16 = |byte: usize| text[..byte].encode_utf16().count();
+    // Attributed string ranges are in UTF-16 code units. Map every byte
+    // offset in one pass; converting each range from scratch would be
+    // quadratic in the document's length.
+    let mut utf16_at = vec![0; text.len() + 1];
+    let mut units = 0;
+    for (byte, character) in text.char_indices() {
+        utf16_at[byte..byte + character.len_utf8()].fill(units);
+        units += character.len_utf16();
+    }
+    utf16_at[text.len()] = units;
+    let utf16 = |byte: usize| utf16_at[byte];
     let range = |bytes: &Range<usize>| {
         let start = utf16(bytes.start);
         NSRange::new(start, utf16(bytes.end) - start)
@@ -259,13 +268,16 @@ fn attributed(layout: &PrintLayout, mtm: MainThreadMarker) -> Retained<NSMutable
     }
 
     // Inline code gets a grey background; code blocks have their box.
-    for run in &layout.runs {
-        let in_block = layout.paragraphs.iter().any(|paragraph| {
-            paragraph.frame == Frame::Code
-                && paragraph.range.start <= run.range.start
-                && run.range.end <= paragraph.range.end
-        });
-        if run.style.code && !in_block {
+    for run in layout.runs.iter().filter(|run| run.style.code) {
+        // Paragraphs are in order, so find the run's by binary search.
+        let index = layout
+            .paragraphs
+            .partition_point(|paragraph| paragraph.range.end <= run.range.start);
+        let in_block = layout
+            .paragraphs
+            .get(index)
+            .is_some_and(|paragraph| paragraph.frame == Frame::Code);
+        if !in_block {
             unsafe {
                 add(
                     NSBackgroundColorAttributeName,
