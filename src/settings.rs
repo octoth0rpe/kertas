@@ -55,7 +55,7 @@ pub struct Settings {
     pub text_width: TextWidth,
     /// The text size documents start at, in pixels.
     pub font_size: u32,
-    /// Whether the block being edited shows the "esc to finish" hint.
+    /// Whether the block being edited shows its keyboard hints.
     pub editing_hint: bool,
 }
 
@@ -180,7 +180,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "editing_hint",
         label: "Editing hint",
-        note: Some("Show “esc to finish” on the block being edited"),
+        note: Some("Show keyboard hints on the block being edited"),
         kind: Kind::Bool {
             get: |settings| settings.editing_hint,
             apply: |settings, show| settings.editing_hint = show,
