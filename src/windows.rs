@@ -1,13 +1,13 @@
 //! Document windows: one document per window.
 //!
-//! [`DOCUMENT_LAYOUT`] picks how they're arranged (REQUIREMENTS §8.2):
-//! - `Tabs` (the default): native macOS tabs. macOS provides the tab bar,
-//!   dragging tabs out into windows, and Window > Merge All Windows.
+//! The `layout` setting picks how they're arranged (REQUIREMENTS §8.2):
+//! - `Tabs` (the default): native macOS tabs, with Kami's own tab strip
+//!   (see `tab_strip.rs`).
 //! - `Windows`: separate windows, each offset from the previous one.
 //!
 //! Kami decides this itself rather than following the macOS "Prefer tabs
-//! when opening documents" preference. The setting moves to the config
-//! file (§8) later.
+//! when opening documents" preference. Changing the setting affects
+//! documents opened afterwards.
 
 use std::path::{Path, PathBuf};
 
@@ -16,22 +16,12 @@ use gpui::{
     WindowBounds, WindowHandle, WindowOptions, point, prelude::*, px, size,
 };
 
+use kami::settings::Layout;
+
+use crate::app_settings;
 use crate::document_view::{CloseWindow, DocumentView, New, Open, Quit};
 #[cfg(target_os = "macos")]
 use crate::native_tabs::{NativeWindow, add_as_tab};
-
-/// How document windows are arranged (§8.2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(
-    dead_code,
-    reason = "`Windows` is selectable once the config file exists"
-)]
-pub enum DocumentLayout {
-    Tabs,
-    Windows,
-}
-
-pub const DOCUMENT_LAYOUT: DocumentLayout = DocumentLayout::Tabs;
 
 /// Groups document windows into native tabs.
 const TABBING_IDENTIFIER: &str = "kami-documents";
@@ -81,13 +71,14 @@ pub fn open_window(
         .and_then(|window| window.downcast::<DocumentView>());
     let previous_bounds =
         previous.and_then(|window| window.update(cx, |_, window, _| window.bounds()).ok());
-    let bounds = match (DOCUMENT_LAYOUT, previous_bounds) {
-        (DocumentLayout::Windows, Some(previous)) => Bounds::new(
+    let layout = app_settings::get(cx).layout;
+    let bounds = match (layout, previous_bounds) {
+        (Layout::Windows, Some(previous)) => Bounds::new(
             previous.origin + point(px(CASCADE_OFFSET), px(CASCADE_OFFSET)),
             previous.size,
         ),
         // A tab takes its group's frame, so any bounds will do.
-        (DocumentLayout::Tabs, Some(previous)) => previous,
+        (Layout::Tabs, Some(previous)) => previous,
         (_, None) => Bounds::centered(None, size(px(900.), px(700.)), cx),
     };
     let window = cx
@@ -98,8 +89,7 @@ pub fn open_window(
                     title: Some("Kami".into()),
                     ..Default::default()
                 }),
-                tabbing_identifier: (DOCUMENT_LAYOUT == DocumentLayout::Tabs)
-                    .then(|| TABBING_IDENTIFIER.to_owned()),
+                tabbing_identifier: (layout == Layout::Tabs).then(|| TABBING_IDENTIFIER.to_owned()),
                 ..Default::default()
             },
             |window, cx| cx.new(|cx| DocumentView::new(window, cx)),
@@ -107,7 +97,7 @@ pub fn open_window(
         .ok()?;
 
     #[cfg(target_os = "macos")]
-    if DOCUMENT_LAYOUT == DocumentLayout::Tabs
+    if layout == Layout::Tabs
         && let Some(previous) = previous
     {
         let host = previous

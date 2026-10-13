@@ -10,3 +10,4 @@ pub mod model;
 pub mod movement;
 pub mod rendered;
 pub mod reveal;
+pub mod settings;

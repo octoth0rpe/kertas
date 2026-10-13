@@ -1,3 +1,4 @@
+mod app_settings;
 mod document_view;
 #[cfg(target_os = "macos")]
 mod native_tabs;
@@ -29,6 +30,7 @@ fn main() {
     });
 
     app.run(move |cx: &mut App| {
+        app_settings::init(cx);
         windows::register(cx);
         cx.bind_keys(document_view::key_bindings());
         cx.set_menus([

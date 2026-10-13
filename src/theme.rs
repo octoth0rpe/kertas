@@ -1,9 +1,11 @@
 //! Built-in light and dark color themes (A2).
 //!
-//! The theme follows the macOS appearance. Colors are hardcoded for now;
-//! the config file (§8) will add a setting to pin one.
+//! The `theme` setting picks one, or follows the macOS appearance.
 
-use gpui::{Hsla, WindowAppearance, rgb, rgba};
+use gpui::{App, Hsla, Window, WindowAppearance, rgb, rgba};
+use kami::settings::ThemeSetting;
+
+use crate::app_settings;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Theme {
@@ -25,6 +27,15 @@ pub struct Theme {
 }
 
 impl Theme {
+    /// The theme for `window`, from the `theme` setting.
+    pub fn current(window: &Window, cx: &App) -> Self {
+        match app_settings::get(cx).theme {
+            ThemeSetting::Light => Self::light(),
+            ThemeSetting::Dark => Self::dark(),
+            ThemeSetting::System => Self::for_appearance(window.appearance()),
+        }
+    }
+
     pub fn light() -> Self {
         Self {
             background: rgb(0xffffff).into(),

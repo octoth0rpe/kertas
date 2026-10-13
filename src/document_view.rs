@@ -11,9 +11,10 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    Bounds, ClipboardItem, Context, EntityInputHandler, FocusHandle, KeyBinding, ListAlignment,
-    ListState, Pixels, Point, PromptLevel, Subscription, SystemWindowTabController, Task,
-    TextLayout, UTF16Selection, Window, actions, div, list, point, prelude::*, px, relative, size,
+    AnyElement, Bounds, ClipboardItem, Context, EntityInputHandler, FocusHandle, KeyBinding,
+    ListAlignment, ListState, Pixels, Point, PromptLevel, Subscription, SystemWindowTabController,
+    Task, TextLayout, UTF16Selection, Window, actions, div, list, point, prelude::*, px, relative,
+    size,
 };
 use kami::blocks::BlockKind;
 use kami::document::{Document, OpenError, SaveError};
@@ -23,6 +24,7 @@ use kami::model::{Gap, Model};
 use kami::movement::{self, Selection};
 use kami::reveal::{StyledSource, styled_source};
 
+use crate::app_settings::AppSettings;
 use crate::rendered_block::{ClickTarget, render_block};
 use crate::revealed_block::{RevealedBlock, TextInput, render_gap, render_revealed};
 use crate::tab_strip::{render_tab_strip, select_tab};
@@ -223,7 +225,11 @@ pub struct DocumentView {
     confirming: bool,
     /// The edited state last shown in the window's close button.
     shown_edited: Option<bool>,
+    /// Whether the user closed the bar reporting problems in the settings
+    /// file. It shows again when the file changes.
+    settings_problems_dismissed: bool,
     _appearance_observer: Subscription,
+    _settings_observer: Subscription,
     _tabs_observer: Subscription,
 }
 
@@ -231,9 +237,15 @@ impl DocumentView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
         focus_handle.focus(window, cx);
-        // Follow the macOS appearance, switching live when it changes.
+        // Follow the theme setting and the macOS appearance, switching live
+        // when either changes.
         let appearance_observer = cx.observe_window_appearance(window, |this, window, cx| {
-            this.theme = Theme::for_appearance(window.appearance());
+            this.theme = Theme::current(window, cx);
+            cx.notify();
+        });
+        let settings_observer = cx.observe_global_in::<AppSettings>(window, |this, window, cx| {
+            this.theme = Theme::current(window, cx);
+            this.settings_problems_dismissed = false;
             cx.notify();
         });
         // Closing the window (e.g. its close button) asks about unsaved
@@ -246,12 +258,14 @@ impl DocumentView {
         Self {
             focus_handle,
             open: None,
-            theme: Theme::for_appearance(window.appearance()),
+            theme: Theme::current(window, cx),
             caret_visible: true,
             blink_epoch: 0,
             confirming: false,
             shown_edited: None,
+            settings_problems_dismissed: false,
             _appearance_observer: appearance_observer,
+            _settings_observer: settings_observer,
             // Redraw the tab strip when tabs are added, removed or renamed.
             _tabs_observer: cx
                 .observe_global_in::<SystemWindowTabController>(window, |_, _, cx| cx.notify()),
@@ -291,6 +305,12 @@ impl DocumentView {
             window.window_handle().window_id(),
             name.into(),
         );
+    }
+
+    /// The theme the view is drawn with, for the smoke test.
+    #[cfg(debug_assertions)]
+    pub fn theme(&self) -> Theme {
+        self.theme
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -1211,6 +1231,55 @@ fn capitalize(text: &str) -> String {
     }
 }
 
+impl DocumentView {
+    /// A bar at the bottom of the window reporting problems in the settings
+    /// file (G4), until the user closes it.
+    fn render_settings_problems(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.settings_problems_dismissed {
+            return None;
+        }
+        let problems = &cx.try_global::<AppSettings>()?.problems;
+        let first = problems.first()?;
+        let mut message = format!("Settings file, {first}");
+        if problems.len() > 1 {
+            message.push_str(&format!(" (and {} more)", problems.len() - 1));
+        }
+        let theme = self.theme;
+        Some(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .px_3()
+                .py(px(6.))
+                .border_t_1()
+                .border_color(theme.rule)
+                .bg(theme.table_header_background)
+                .text_size(px(12.))
+                .line_height(px(16.))
+                .text_color(theme.muted_text)
+                .child(div().flex_1().child(message))
+                .child(
+                    div()
+                        .px_1()
+                        .rounded_sm()
+                        .cursor_pointer()
+                        .hover(|this| this.bg(theme.rule))
+                        .child("×")
+                        .on_mouse_down(
+                            gpui::MouseButton::Left,
+                            cx.listener(|this, _, _, cx| {
+                                this.settings_problems_dismissed = true;
+                                cx.notify();
+                                cx.stop_propagation();
+                            }),
+                        ),
+                )
+                .into_any_element(),
+        )
+    }
+}
+
 impl Render for DocumentView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Show unsaved changes in the window's close button.
@@ -1220,6 +1289,7 @@ impl Render for DocumentView {
             self.shown_edited = Some(edited);
         }
         let tab_strip = render_tab_strip(window, cx, self.theme, edited);
+        let problems_bar = self.render_settings_problems(cx);
 
         let content = match &self.open {
             Some(open) => {
@@ -1464,6 +1534,7 @@ impl Render for DocumentView {
                     )
                     .child(content),
             )
+            .children(problems_bar)
     }
 }
 
