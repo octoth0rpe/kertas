@@ -1,5 +1,9 @@
 mod app_settings;
+#[cfg(target_os = "macos")]
+mod dock_icon;
 mod document_view;
+#[cfg(target_os = "macos")]
+mod file_watch;
 mod menus;
 #[cfg(target_os = "macos")]
 mod native_tabs;
@@ -31,6 +35,8 @@ fn main() {
 
     app.run(move |cx: &mut App| {
         app_settings::init(cx);
+        #[cfg(target_os = "macos")]
+        dock_icon::init();
         windows::register(cx);
         cx.bind_keys(document_view::key_bindings());
         menus::init(cx);

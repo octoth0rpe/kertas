@@ -316,6 +316,13 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
         wait().await;
         check("edit applies live", theme(cx) == Some(Theme::dark()));
 
+        // Editors often save by renaming a new file over the old one.
+        let temp = path.with_extension("tmp");
+        std::fs::write(&temp, "theme = \"light\"\n").ok();
+        std::fs::rename(&temp, &path).ok();
+        wait().await;
+        check("replaced file applies live", theme(cx) == Some(Theme::light()));
+
         std::fs::write(&path, "theme = \"blue\"\nfont = 1\n").ok();
         wait().await;
         let reported = problems(cx);
