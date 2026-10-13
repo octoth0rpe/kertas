@@ -2394,6 +2394,7 @@ dependencies = [
 name = "kami"
 version = "0.1.0"
 dependencies = [
+ "futures",
  "gpui",
  "gpui_platform",
  "objc2 0.6.5",

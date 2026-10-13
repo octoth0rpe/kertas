@@ -164,11 +164,16 @@ pub fn open_path(path: PathBuf, cx: &mut App) {
         return;
     }
 
-    let pristine_active = cx
+    // Prefer the active window. Right after launch there may not be one
+    // yet, so fall back to any empty window.
+    let pristine =
+        |window: &WindowHandle<DocumentView>| window.read(cx).is_ok_and(|view| view.is_pristine());
+    let pristine_window = cx
         .active_window()
         .and_then(|window| window.downcast::<DocumentView>())
-        .filter(|window| window.read(cx).is_ok_and(|view| view.is_pristine()));
-    match pristine_active {
+        .filter(pristine)
+        .or_else(|| windows.iter().copied().find(pristine));
+    match pristine_window {
         Some(window) => {
             window
                 .update(cx, |view, window, cx| view.open_path(path, window, cx))
@@ -207,5 +212,60 @@ fn same_file(a: &Path, b: &Path) -> bool {
     match (a.canonicalize(), b.canonicalize()) {
         (Ok(a), Ok(b)) => a == b,
         _ => a == b,
+    }
+}
+
+/// The path of a `file://` URL, as sent when files are opened from Finder or
+/// the Dock. Other URLs are ignored.
+pub fn path_from_file_url(url: &str) -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStringExt;
+
+    let path = url.strip_prefix("file://")?;
+    let path = path.strip_prefix("localhost").unwrap_or(path);
+    if !path.starts_with('/') {
+        return None;
+    }
+    // Percent-decode to bytes: paths aren't necessarily UTF-8.
+    let bytes = path.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let escaped = (bytes[index] == b'%')
+            .then(|| path.get(index + 1..index + 3))
+            .flatten()
+            .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+        match escaped {
+            Some(byte) => {
+                decoded.push(byte);
+                index += 3;
+            }
+            None => {
+                decoded.push(bytes[index]);
+                index += 1;
+            }
+        }
+    }
+    Some(PathBuf::from(std::ffi::OsString::from_vec(decoded)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_urls_become_paths() {
+        assert_eq!(
+            path_from_file_url("file:///Users/me/My%20Notes/caf%C3%A9.md"),
+            Some(PathBuf::from("/Users/me/My Notes/café.md"))
+        );
+        assert_eq!(
+            path_from_file_url("file://localhost/tmp/a.md"),
+            Some(PathBuf::from("/tmp/a.md"))
+        );
+        assert_eq!(
+            path_from_file_url("file:///tmp/100%"),
+            Some(PathBuf::from("/tmp/100%"))
+        );
+        assert_eq!(path_from_file_url("https://example.com/a.md"), None);
     }
 }

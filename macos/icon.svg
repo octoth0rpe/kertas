@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Placeholder icon: a sheet of paper (kami, 紙) with Markdown-ish lines.
+       Shapes only, no text, so it renders the same everywhere.
+       macOS icon grid: an 824×824 rounded square inset 100px. -->
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3b5b7a"/>
+      <stop offset="1" stop-color="#253c52"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#background)"/>
+  <!-- The sheet, with its top-right corner folded. -->
+  <path d="M292 220 H632 L732 320 V804 H292 Z" fill="#fbf8f1"/>
+  <path d="M632 220 V320 H732 Z" fill="#d9d2c3"/>
+  <!-- A heading and paragraph lines. -->
+  <rect x="352" y="300" width="200" height="40" rx="12" fill="#253c52"/>
+  <rect x="352" y="400" width="320" height="22" rx="11" fill="#b9b2a4"/>
+  <rect x="352" y="452" width="320" height="22" rx="11" fill="#b9b2a4"/>
+  <rect x="352" y="504" width="220" height="22" rx="11" fill="#b9b2a4"/>
+  <rect x="352" y="596" width="320" height="22" rx="11" fill="#b9b2a4"/>
+  <rect x="352" y="648" width="260" height="22" rx="11" fill="#b9b2a4"/>
+  <!-- The caret. -->
+  <rect x="624" y="636" width="12" height="46" rx="4" fill="#e0793a"/>
+</svg>
