@@ -5,7 +5,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use gpui::{AnyElement, Context, Window, div, prelude::*, px};
-use kami::document::{DiskChange, DiskChangeKind};
+use kertas::document::{DiskChange, DiskChangeKind};
 
 use super::{DocumentView, Save, SaveAs, caret::reveal};
 use crate::file_watch;
@@ -56,7 +56,7 @@ impl DocumentView {
         let change = open.editor.document().disk_change();
         match change {
             None => {
-                // Changed back, say, or saved by Kami.
+                // Changed back, say, or saved by Kertas.
                 open.disk_change = None;
             }
             Some(change)
@@ -121,7 +121,7 @@ impl DocumentView {
     }
 
     /// A bar at the top of the document when another app changed, deleted
-    /// or moved its file and Kami didn't simply reload it.
+    /// or moved its file and Kertas didn't simply reload it.
     pub(super) fn render_disk_change(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let open = self.open.as_ref()?;
         let change = open.disk_change.as_ref()?;

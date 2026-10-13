@@ -1,11 +1,11 @@
 //! The text size for this session (#28).
 //!
-//! Zooming changes the size in every document. It isn't saved: Kami starts
+//! Zooming changes the size in every document. It isn't saved: Kertas starts
 //! at the `font_size` setting, and Reset Zoom returns to it. Changing the
 //! setting also changes the current size.
 
 use gpui::{App, Global};
-use kami::settings::FONT_SIZES;
+use kertas::settings::FONT_SIZES;
 
 use crate::app_settings::{self, AppSettings};
 

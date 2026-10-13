@@ -24,9 +24,9 @@ use gpui::{
     Context, FocusHandle, KeyBinding, ListAlignment, ListState, Pixels, Subscription,
     SystemWindowTabController, Task, Window, WindowHandle, actions, px,
 };
-use kami::document::{DiskChange, Document};
-use kami::editor::{Editor, RevealTarget};
-use kami::reveal::StyledSource;
+use kertas::document::{DiskChange, Document};
+use kertas::editor::{Editor, RevealTarget};
+use kertas::reveal::StyledSource;
 
 use crate::app_settings::{self, AppSettings};
 use crate::builtin::Builtin;
@@ -37,7 +37,7 @@ use crate::theme::Theme;
 use crate::zoom::Zoom;
 
 actions!(
-    kami,
+    kertas,
     [
         New,
         Open,
@@ -236,7 +236,7 @@ enum LineGoal {
 pub struct DocumentView {
     focus_handle: FocusHandle,
     open: Option<OpenDocument>,
-    /// Set when showing one of Kami's built-in documents, which are
+    /// Set when showing one of Kertas's built-in documents, which are
     /// view-only.
     builtin: Option<Builtin>,
     theme: Theme,
@@ -433,7 +433,7 @@ impl DocumentView {
 
     /// How many items are revealed, and the selection, for the smoke test.
     #[cfg(debug_assertions)]
-    pub fn reveal_state(&self) -> (usize, Option<kami::editor::Selection>) {
+    pub fn reveal_state(&self) -> (usize, Option<kertas::editor::Selection>) {
         self.open.as_ref().map_or((0, None), |open| {
             (open.revealed.len(), open.editor.selection())
         })
@@ -465,7 +465,7 @@ impl DocumentView {
 
     /// The list indent the document is laid out with, for the smoke test.
     #[cfg(debug_assertions)]
-    pub fn list_indent(&self) -> kami::settings::ListIndent {
+    pub fn list_indent(&self) -> kertas::settings::ListIndent {
         self.text_settings.list_indent
     }
 
@@ -490,7 +490,7 @@ impl DocumentView {
 
     /// The document's model, for the smoke test.
     #[cfg(debug_assertions)]
-    pub fn model(&self) -> Option<Rc<kami::model::Model>> {
+    pub fn model(&self) -> Option<Rc<kertas::model::Model>> {
         self.open.as_ref().map(|open| open.editor.model().clone())
     }
 }

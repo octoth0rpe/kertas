@@ -1,7 +1,7 @@
-//! Kami's built-in documents: Kami Help, Keyboard Shortcuts, Licenses and
-//! About Kami.
+//! Kertas's built-in documents: Kertas Help, Keyboard Shortcuts, Licenses and
+//! About Kertas.
 //!
-//! They open as tabs, but they're Kami's own content, so they're
+//! They open as tabs, but they're Kertas's own content, so they're
 //! view-only: no caret, no editing, nothing to save.
 
 use std::borrow::Cow;
@@ -23,10 +23,10 @@ pub enum Builtin {
 impl Builtin {
     pub fn title(self) -> &'static str {
         match self {
-            Self::Help => "Kami Help",
+            Self::Help => "Kertas Help",
             Self::KeyboardShortcuts => "Keyboard Shortcuts",
             Self::Licenses => "Licenses",
-            Self::About => "About Kami",
+            Self::About => "About Kertas",
         }
     }
 

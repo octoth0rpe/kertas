@@ -5,7 +5,7 @@
 use std::time::Duration;
 
 use gpui::{Context, PromptLevel, Window};
-use kami::document::SaveError;
+use kertas::document::SaveError;
 
 use super::DocumentView;
 use super::files::capitalize;

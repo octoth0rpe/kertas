@@ -1,8 +1,8 @@
-# cargo-deny's checks for Kami (REQUIREMENTS T6–T8). Run them with
+# cargo-deny's checks for Kertas (REQUIREMENTS T6–T8). Run them with
 # scripts/check.sh, or `cargo deny check`.
 
 [graph]
-# Kami builds for macOS only in v0.1, so only check what goes into that
+# Kertas builds for macOS only in v0.1, so only check what goes into that
 # build.
 targets = ["aarch64-apple-darwin"]
 
@@ -27,12 +27,12 @@ confidence-threshold = 0.9
 unused-allowed-license = "allow"
 
 [licenses.private]
-# Kami itself isn't published, and its own license is still open (Q6).
+# Kertas itself isn't published, and its own license is still open (Q6).
 ignore = true
 
 [advisories]
 # Known vulnerabilities, from the RustSec database, fail wherever they are.
-# Unmaintained crates only fail when Kami depends on them directly: those
+# Unmaintained crates only fail when Kertas depends on them directly: those
 # deep in GPUI are Zed's to replace. Any exception must say why it's safe.
 unmaintained = "workspace"
 ignore = []

@@ -2,7 +2,7 @@
 //!
 //! GPUI groups windows into native macOS tabs and tracks the groups in
 //! `SystemWindowTabController`, but it hides the native tab bar so apps can
-//! draw their own. This is Kami's.
+//! draw their own. This is Kertas's.
 
 use gpui::{
     AccessibleAction, AnyElement, AnyWindowHandle, App, MouseButton, Role, SharedString,

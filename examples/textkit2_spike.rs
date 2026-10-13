@@ -5,7 +5,7 @@
 //!
 //!   cargo run --example textkit2_spike -- output.pdf
 //!
-//! Not part of Kami; see docs/planning/spike-17-textkit2.md.
+//! Not part of Kertas; see docs/planning/spike-17-textkit2.md.
 
 use std::cell::Cell;
 
@@ -23,7 +23,7 @@ use objc2_core_graphics::CGContext;
 use objc2_foundation::{NSMutableAttributedString, NSRange, NSString, NSURL};
 
 /// Marks a paragraph as part of a code block.
-const CODE_KEY: &str = "KamiCodeBlock";
+const CODE_KEY: &str = "KertasCodeBlock";
 
 thread_local! {
     /// The text width, so code boxes can span it.
@@ -33,7 +33,7 @@ thread_local! {
 define_class!(
     /// A layout fragment that draws a grey box behind its paragraph.
     #[unsafe(super(NSTextLayoutFragment, NSObject))]
-    #[name = "KamiCodeFragment"]
+    #[name = "KertasCodeFragment"]
     struct CodeFragment;
 
     impl CodeFragment {
@@ -64,7 +64,7 @@ define_class!(
 define_class!(
     /// Gives code paragraphs a CodeFragment.
     #[unsafe(super(NSObject))]
-    #[name = "KamiLayoutDelegate"]
+    #[name = "KertasLayoutDelegate"]
     struct LayoutDelegate;
 
     unsafe impl NSObjectProtocol for LayoutDelegate {}

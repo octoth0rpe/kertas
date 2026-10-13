@@ -1,8 +1,8 @@
-//! Kami's settings (REQUIREMENTS §8): what they are, and reading and
+//! Kertas's settings (REQUIREMENTS §8): what they are, and reading and
 //! writing them in the TOML settings file.
 //!
 //! The file is optional and every setting has a default (G2). Problems in
-//! it never stop Kami: a bad value or an unknown setting falls back to the
+//! it never stop Kertas: a bad value or an unknown setting falls back to the
 //! default and is reported with its line (G4). Changing a setting edits
 //! the file in place, keeping comments and formatting.
 
@@ -336,7 +336,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "layout",
         label: "Open documents in",
-        note: Some("Takes effect the next time Kami starts."),
+        note: Some("Takes effect the next time Kertas starts."),
         kind: Kind::Choice {
             choices: &[("tabs", "Tabs"), ("windows", "Windows")],
             get: |settings| settings.layout.as_str(),

@@ -9,10 +9,10 @@
 
 use std::ops::Range;
 
-use kami::model::Model;
-use kami::print_layout::{Alignment, Frame, PrintLayout};
-use kami::rendered::heading_scale;
-use kami::settings::Settings;
+use kertas::model::Model;
+use kertas::print_layout::{Alignment, Frame, PrintLayout};
+use kertas::rendered::heading_scale;
+use kertas::settings::Settings;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{AnyThread, MainThreadMarker};

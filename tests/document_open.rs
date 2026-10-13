@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use kami::buffer::LoadError;
-use kami::document::Document;
+use kertas::buffer::LoadError;
+use kertas::document::Document;
 
 fn tmp_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name)

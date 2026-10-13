@@ -1,4 +1,4 @@
-//! Core of the Kami Markdown editor.
+//! Core of the Kertas Markdown editor.
 
 pub mod blocks;
 pub mod buffer;

@@ -49,7 +49,7 @@ impl Definitions {
         self.links.is_empty()
     }
 
-    /// Parses `source` (one block) with Kami's options, resolving reference
+    /// Parses `source` (one block) with Kertas's options, resolving reference
     /// links against these definitions.
     pub fn parse<'a>(
         &'a self,

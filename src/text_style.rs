@@ -6,9 +6,9 @@ use gpui::{
     Font, FontStyle, FontWeight, Hsla, SharedString, StrikethroughStyle, Styled, TextRun,
     UnderlineStyle, px, relative, rems,
 };
-use kami::inline::InlineStyle;
-use kami::rendered::heading_scale;
-use kami::settings::{ListIndent, Settings, TextWidth};
+use kertas::inline::InlineStyle;
+use kertas::rendered::heading_scale;
+use kertas::settings::{ListIndent, Settings, TextWidth};
 
 use crate::theme::Theme;
 

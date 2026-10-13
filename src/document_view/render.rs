@@ -4,8 +4,8 @@ use gpui::{
     AnyElement, Context, Div, Rems, Role, SharedString, Stateful, SystemWindowTabController,
     Window, div, list, prelude::*, px, relative, rems,
 };
-use kami::editor::{Motion, RevealTarget};
-use kami::settings::TextWidth;
+use kertas::editor::{Motion, RevealTarget};
+use kertas::settings::TextWidth;
 
 use super::{
     Backspace, Delete, DeleteWordLeft, DeleteWordRight, DocumentView, IndentLines, IndentTab,

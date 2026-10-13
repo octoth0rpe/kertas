@@ -245,7 +245,7 @@ impl TreeBuilder {
             },
             Tag::TableCell => Frame::Cell(InlineBuilder::default()),
             // Table heads and rows are tracked in the table frame; other tags
-            // are inline (handled above) or extensions Kami doesn't enable.
+            // are inline (handled above) or extensions Kertas doesn't enable.
             _ => return,
         };
         // A nested block in a tight list item ends the item's leading text.
@@ -621,10 +621,10 @@ mod tests {
     #[test]
     fn front_matter_and_definitions_are_raw() {
         assert_renders(
-            "---\nk: v\n---\n\nSee [kami][k].\n\n[k]: https://example.com\n",
+            "---\nk: v\n---\n\nSee [kertas][k].\n\n[k]: https://example.com\n",
             &[
                 "raw(---\nk: v\n---)",
-                "p(See kami.)",
+                "p(See kertas.)",
                 "raw([k]: https://example.com)",
             ],
         );
@@ -632,7 +632,7 @@ mod tests {
 
     #[test]
     fn reference_links_resolve_inside_lists_and_tables() {
-        let text = "- [kami][k]\n\n| [kami][k] |\n|---|\n\n[k]: /x\n";
+        let text = "- [kertas][k]\n\n| [kertas][k] |\n|---|\n\n[k]: /x\n";
         let blocks = render(text);
         let RenderedBlock::List { items, .. } = &blocks[0] else {
             panic!("expected list: {blocks:?}")

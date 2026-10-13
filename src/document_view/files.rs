@@ -3,8 +3,8 @@
 use std::path::{Path, PathBuf};
 
 use gpui::{Context, PromptLevel, Task, Window};
-use kami::document::{Document, OpenError, SaveError};
-use kami::links::{self, LinkTarget};
+use kertas::document::{Document, OpenError, SaveError};
+use kertas::links::{self, LinkTarget};
 
 use super::{CloseWindow, DocumentView, Print, Save, SaveAs};
 use crate::builtin::Builtin;
@@ -34,7 +34,7 @@ impl DocumentView {
         let _ = (window, cx);
     }
 
-    /// Shows one of Kami's built-in documents, view-only.
+    /// Shows one of Kertas's built-in documents, view-only.
     pub fn open_builtin(&mut self, builtin: Builtin, window: &mut Window, cx: &mut Context<Self>) {
         self.builtin = Some(builtin);
         self.load(Document::from_text(&builtin.text()), window, cx);
@@ -236,7 +236,7 @@ impl DocumentView {
     /// Opens the file at `path`, replacing the current document. Shows an
     /// alert if it can't be opened, and keeps the current document.
     pub fn open_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        // A file that doesn't exist yet (e.g. `kami new.md`) starts as an
+        // A file that doesn't exist yet (e.g. `kertas new.md`) starts as an
         // empty document that saving creates.
         if !path.exists() && path.parent().is_some_and(Path::is_dir) {
             self.load(Document::new_at(path), window, cx);
@@ -249,7 +249,7 @@ impl DocumentView {
         }
     }
 
-    /// Follows a clicked link: Markdown files open in Kami, as File > Open
+    /// Follows a clicked link: Markdown files open in Kertas, as File > Open
     /// does, and anything else opens in its own app. Shows an alert if the
     /// link can't be followed.
     pub fn follow_link(&mut self, destination: &str, window: &mut Window, cx: &mut Context<Self>) {

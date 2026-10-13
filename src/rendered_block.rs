@@ -9,10 +9,10 @@ use gpui::{
     MouseButton, Rems, Role, SharedString, StyledText, Toggled, WeakEntity, Window, div,
     prelude::*, px, rems,
 };
-use kami::inline::InlineText;
-use kami::rendered::{ColumnAlignment, ListItem, RenderedBlock, Table, Task};
-use kami::settings::ListIndent;
-use kami::tabs::ExpandedTabs;
+use kertas::inline::InlineText;
+use kertas::rendered::{ColumnAlignment, ListItem, RenderedBlock, Table, Task};
+use kertas::settings::ListIndent;
+use kertas::tabs::ExpandedTabs;
 
 use crate::document_view::DocumentView;
 use crate::text_style::{Look, code_text, heading_text, inline_run};

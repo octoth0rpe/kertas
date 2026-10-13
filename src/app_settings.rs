@@ -1,8 +1,8 @@
 //! The settings file on disk (REQUIREMENTS §8.1), loaded into a GPUI
 //! global and kept up to date.
 //!
-//! The file is `~/Library/Application Support/kami/config.toml` (G1), or
-//! `config.toml` in `$KAMI_CONFIG_DIR` if that's set. macOS reports
+//! The file is `~/Library/Application Support/kertas/config.toml` (G1), or
+//! `config.toml` in `$KERTAS_CONFIG_DIR` if that's set. macOS reports
 //! changes to it, so edits made in any editor apply live (G3). Views
 //! observe [`AppSettings`] to update.
 
@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use gpui::{App, BorrowAppContext, Global, WindowAppearance};
-use kami::settings::{self, Layout, Problem, Settings, ThemeSetting};
+use kertas::settings::{self, Layout, Problem, Settings, ThemeSetting};
 
 use crate::file_watch;
 
@@ -28,14 +28,14 @@ pub struct AppSettings {
 
 impl Global for AppSettings {}
 
-/// The `layout` setting when Kami started. Changing it takes effect when
-/// Kami restarts, so documents already open never have to be rearranged.
+/// The `layout` setting when Kertas started. Changing it takes effect when
+/// Kertas restarts, so documents already open never have to be rearranged.
 struct LaunchLayout(Layout);
 
 impl Global for LaunchLayout {}
 
 /// How documents are arranged in this session: the `layout` setting when
-/// Kami started.
+/// Kertas started.
 pub fn launch_layout(cx: &App) -> Layout {
     cx.try_global::<LaunchLayout>()
         .map(|launch| launch.0)
@@ -149,11 +149,11 @@ fn apply_appearance(settings: &Settings, cx: &mut App) {
 }
 
 fn settings_path() -> PathBuf {
-    let directory = match std::env::var_os("KAMI_CONFIG_DIR") {
+    let directory = match std::env::var_os("KERTAS_CONFIG_DIR") {
         Some(directory) => PathBuf::from(directory),
         None => std::env::home_dir()
             .unwrap_or_default()
-            .join("Library/Application Support/kami"),
+            .join("Library/Application Support/kertas"),
     };
     directory.join("config.toml")
 }
@@ -199,7 +199,7 @@ fn write_atomically(path: &Path, text: &str) -> io::Result<()> {
     if let Some(directory) = path.parent() {
         fs::create_dir_all(directory)?;
     }
-    let temp = path.with_extension("toml.kami-save");
+    let temp = path.with_extension("toml.kertas-save");
     let result = (|| {
         let mut file = fs::File::create(&temp)?;
         file.write_all(text.as_bytes())?;

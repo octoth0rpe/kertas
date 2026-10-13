@@ -1,13 +1,13 @@
 //! Document windows: one document per window.
 //!
 //! The `layout` setting picks how they're arranged (REQUIREMENTS §8.2):
-//! - `Tabs` (the default): native macOS tabs, with Kami's own tab strip
+//! - `Tabs` (the default): native macOS tabs, with Kertas's own tab strip
 //!   (see `tab_strip.rs`).
 //! - `Windows`: separate windows, each offset from the previous one.
 //!
-//! Kami decides this itself rather than following the macOS "Prefer tabs
+//! Kertas decides this itself rather than following the macOS "Prefer tabs
 //! when opening documents" preference. Changing the setting takes effect
-//! when Kami restarts.
+//! when Kertas restarts.
 
 use std::path::{Path, PathBuf};
 
@@ -16,7 +16,7 @@ use gpui::{
     WindowBounds, WindowHandle, WindowOptions, point, prelude::*, px, size,
 };
 
-use kami::settings::Layout;
+use kertas::settings::Layout;
 
 use crate::app_settings;
 use crate::document_view::{CloseWindow, DocumentView, New, Open, Quit};
@@ -24,7 +24,7 @@ use crate::document_view::{CloseWindow, DocumentView, New, Open, Quit};
 use crate::native_tabs::{add_as_tab, ns_window};
 
 /// Groups document windows into native tabs.
-const TABBING_IDENTIFIER: &str = "kami-documents";
+const TABBING_IDENTIFIER: &str = "kertas-documents";
 
 /// How far each new window is offset from the previous one in the
 /// `Windows` layout.
@@ -108,7 +108,7 @@ pub fn open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: Some(TitlebarOptions {
-                    title: Some("Kami".into()),
+                    title: Some("Kertas".into()),
                     ..Default::default()
                 }),
                 tabbing_identifier: (layout == Layout::Tabs).then(|| TABBING_IDENTIFIER.to_owned()),
@@ -229,30 +229,30 @@ fn same_file(a: &Path, b: &Path) -> bool {
     }
 }
 
-/// What a URL sent to Kami asks for: from Finder and the Dock (`file://`),
-/// or from the `kami` command (`kami://`).
+/// What a URL sent to Kertas asks for: from Finder and the Dock (`file://`),
+/// or from the `kertas` command (`kertas://`).
 #[derive(Debug, PartialEq, Eq)]
 pub enum UrlRequest {
     /// Open this file, or start a new document saved there if it doesn't
     /// exist yet.
     Open(PathBuf),
-    /// Just bring Kami to the front.
+    /// Just bring Kertas to the front.
     Activate,
 }
 
 pub fn parse_url(url: &str) -> Option<UrlRequest> {
-    if url == "kami://activate" {
+    if url == "kertas://activate" {
         return Some(UrlRequest::Activate);
     }
     let path = url
-        .strip_prefix("kami://open?path=")
+        .strip_prefix("kertas://open?path=")
         .or_else(|| url.strip_prefix("file://localhost"))
         .or_else(|| url.strip_prefix("file://"))?;
     path.starts_with('/')
-        .then(|| UrlRequest::Open(kami::links::percent_decode(path)))
+        .then(|| UrlRequest::Open(kertas::links::percent_decode(path)))
 }
 
-/// Handles a URL sent to Kami.
+/// Handles a URL sent to Kertas.
 pub fn handle_url(url: &str, cx: &mut App) {
     match parse_url(url) {
         Some(UrlRequest::Open(path)) => open_path(path, cx),
@@ -286,13 +286,13 @@ mod tests {
     }
 
     #[test]
-    fn kami_urls_from_the_command_line() {
+    fn kertas_urls_from_the_command_line() {
         assert_eq!(
-            parse_url("kami://open?path=/tmp/My%20Notes/new.md"),
+            parse_url("kertas://open?path=/tmp/My%20Notes/new.md"),
             open("/tmp/My Notes/new.md")
         );
-        assert_eq!(parse_url("kami://activate"), Some(UrlRequest::Activate));
-        assert_eq!(parse_url("kami://open?path=relative.md"), None);
-        assert_eq!(parse_url("kami://other"), None);
+        assert_eq!(parse_url("kertas://activate"), Some(UrlRequest::Activate));
+        assert_eq!(parse_url("kertas://open?path=relative.md"), None);
+        assert_eq!(parse_url("kertas://other"), None);
     }
 }

@@ -1,10 +1,10 @@
-//! Spike for #17 (Print): turn Kami's rendered blocks into an
+//! Spike for #17 (Print): turn Kertas's rendered blocks into an
 //! `NSAttributedString`, lay it out in an `NSTextView`, and print it with
 //! `NSPrintOperation`, saving to a PDF so the result can be inspected.
 //!
 //!   cargo run --example print_spike -- input.md output.pdf
 //!
-//! Not part of Kami; see docs/planning/spike-17-print.md.
+//! Not part of Kertas; see docs/planning/spike-17-print.md.
 
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
@@ -20,9 +20,9 @@ use objc2_app_kit::{
 use objc2_core_foundation::CGSize;
 use objc2_foundation::{NSArray, NSMutableAttributedString, NSNumber, NSRange, NSString, NSURL};
 
-use kami::inline::InlineText;
-use kami::model::Model;
-use kami::rendered::RenderedBlock;
+use kertas::inline::InlineText;
+use kertas::model::Model;
+use kertas::rendered::RenderedBlock;
 
 const BODY: f64 = 11.;
 const CODE: f64 = 9.5;
@@ -380,12 +380,12 @@ fn main() {
     }
     let paper = info.paperSize();
     let width = paper.width - 108.;
-    // KAMI_TEXTKIT picks the text system, to compare them:
+    // KERTAS_TEXTKIT picks the text system, to compare them:
     // - "1" (default): TextKit 1 from the start.
     // - "2": TextKit 2, as NSTextView comes.
     // - "2-touch": TextKit 2, then ask for the NSLayoutManager after the
     //   content is set, which is the documented way to switch to TextKit 1.
-    let mode = std::env::var("KAMI_TEXTKIT").unwrap_or_else(|_| "1".into());
+    let mode = std::env::var("KERTAS_TEXTKIT").unwrap_or_else(|_| "1".into());
     let view = NSTextView::initUsingTextLayoutManager(mtm.alloc(), mode != "1");
     view.setFrameSize(CGSize::new(width, paper.height));
     let textkit = |view: &NSTextView| {

@@ -1,4 +1,4 @@
-//! Spike A (kami story #3): a minimal multi-line editor on plain GPUI.
+//! Spike A (kertas story #3): a minimal multi-line editor on plain GPUI.
 //!
 //! The input plumbing (action set, `EntityInputHandler` impl, UTF-16
 //! conversions, the custom `Element` with prepaint/paint) is adapted from

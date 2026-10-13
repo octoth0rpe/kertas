@@ -346,20 +346,20 @@ mod tests {
 
     #[test]
     fn reference_links_resolve_with_definitions() {
-        let source = "See [kami][k].";
+        let source = "See [kertas][k].";
         assert_eq!(
             render_inline(source, &Definitions::default()).text,
-            "See [kami][k]."
+            "See [kertas][k]."
         );
 
         let inline = render_inline(source, &Definitions::from_text("[k]: https://example.com"));
-        assert_eq!(inline.text, "See kami.");
+        assert_eq!(inline.text, "See kertas.");
         assert_eq!(
             segments(&inline),
             [
                 ("See ", PLAIN),
                 (
-                    "kami",
+                    "kertas",
                     InlineStyle {
                         link: true,
                         ..PLAIN
@@ -406,7 +406,7 @@ mod tests {
     #[test]
     fn reference_links_record_resolved_destinations() {
         let inline = render_inline(
-            "[kami][k] and [**bold**][k]",
+            "[kertas][k] and [**bold**][k]",
             &Definitions::from_text("[k]: other.md"),
         );
         assert_eq!(inline.links.len(), 2);

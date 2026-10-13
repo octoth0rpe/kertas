@@ -1,7 +1,7 @@
 #!/bin/sh
-# Writes the open-source libraries Kami uses: the list of them in the
+# Writes the open-source libraries Kertas uses: the list of them in the
 # About tab (src/builtin/acknowledgements.md), and the license notices
-# their licenses ask to be included with Kami, in the Licenses document
+# their licenses ask to be included with Kertas, in the Licenses document
 # (src/builtin/licenses.md). Run it after changing dependencies (the
 # pre-commit hook in scripts/hooks runs it when Cargo.lock changes).
 #
@@ -25,10 +25,10 @@ if ! command -v cargo-about >/dev/null 2>&1; then
     exit 1
 fi
 
-# The libraries in Kami's About tab, as "name version" lines. Kami itself
+# The libraries in Kertas's About tab, as "name version" lines. Kertas itself
 # isn't one of them.
 libraries() {
-    sed -n 's/^| \([^ |]*\) | \([^ |]*\) | .*/\1 \2/p' | grep -v '^kami ' | sort
+    sed -n 's/^| \([^ |]*\) | \([^ |]*\) | .*/\1 \2/p' | grep -v '^kertas ' | sort
 }
 
 if [ "${1:-}" = "--check" ]; then
@@ -42,12 +42,12 @@ if [ "${1:-}" = "--check" ]; then
     exit 0
 fi
 
-# Errors are kept, but not the warning that Kami itself has no license.
+# Errors are kept, but not the warning that Kertas itself has no license.
 cargo about generate --locked -c scripts/about.toml scripts/acknowledgements.hbs \
     2> "$root/target/acknowledgements.log" |
     # Some license files have Windows line endings.
     tr -d '\r' |
-    grep -v '^| kami | ' > "$out.tmp" || {
+    grep -v '^| kertas | ' > "$out.tmp" || {
     cat "$root/target/acknowledgements.log" >&2
     rm -f "$out.tmp"
     exit 1

@@ -1,4 +1,4 @@
-//! Whether Kami is the default app for Markdown files, and making it so
+//! Whether Kertas is the default app for Markdown files, and making it so
 //! (#23). macOS treats `.md` and `.markdown` as one type.
 
 use std::sync::Mutex;
@@ -14,18 +14,18 @@ const MARKDOWN: &str = "net.daringfireball.markdown";
 /// Who opens Markdown files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Status {
-    /// Kami does.
-    Kami,
+    /// Kertas does.
+    Kertas,
     /// Another app does (its name, if there is one).
     Other(Option<String>),
-    /// Kami isn't running as an installed app (e.g. from `cargo run`), so it
+    /// Kertas isn't running as an installed app (e.g. from `cargo run`), so it
     /// can't be the default.
     NotInstalled,
 }
 
 pub fn status() -> Status {
     let bundle = NSBundle::mainBundle();
-    let Some(kami) = bundle.bundleIdentifier() else {
+    let Some(kertas) = bundle.bundleIdentifier() else {
         return Status::NotInstalled;
     };
     let Some(markdown) = markdown_type() else {
@@ -36,8 +36,8 @@ pub fn status() -> Status {
         return Status::Other(None);
     };
     let identifier = NSBundle::bundleWithURL(&app).and_then(|app| app.bundleIdentifier());
-    if identifier.is_some_and(|identifier| identifier == kami) {
-        Status::Kami
+    if identifier.is_some_and(|identifier| identifier == kertas) {
+        Status::Kertas
     } else {
         let name = app
             .lastPathComponent()
@@ -46,7 +46,7 @@ pub fn status() -> Status {
     }
 }
 
-/// Asks macOS to make Kami the default app for Markdown files. macOS asks
+/// Asks macOS to make Kertas the default app for Markdown files. macOS asks
 /// the user to confirm. Resolves to an error message if it didn't happen.
 pub fn make_default() -> oneshot::Receiver<Result<(), String>> {
     let (done, result) = oneshot::channel();
@@ -55,7 +55,7 @@ pub fn make_default() -> oneshot::Receiver<Result<(), String>> {
             .ok();
         return result;
     };
-    let kami = NSBundle::mainBundle().bundleURL();
+    let kertas = NSBundle::mainBundle().bundleURL();
     // The completion handler may be called on any thread, once.
     let done = Mutex::new(Some(done));
     let handler = RcBlock::new(move |error: *mut NSError| {
@@ -72,7 +72,7 @@ pub fn make_default() -> oneshot::Receiver<Result<(), String>> {
     // AppKit copies the block, so dropping `handler` when this returns is
     // fine; the copy keeps `done` alive until the handler has run.
     NSWorkspace::sharedWorkspace().setDefaultApplicationAtURL_toOpenContentType_completionHandler(
-        &kami,
+        &kertas,
         &markdown,
         Some(&handler),
     );

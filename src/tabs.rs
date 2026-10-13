@@ -1,5 +1,5 @@
 //! Showing tabs as spaces. A tab is shown as `tab_width` spaces wherever
-//! Kami shows it, rendered, revealed or printed, so a block doesn't change
+//! Kertas shows it, rendered, revealed or printed, so a block doesn't change
 //! width when it's revealed. The source keeps its tabs.
 
 use std::borrow::Cow;

@@ -1,4 +1,4 @@
-# Kami showcase
+# Kertas showcase
 
 A paragraph with **bold**, *italic*, ***bold italic***, ~~strikethrough~~,
 `inline code`, and a [link](https://example.com). Soft line breaks
@@ -46,7 +46,7 @@ Reference links work too: see [the docs][docs].
 
 ```rust
 fn main() {
-    println!("Hello from kami");
+    println!("Hello from kertas");
 }
 ```
 
