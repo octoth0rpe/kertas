@@ -12,12 +12,14 @@ use std::ops::Range;
 use crate::inline::InlineText;
 use crate::model::Model;
 use crate::rendered::{ColumnAlignment, RenderedBlock};
+use crate::settings::ListIndent;
 use crate::tabs::expand;
 
 /// A line break within a paragraph.
 pub const LINE_SEPARATOR: char = '\u{2028}';
 
-/// How far each list or quote level is indented, in points.
+/// How far each quote level, and each list level with the standard
+/// `list_indent`, is indented, in points.
 const INDENT: f64 = 16.;
 
 /// Space after each block, in points.
@@ -35,6 +37,8 @@ pub struct PrintLayout {
     pub tables: Vec<TableLayout>,
     /// How many spaces a tab in code is printed as.
     tab_width: u32,
+    /// How far each list level is indented, in points.
+    list_indent: f64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -104,10 +108,12 @@ pub struct TableLayout {
 
 impl PrintLayout {
     /// Lays out every block in `model` for printing, with each tab in
-    /// code shown as `tab_width` spaces.
-    pub fn new(model: &Model, tab_width: u32) -> Self {
+    /// code shown as `tab_width` spaces, and lists indented by
+    /// `list_indent`.
+    pub fn new(model: &Model, tab_width: u32, list_indent: ListIndent) -> Self {
         let mut layout = Self {
             tab_width,
+            list_indent: INDENT * f64::from(list_indent.scale()),
             ..Self::default()
         };
         for item in &model.items {
@@ -230,12 +236,12 @@ impl PrintLayout {
                             let item_start = self.text.len();
                             self.push(&format!("{marker}  "), style);
                             let first_paragraph = self.paragraphs.len();
-                            self.block(child, indent + INDENT, style);
+                            self.block(child, indent + self.list_indent, style);
                             if let Some(paragraph) = self.paragraphs.get_mut(first_paragraph) {
                                 paragraph.range.start = item_start;
                             }
                         } else {
-                            self.block(child, indent + INDENT, style);
+                            self.block(child, indent + self.list_indent, style);
                         }
                     }
                 }
@@ -336,7 +342,7 @@ mod tests {
     use super::*;
 
     fn layout(text: &str) -> PrintLayout {
-        PrintLayout::new(&Model::new(text), 4)
+        PrintLayout::new(&Model::new(text), 4, ListIndent::Standard)
     }
 
     /// The text of each paragraph, without its newline.
@@ -405,8 +411,23 @@ mod tests {
     }
 
     #[test]
+    fn list_indent_scales_lists_but_not_quotes() {
+        let text = "- a\n  - b\n\n> c\n";
+        let indents = |indent| {
+            PrintLayout::new(&Model::new(text), 4, indent)
+                .paragraphs
+                .iter()
+                .map(|paragraph| paragraph.indent)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(indents(ListIndent::Standard), [16., 32., 16.]);
+        assert_eq!(indents(ListIndent::Compact), [12., 24., 16.]);
+        assert_eq!(indents(ListIndent::Wide), [24., 48., 16.]);
+    }
+
+    #[test]
     fn code_tabs_are_expanded() {
-        let layout = PrintLayout::new(&Model::new("```\n\tx\n```\n"), 2);
+        let layout = PrintLayout::new(&Model::new("```\n\tx\n```\n"), 2, ListIndent::Standard);
         assert_eq!(layout.text.trim_end(), "  x");
     }
 

@@ -8,7 +8,7 @@ use gpui::{
 };
 use kami::inline::InlineStyle;
 use kami::rendered::heading_scale;
-use kami::settings::{Settings, TextWidth};
+use kami::settings::{ListIndent, Settings, TextWidth};
 
 use crate::theme::Theme;
 
@@ -17,6 +17,7 @@ use crate::theme::Theme;
 pub struct TextSettings {
     pub text_width: TextWidth,
     pub tab_width: u32,
+    pub list_indent: ListIndent,
     /// The font family for text, or `None` for the system font.
     pub body_font: Option<SharedString>,
     /// The font family for code.
@@ -28,6 +29,7 @@ impl From<&Settings> for TextSettings {
         Self {
             text_width: settings.text_width,
             tab_width: settings.tab_width,
+            list_indent: settings.list_indent,
             body_font: settings.body_font.clone().map(SharedString::from),
             code_font: settings.code_font().to_owned().into(),
         }
@@ -35,7 +37,7 @@ impl From<&Settings> for TextSettings {
 }
 
 /// What document text is drawn with: the body and code fonts, the theme,
-/// and the tab width.
+/// the tab width and the list indent.
 #[derive(Clone)]
 pub struct Look {
     /// The body font, at the current size.
@@ -45,6 +47,7 @@ pub struct Look {
     pub theme: Theme,
     /// How many spaces a tab is shown as.
     pub tab_width: u32,
+    pub list_indent: ListIndent,
 }
 
 impl Look {
@@ -58,6 +61,7 @@ impl Look {
             code_font: settings.code_font.clone(),
             theme,
             tab_width: settings.tab_width,
+            list_indent: settings.list_indent,
         }
     }
 }

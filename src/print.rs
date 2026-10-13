@@ -105,7 +105,11 @@ fn operation(
     // TextKit 1, so tables and code boxes print.
     let view = NSTextView::initUsingTextLayoutManager(mtm.alloc(), false);
     view.setFrameSize(CGSize::new(paper.width - 2. * MARGIN, paper.height));
-    let text = attributed(&PrintLayout::new(model, settings.tab_width), settings, mtm);
+    let text = attributed(
+        &PrintLayout::new(model, settings.tab_width, settings.list_indent),
+        settings,
+        mtm,
+    );
     // SAFETY: the view was just created with a text storage.
     unsafe {
         view.textStorage()

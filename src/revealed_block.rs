@@ -389,6 +389,7 @@ mod tests {
             code_font: "Menlo".into(),
             theme: Theme::light(),
             tab_width: 4,
+            list_indent: kami::settings::ListIndent::Standard,
         };
         for name in ["showcase.md", "10k.md"] {
             let path = format!("{}/spikes/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));

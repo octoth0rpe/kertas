@@ -57,6 +57,7 @@ font_size = 18        # 10 to 32
 body_font = "Charter" # any installed font; the system font if not set
 code_font = "SF Mono" # Menlo if not set
 tab_width = 2         # how wide tab characters in code look: 2, 4 or 8 spaces
+list_indent = "wide"  # how far nested list items are drawn in: "compact", "standard" or "wide"
 editing_hint = false  # hide keyboard hints on the block being edited
 autosave = 5          # save 5 seconds after typing stops; "off" if not set
 ```

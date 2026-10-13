@@ -44,6 +44,36 @@ pub enum TextWidth {
     Full,
 }
 
+/// How far nested list items are drawn in from their parent, on screen
+/// and in print. The Markdown keeps whatever indentation it has.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ListIndent {
+    Compact,
+    #[default]
+    Standard,
+    Wide,
+}
+
+impl ListIndent {
+    /// The indent relative to `Standard`.
+    pub fn scale(self) -> f32 {
+        match self {
+            Self::Compact => 0.75,
+            Self::Standard => 1.,
+            Self::Wide => 1.5,
+        }
+    }
+
+    /// The value written in the settings file.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Compact => "compact",
+            Self::Standard => "standard",
+            Self::Wide => "wide",
+        }
+    }
+}
+
 /// The text sizes allowed, in pixels.
 pub const FONT_SIZES: RangeInclusive<u32> = 10..=32;
 
@@ -67,6 +97,8 @@ pub struct Settings {
     pub font_size: u32,
     /// How many spaces a tab is shown as.
     pub tab_width: u32,
+    /// How far nested list items are indented.
+    pub list_indent: ListIndent,
     /// The font family for text, or `None` for the system font.
     pub body_font: Option<String>,
     /// The font family for code, or `None` for [`CODE_FONT`].
@@ -86,6 +118,7 @@ impl Default for Settings {
             text_width: TextWidth::default(),
             font_size: DEFAULT_FONT_SIZE,
             tab_width: DEFAULT_TAB_WIDTH,
+            list_indent: ListIndent::default(),
             body_font: None,
             code_font: None,
             editing_hint: true,
@@ -259,6 +292,29 @@ pub const SETTINGS: &[Setting] = &[
             choices: TAB_WIDTHS,
             get: |settings| settings.tab_width,
             apply: |settings, width| settings.tab_width = width,
+        },
+    },
+    Setting {
+        key: "list_indent",
+        label: "List indent",
+        note: Some(
+            "How far nested list items are drawn in. \
+             It doesn't change the Markdown.",
+        ),
+        kind: Kind::Choice {
+            choices: &[
+                ("compact", "Compact"),
+                ("standard", "Standard"),
+                ("wide", "Wide"),
+            ],
+            get: |settings| settings.list_indent.as_str(),
+            apply: |settings, value| {
+                settings.list_indent = match value {
+                    "compact" => ListIndent::Compact,
+                    "wide" => ListIndent::Wide,
+                    _ => ListIndent::Standard,
+                }
+            },
         },
     },
     Setting {
@@ -571,6 +627,7 @@ mod tests {
                 text_width: TextWidth::Wide,
                 font_size: DEFAULT_FONT_SIZE,
                 tab_width: DEFAULT_TAB_WIDTH,
+                list_indent: ListIndent::Standard,
                 body_font: None,
                 code_font: None,
                 editing_hint: true,
