@@ -145,9 +145,7 @@ impl SettingsWindow {
                         this.child(self.button("reset-size", "Reset", cx, set(DEFAULT_FONT_SIZE)))
                     }),
             )
-            .child(
-                self.note("Documents start at this size. View → Zoom changes it until Kami quits."),
-            );
+            .child(self.note("Documents start at this size."));
         self.labelled("Text size", content)
     }
 
@@ -164,7 +162,8 @@ impl SettingsWindow {
                     .pt(px(4.))
                     .child(label),
             )
-            .child(content)
+            // Take the remaining width, so long notes wrap.
+            .child(div().flex_1().min_w(px(0.)).child(content))
     }
 
     /// Small explanatory text.
@@ -365,6 +364,8 @@ impl SettingsWindow {
             )
             .child(
                 div()
+                    .flex_1()
+                    .min_w(px(0.))
                     .flex()
                     .flex_col()
                     // Keep the buttons as wide as their labels, not the note.
