@@ -21,7 +21,7 @@ See **Help → Keyboard Shortcuts** for every shortcut.
 
 ## Tabs and windows
 
-Each document opens in its own tab. **⌘1** to **⌘9** go straight to a tab. To open documents in separate windows instead, set `layout = "windows"` in the settings file.
+Each document opens in its own tab. **⌘1** to **⌘9** go straight to a tab. To open documents in separate windows instead, choose **Windows** for "Open documents in" in **Kami → Settings…**. That takes effect the next time Kami starts.
 
 ## Appearance
 
@@ -29,11 +29,11 @@ Each document opens in its own tab. **⌘1** to **⌘9** go straight to a tab. T
 
 ## Settings
 
-Settings are kept in `~/Library/Application Support/kami/config.toml`. The View menu changes them for you, and you can also edit the file. Changes apply straight away.
+Settings are kept in `~/Library/Application Support/kami/config.toml`. **Kami → Settings…** (⌘,) and the View menu change them for you, and you can also edit the file. Changes apply straight away, except `layout`, which applies the next time Kami starts.
 
 ```toml
 theme = "dark"       # "light", "dark" or "system"
-layout = "windows"   # "tabs" or "windows"
+layout = "windows"   # "tabs" or "windows", from the next start
 text_width = "wide"  # "standard", "wide" or "full"
 ```
 

@@ -14,7 +14,7 @@ use std::time::SystemTime;
 use futures::StreamExt;
 
 use gpui::{App, BorrowAppContext, Global, WindowAppearance};
-use kami::settings::{self, Problem, Settings, ThemeSetting};
+use kami::settings::{self, Layout, Problem, Settings, ThemeSetting};
 
 use crate::file_watch;
 
@@ -30,6 +30,20 @@ pub struct AppSettings {
 
 impl Global for AppSettings {}
 
+/// The `layout` setting when Kami started. Changing it takes effect when
+/// Kami restarts, so documents already open never have to be rearranged.
+struct LaunchLayout(Layout);
+
+impl Global for LaunchLayout {}
+
+/// How documents are arranged in this session: the `layout` setting when
+/// Kami started.
+pub fn launch_layout(cx: &App) -> Layout {
+    cx.try_global::<LaunchLayout>()
+        .map(|launch| launch.0)
+        .unwrap_or_default()
+}
+
 /// The current settings.
 pub fn get(cx: &App) -> Settings {
     cx.try_global::<AppSettings>()
@@ -42,6 +56,7 @@ pub fn init(cx: &mut App) {
     let path = settings_path();
     let state = load(path.clone());
     apply_appearance(state.settings, cx);
+    cx.set_global(LaunchLayout(state.settings.layout));
     cx.set_global(state);
 
     // Watching needs the folder to exist, though the file is only created

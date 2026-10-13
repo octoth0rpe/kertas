@@ -230,7 +230,7 @@ impl Render for SettingsWindow {
                     ("Tabs", Layout::Tabs, "tabs"),
                     ("Windows", Layout::Windows, "windows"),
                 ],
-                Some("Applies to documents opened from now on."),
+                Some("Takes effect the next time Kami starts."),
             ))
             .child(div().flex_1())
             .child(div().flex().justify_end().child(done))

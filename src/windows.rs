@@ -6,8 +6,8 @@
 //! - `Windows`: separate windows, each offset from the previous one.
 //!
 //! Kami decides this itself rather than following the macOS "Prefer tabs
-//! when opening documents" preference. Changing the setting affects
-//! documents opened afterwards.
+//! when opening documents" preference. Changing the setting takes effect
+//! when Kami restarts.
 
 use std::path::{Path, PathBuf};
 
@@ -75,7 +75,7 @@ pub fn open_window(
         .find_map(|window| window.downcast::<DocumentView>());
     let previous_bounds =
         previous.and_then(|window| window.update(cx, |_, window, _| window.bounds()).ok());
-    let layout = app_settings::get(cx).layout;
+    let layout = app_settings::launch_layout(cx);
     let bounds = match (layout, previous_bounds) {
         (Layout::Windows, Some(previous)) => Bounds::new(
             previous.origin + point(px(CASCADE_OFFSET), px(CASCADE_OFFSET)),

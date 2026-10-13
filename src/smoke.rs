@@ -369,7 +369,8 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
             .ok();
         wait().await;
 
-        // New documents open in their own window in the windows layout.
+        // Changing the layout waits until Kami restarts: New still opens a
+        // tab.
         cx.update(|cx| app_settings::set("layout", "windows", cx))
             .ok();
         window
@@ -388,8 +389,8 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
             })
             .unwrap_or(0);
         check(
-            "windows layout opens a window",
-            windows == 2 && grouped == 1,
+            "layout change waits for a restart",
+            windows == 2 && grouped == 2,
         );
 
         println!("SMOKE {}", if ok { "OK" } else { "FAILED" });
