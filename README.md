@@ -4,7 +4,7 @@ A simple Markdown viewer and editor where reading and writing happen in the same
 
 Most Markdown tools split the screen: raw source on one side, rendered preview on the other. Kami shows one document. It looks rendered, and you edit it in place. Click into the text and you're editing it. No mode switch and no second pane.
 
-> **Status:** early planning. No code yet. See [REQUIREMENTS.md](REQUIREMENTS.md) for the working spec and open questions.
+> **Status:** version 0.2, an early release for macOS on Apple Silicon. Kami opens, edits and saves Markdown files in one pane. See [Installing Kami.app](#installing-kamiapp) to build it, and [REQUIREMENTS.md](REQUIREMENTS.md) for the working spec and what's planned.
 
 ## Goals
 
