@@ -100,6 +100,14 @@ impl History {
         selection_after
     }
 
+    /// Changes where redo puts the selection after the last edit, for edits
+    /// that don't leave the caret after the inserted text.
+    pub fn set_selection_after(&mut self, selection: Selection) {
+        if let Some(step) = self.undo.last_mut() {
+            step.selection_after = selection;
+        }
+    }
+
     /// Stops the next edit from joining the current undo step, e.g. after
     /// the caret moves.
     pub fn break_group(&mut self) {

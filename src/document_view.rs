@@ -68,6 +68,11 @@ actions!(
         DeleteToLineStart,
         Newline,
         LineBreak,
+        IndentTab,
+        OutdentTab,
+        IndentLines,
+        OutdentLines,
+        InsertTab,
         MoveBlockUp,
         MoveBlockDown,
         SelectBlockUp,
@@ -127,6 +132,11 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-backspace", DeleteToLineStart, None),
         KeyBinding::new("enter", Newline, None),
         KeyBinding::new("shift-enter", LineBreak, None),
+        KeyBinding::new("tab", IndentTab, None),
+        KeyBinding::new("shift-tab", OutdentTab, None),
+        KeyBinding::new("cmd-]", IndentLines, None),
+        KeyBinding::new("cmd-[", OutdentLines, None),
+        KeyBinding::new("alt-tab", InsertTab, None),
         KeyBinding::new("alt-up", MoveBlockUp, None),
         KeyBinding::new("alt-down", MoveBlockDown, None),
         KeyBinding::new("alt-shift-up", SelectBlockUp, None),
@@ -810,6 +820,46 @@ impl DocumentView {
         self.replace(range, &text, EditKind::Other, cx);
     }
 
+    /// Tab, Shift-Tab, ⌘] or ⌘[: indents list items and code. See
+    /// [`editing::indent`].
+    fn indent(&mut self, outdent: bool, linewise: bool, cx: &mut Context<Self>) {
+        let Some(open) = &mut self.open else {
+            return;
+        };
+        let Some(selection) = open.selection else {
+            return;
+        };
+        let model = &open.model;
+        let index = model.item_at(selection.range().start);
+        if model.gap_at(index, selection.range().start).is_some() {
+            return;
+        }
+        let item = &model.items[index];
+        let Some(edit) = editing::indent(
+            &model.text,
+            item.kind,
+            item.block.clone(),
+            selection,
+            outdent,
+            linewise,
+        ) else {
+            return;
+        };
+        let after = edit.selection;
+        self.replace(edit.range, &edit.text, EditKind::Other, cx);
+        if let Some(open) = &mut self.open {
+            open.history.set_selection_after(after);
+        }
+        self.set_selection(after, cx);
+    }
+
+    /// ⌥Tab: inserts a tab character.
+    fn insert_tab(&mut self, _: &InsertTab, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(range) = self.selected_range() {
+            self.replace(range, "\t", EditKind::Other, cx);
+        }
+    }
+
     /// Moves the caret to the start of the next or previous block's text.
     /// With no caret, starts at the first block on screen.
     fn move_to_block(&mut self, down: bool, extend: bool, cx: &mut Context<Self>) {
@@ -1343,6 +1393,11 @@ impl Render for DocumentView {
             .on_action(cx.listener(Self::delete_to_line_start))
             .on_action(cx.listener(|this, _: &Newline, _, cx| this.newline(false, cx)))
             .on_action(cx.listener(|this, _: &LineBreak, _, cx| this.newline(true, cx)))
+            .on_action(cx.listener(|this, _: &IndentTab, _, cx| this.indent(false, false, cx)))
+            .on_action(cx.listener(|this, _: &OutdentTab, _, cx| this.indent(true, false, cx)))
+            .on_action(cx.listener(|this, _: &IndentLines, _, cx| this.indent(false, true, cx)))
+            .on_action(cx.listener(|this, _: &OutdentLines, _, cx| this.indent(true, true, cx)))
+            .on_action(cx.listener(Self::insert_tab))
             .on_action(
                 cx.listener(|this, _: &MoveBlockUp, _, cx| this.move_to_block(false, false, cx)),
             )
