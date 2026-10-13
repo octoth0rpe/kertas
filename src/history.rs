@@ -318,4 +318,95 @@ mod tests {
             self.edit(start..at, "", EditKind::Deleting);
         }
     }
+
+    // Edge cases (#38).
+
+    #[test]
+    fn selection_after_is_restored_by_redo() {
+        let mut f = Fixture::new("- a\n- b");
+        f.selection = Selection::caret(7);
+        f.edit(4..4, "  ", EditKind::Other);
+        // Indenting keeps the caret after the item's text, not after the
+        // inserted spaces.
+        f.history.set_selection_after(Selection::caret(9));
+        assert_eq!(f.history.undo(&mut f.buffer), Some(Selection::caret(7)));
+        assert_eq!(text(&f.buffer), "- a\n- b");
+        assert_eq!(f.history.redo(&mut f.buffer), Some(Selection::caret(9)));
+        assert_eq!(text(&f.buffer), "- a\n  - b");
+    }
+
+    #[test]
+    fn typing_over_a_selection_undoes_to_the_selection() {
+        let mut f = Fixture::new("hello world");
+        f.selection = Selection {
+            anchor: 6,
+            head: 11,
+        };
+        f.edit(6..11, "t", EditKind::Typing);
+        f.type_text("here");
+        assert_eq!(text(&f.buffer), "hello there");
+        assert_eq!(
+            f.history.undo(&mut f.buffer),
+            Some(Selection {
+                anchor: 6,
+                head: 11
+            })
+        );
+        assert_eq!(text(&f.buffer), "hello world");
+    }
+
+    #[test]
+    fn composed_text_then_undo() {
+        // An input method replaces its marked text as the user composes.
+        let mut f = Fixture::new("a");
+        f.selection = Selection::caret(1);
+        f.edit(1..1, "k", EditKind::Other);
+        f.edit(1..2, "か", EditKind::Other);
+        assert_eq!(text(&f.buffer), "aか");
+        f.history.undo(&mut f.buffer);
+        assert_eq!(text(&f.buffer), "ak");
+        f.history.undo(&mut f.buffer);
+        assert_eq!(text(&f.buffer), "a");
+    }
+
+    #[test]
+    fn undoing_every_edit_restores_the_original() {
+        // A deterministic pseudo-random sequence of edits of every kind.
+        let original = "# Title\n\nSome *text*, café 🦀.\r\n- a\n- b\n";
+        let mut f = Fixture::new(original);
+        let mut seed: u64 = 0x5eed;
+        let mut next = |limit: usize| {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 33) as usize % limit.max(1)
+        };
+        let start = Selection::caret(3);
+        f.selection = start;
+        for _ in 0..300 {
+            let text = text(&f.buffer);
+            // A char boundary at or before `offset`.
+            let boundary = |mut offset: usize| {
+                while !text.is_char_boundary(offset) {
+                    offset -= 1;
+                }
+                offset
+            };
+            let a = boundary(next(text.len() + 1));
+            let b = boundary(next(text.len() + 1));
+            let range = a.min(b)..a.max(b);
+            let insert = ["", "x", "é", "🦀", "\n", "ab\r\n"][next(6)];
+            let kind = [EditKind::Typing, EditKind::Deleting, EditKind::Other][next(3)];
+            f.now += Duration::from_millis(next(2000) as u64);
+            f.selection = f
+                .history
+                .replace(&mut f.buffer, range, insert, kind, f.selection, f.now);
+        }
+        let mut restored = None;
+        while let Some(selection) = f.history.undo(&mut f.buffer) {
+            restored = Some(selection);
+        }
+        assert_eq!(text(&f.buffer), original);
+        assert_eq!(restored, Some(start));
+    }
 }

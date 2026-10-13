@@ -434,4 +434,39 @@ mod tests {
         assert_eq!(layout.paragraphs[0].indent, INDENT);
         assert_eq!(layout.paragraphs[1].frame, Frame::Rule);
     }
+
+    // Edge cases (#38).
+
+    #[test]
+    fn extra_cells_in_a_row_are_dropped() {
+        // GFM ignores cells beyond the header's columns.
+        let layout = layout("| a | b |\n|---|---|\n| 1 | 2 | 3 |\n");
+        let cells = layout
+            .paragraphs
+            .iter()
+            .filter(|paragraph| matches!(paragraph.frame, Frame::Cell { .. }))
+            .count();
+        assert_eq!(cells, 4);
+        assert!(!layout.text.contains('3'));
+    }
+
+    #[test]
+    fn a_header_only_table() {
+        let layout = layout("| a | b |\n|---|---|\n");
+        assert_eq!(layout.tables, [TableLayout { columns: 2 }]);
+    }
+
+    #[test]
+    fn task_items_in_ordered_lists_show_a_box() {
+        let layout = layout("1. [ ] a\n2. [x] b\n");
+        assert_eq!(paragraphs(&layout), ["☐  a", "☑  b"]);
+    }
+
+    #[test]
+    fn headings_in_quotes_are_muted_headings() {
+        let layout = layout("> # Quoted\n");
+        let style = style_of(&layout, "Quoted");
+        assert_eq!(style.heading, Some(1));
+        assert!(style.muted);
+    }
 }
