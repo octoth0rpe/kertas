@@ -15,6 +15,7 @@ futures = "0.3"
 pulldown-cmark = { version = "0.13.4", default-features = false }
 ropey = "1.6"
 unicode-segmentation = "1"
+toml_edit = "0.25.17"
 
 [lints.clippy]
 # kami often builds lists of byte ranges, including lists with one range.

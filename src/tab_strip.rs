@@ -11,7 +11,6 @@ use gpui::{
 
 use crate::document_view::{CloseWindow, DocumentView};
 use crate::theme::Theme;
-use crate::windows::{DOCUMENT_LAYOUT, DocumentLayout};
 
 const STRIP_HEIGHT: f32 = 30.;
 const MAX_TAB_WIDTH: f32 = 240.;
@@ -25,9 +24,6 @@ pub fn render_tab_strip(
     theme: Theme,
     self_dirty: bool,
 ) -> Option<AnyElement> {
-    if DOCUMENT_LAYOUT != DocumentLayout::Tabs {
-        return None;
-    }
     let id = window.window_handle().window_id();
     let tabs = cx.try_global::<SystemWindowTabController>()?.tabs(id)?;
     if tabs.len() < 2 {
@@ -130,12 +126,9 @@ fn close(handle: AnyWindowHandle, cx: &mut App) {
 }
 
 /// Switches to the tab at `index` (0-based) in `window`'s tab group, for
-/// ⌘1 to ⌘9 and ⌘0. Does nothing if there's no such tab, or in windows
-/// layout.
+/// ⌘1 to ⌘9 and ⌘0. Does nothing if there's no such tab (as in the
+/// windows layout, where each window is on its own).
 pub fn select_tab(index: usize, window: &Window, cx: &mut App) {
-    if DOCUMENT_LAYOUT != DocumentLayout::Tabs {
-        return;
-    }
     let id = window.window_handle().window_id();
     let Some(handle) = cx
         .try_global::<SystemWindowTabController>()

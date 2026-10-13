@@ -35,6 +35,15 @@ cargo run
 
 The first build downloads GPUI from the Zed repository and takes a few minutes.
 
+### Settings
+
+Settings live in `~/Library/Application Support/kami/config.toml`. The file is optional, and edits to it apply straight away:
+
+```toml
+theme = "dark"     # "light", "dark" or "system" (the default)
+layout = "windows" # "tabs" (the default) or "windows"
+```
+
 ### Installing Kami.app
 
 ```sh

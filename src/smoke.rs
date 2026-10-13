@@ -31,6 +31,7 @@ pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
         Err(_) => return,
         Ok("tabs") => return smoke_tabs(window, cx),
         Ok("quit") => return smoke_quit(window, cx),
+        Ok("settings") => return smoke_settings(window, cx),
         Ok(_) => {}
     }
     let mut steps: Vec<Step> = Vec::new();
@@ -266,6 +267,80 @@ fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
             && tab_switching
             && tabbing_calls == 3
             && remaining == 1;
+        println!("SMOKE {}", if ok { "OK" } else { "FAILED" });
+        cx.update(|cx| cx.quit());
+    })
+    .detach();
+}
+
+/// `KAMI_SMOKE=settings`, with `KAMI_CONFIG_DIR` set to an empty
+/// directory: edits to the settings file apply live, problems are
+/// reported, and changing a setting keeps the file's comments.
+fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
+    use crate::app_settings::{self, AppSettings};
+    use crate::theme::Theme;
+
+    let path = std::path::PathBuf::from(std::env::var_os("KAMI_CONFIG_DIR").unwrap_or_default())
+        .join("config.toml");
+    cx.spawn(async move |cx| {
+        let executor = cx.background_executor().clone();
+        let wait = || executor.timer(Duration::from_millis(1500));
+        let theme = |cx: &mut gpui::AsyncApp| window.read_with(cx, |view, _| view.theme()).ok();
+        let problems =
+            |cx: &mut gpui::AsyncApp| cx.update(|cx| cx.global::<AppSettings>().problems.len());
+        let mut ok = true;
+        let mut check = |name: &str, passed: bool| {
+            println!("{name}: {}", if passed { "ok" } else { "FAILED" });
+            ok &= passed;
+        };
+
+        check("no file, no problems", problems(cx) == 0);
+
+        std::fs::write(&path, "# Mine\ntheme = \"dark\"  # at night\n").ok();
+        wait().await;
+        check("edit applies live", theme(cx) == Some(Theme::dark()));
+
+        std::fs::write(&path, "theme = \"blue\"\nfont = 1\n").ok();
+        wait().await;
+        let reported = problems(cx);
+        println!("problems reported: {reported}");
+        check("bad file reports problems", reported == 2);
+
+        std::fs::write(&path, "# Mine\ntheme = \"dark\"  # at night\n").ok();
+        wait().await;
+        let set = cx.update(|cx| app_settings::set("theme", "light", cx));
+        check("setting is written", set.is_ok());
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        check(
+            "comments are kept",
+            text == "# Mine\ntheme = \"light\"  # at night\n",
+        );
+        wait().await;
+        check("written setting applies", theme(cx) == Some(Theme::light()));
+
+        // New documents open in their own window in the windows layout.
+        cx.update(|cx| app_settings::set("layout", "windows", cx))
+            .ok();
+        window
+            .update(cx, |_, window, cx| {
+                window.dispatch_action(Box::new(New), cx)
+            })
+            .ok();
+        wait().await;
+        let windows = cx.update(|cx| cx.windows().len());
+        let grouped = window
+            .update(cx, |_, window, cx| {
+                let id = window.window_handle().window_id();
+                cx.try_global::<gpui::SystemWindowTabController>()
+                    .and_then(|controller| controller.tabs(id))
+                    .map_or(1, |tabs| tabs.len())
+            })
+            .unwrap_or(0);
+        check(
+            "windows layout opens a window",
+            windows == 2 && grouped == 1,
+        );
+
         println!("SMOKE {}", if ok { "OK" } else { "FAILED" });
         cx.update(|cx| cx.quit());
     })
