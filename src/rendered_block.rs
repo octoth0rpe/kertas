@@ -1,15 +1,18 @@
 //! Drawing blocks in rendered mode, and mapping clicks on them back to
 //! source offsets.
 
+use std::rc::Rc;
+
 use gpui::{
     AnyElement, App, Font, FontWeight, Hsla, MouseButton, Rems, SharedString, StyledText,
     WeakEntity, Window, div, prelude::*, px,
 };
 use kami::inline::InlineText;
 use kami::rendered::{ColumnAlignment, ListItem, RenderedBlock, Table};
+use kami::tabs::ExpandedTabs;
 
 use crate::document_view::DocumentView;
-use crate::text_style::{code_text, heading_text, inline_run};
+use crate::text_style::{Look, code_text, heading_text, inline_run};
 use crate::theme::Theme;
 
 /// Space between blocks inside lists and blockquotes.
@@ -21,6 +24,7 @@ struct TextStyle {
     font: Font,
     color: Hsla,
     theme: Theme,
+    tab_width: u32,
     click: ClickTarget,
 }
 
@@ -66,11 +70,10 @@ impl ClickTarget {
 pub fn render_block(
     block: &RenderedBlock,
     first: bool,
-    base_font: &Font,
-    theme: Theme,
+    look: &Look,
     click: ClickTarget,
 ) -> AnyElement {
-    let content = rendered_content(block, base_font, theme, click.clone());
+    let content = rendered_content(block, look, click.clone());
     block_frame(content, rendered_heading(block), first, click)
 }
 
@@ -83,16 +86,12 @@ pub fn rendered_heading(block: &RenderedBlock) -> Option<u8> {
 }
 
 /// A block's rendered content, without the list item's spacing.
-pub fn rendered_content(
-    block: &RenderedBlock,
-    base_font: &Font,
-    theme: Theme,
-    click: ClickTarget,
-) -> AnyElement {
+pub fn rendered_content(block: &RenderedBlock, look: &Look, click: ClickTarget) -> AnyElement {
     let style = TextStyle {
-        font: base_font.clone(),
-        color: theme.text,
-        theme,
+        font: look.font.clone(),
+        color: look.theme.text,
+        theme: look.theme,
+        tab_width: look.tab_width,
         click,
     };
     render_content(block, &style, 0)
@@ -325,54 +324,26 @@ fn clickable_source(
     style: &TextStyle,
     to_source: impl Fn(usize) -> usize + 'static,
 ) -> AnyElement {
-    let original = text.to_owned();
-    let styled = StyledText::new(SharedString::from(expand_tabs(text)));
+    let tabs = ExpandedTabs::new(text, style.tab_width);
+    let styled = StyledText::new(SharedString::from(tabs.text.clone()));
     let layout = styled.layout().clone();
     let click = style.click.clone();
-    let to_source = std::rc::Rc::new(to_source);
-    let (drag_layout, drag_original, drag_to_source, drag) = (
-        layout.clone(),
-        original.clone(),
-        to_source.clone(),
-        click.clone(),
-    );
+    let to_source = Rc::new(move |shown: usize| to_source(tabs.to_source(shown)));
+    let (drag_layout, drag_to_source, drag) = (layout.clone(), to_source.clone(), click.clone());
     div()
         .on_mouse_down(MouseButton::Left, move |event, window, cx| {
             let (Ok(index) | Err(index)) = layout.index_for_position(event.position);
-            let index = unexpand_tabs(&original, index);
             click.report(to_source(index), event.modifiers.shift, window, cx);
             cx.stop_propagation();
         })
         .on_mouse_move(move |event, _, cx| {
             if event.pressed_button == Some(MouseButton::Left) {
                 let (Ok(index) | Err(index)) = drag_layout.index_for_position(event.position);
-                let index = unexpand_tabs(&drag_original, index);
                 drag.drag(drag_to_source(index), cx);
             }
         })
         .child(styled)
         .into_any_element()
-}
-
-/// How a tab is displayed.
-const TAB: &str = "    ";
-
-pub fn expand_tabs(text: &str) -> String {
-    text.replace('\t', TAB)
-}
-
-/// Maps an index in `text` with tabs expanded to [`TAB`] back to an index in
-/// `text`. An index inside an expanded tab maps to the tab's start.
-fn unexpand_tabs(text: &str, expanded: usize) -> usize {
-    let mut shown = 0;
-    for (index, ch) in text.char_indices() {
-        let width = if ch == '\t' { TAB.len() } else { ch.len_utf8() };
-        if expanded < shown + width {
-            return index;
-        }
-        shown += width;
-    }
-    text.len()
 }
 
 /// Inline text with its formatting as GPUI text runs.
@@ -391,21 +362,4 @@ fn styled_text(text: &InlineText, style: &TextStyle) -> StyledText {
         })
         .collect();
     StyledText::new(SharedString::from(text.text.clone())).with_runs(runs)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn unexpand_tabs_maps_back() {
-        let text = "a\tb";
-        // Shown as "a    b": a(0) tab(1..5) b(5).
-        assert_eq!(unexpand_tabs(text, 0), 0);
-        assert_eq!(unexpand_tabs(text, 1), 1);
-        assert_eq!(unexpand_tabs(text, 4), 1, "inside the tab");
-        assert_eq!(unexpand_tabs(text, 5), 2);
-        assert_eq!(unexpand_tabs(text, 6), 3, "end");
-        assert_eq!(unexpand_tabs("no tabs", 3), 3);
-    }
 }

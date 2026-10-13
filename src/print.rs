@@ -12,6 +12,7 @@ use std::ops::Range;
 use kami::model::Model;
 use kami::print_layout::{Alignment, Frame, PrintLayout};
 use kami::rendered::{CODE_FONT, heading_scale};
+use kami::settings::Settings;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{AnyThread, MainThreadMarker};
@@ -35,9 +36,16 @@ const CODE: f64 = 9.5;
 /// Page margins, in points.
 const MARGIN: f64 = 54.;
 
-/// Shows the print panel for `model` as a sheet on `window`.
-pub fn print(model: &Model, title: &str, window: &NSWindow, mtm: MainThreadMarker) {
-    let operation = operation(model, mtm);
+/// Shows the print panel for `model` as a sheet on `window`, laid out with
+/// `settings`.
+pub fn print(
+    model: &Model,
+    settings: &Settings,
+    title: &str,
+    window: &NSWindow,
+    mtm: MainThreadMarker,
+) {
+    let operation = operation(model, settings, mtm);
     operation.setJobTitle(Some(&NSString::from_str(title)));
     // SAFETY: no delegate or callback, so nothing to keep alive.
     unsafe {
@@ -53,12 +61,17 @@ pub fn print(model: &Model, title: &str, window: &NSWindow, mtm: MainThreadMarke
 /// Prints `model` to a PDF at `path` without any panels, for the smoke
 /// test.
 #[cfg(debug_assertions)]
-pub fn save_pdf(model: &Model, path: &std::path::Path, mtm: MainThreadMarker) -> bool {
+pub fn save_pdf(
+    model: &Model,
+    settings: &Settings,
+    path: &std::path::Path,
+    mtm: MainThreadMarker,
+) -> bool {
     use objc2::runtime::ProtocolObject;
     use objc2_app_kit::{NSPrintJobSavingURL, NSPrintSaveJob};
     use objc2_foundation::NSURL;
 
-    let operation = operation(model, mtm);
+    let operation = operation(model, settings, mtm);
     let info = operation.printInfo();
     // SAFETY: `NSPrintSaveJob` is an AppKit constant, set before any code
     // runs.
@@ -75,7 +88,11 @@ pub fn save_pdf(model: &Model, path: &std::path::Path, mtm: MainThreadMarker) ->
 }
 
 /// A print operation for `model`, on a copy of the shared print settings.
-fn operation(model: &Model, mtm: MainThreadMarker) -> Retained<NSPrintOperation> {
+fn operation(
+    model: &Model,
+    settings: &Settings,
+    mtm: MainThreadMarker,
+) -> Retained<NSPrintOperation> {
     let info = NSPrintInfo::sharedPrintInfo().copy();
     info.setHorizontalPagination(NSPrintingPaginationMode::Fit);
     info.setVerticallyCentered(false);
@@ -88,7 +105,7 @@ fn operation(model: &Model, mtm: MainThreadMarker) -> Retained<NSPrintOperation>
     // TextKit 1, so tables and code boxes print.
     let view = NSTextView::initUsingTextLayoutManager(mtm.alloc(), false);
     view.setFrameSize(CGSize::new(paper.width - 2. * MARGIN, paper.height));
-    let text = attributed(&PrintLayout::new(model), mtm);
+    let text = attributed(&PrintLayout::new(model, settings.tab_width), mtm);
     // SAFETY: the view was just created with a text storage.
     unsafe {
         view.textStorage()

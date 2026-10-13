@@ -10,7 +10,7 @@ use crate::builtin::Builtin;
 
 impl DocumentView {
     /// File > Print…: the standard print panel, as a sheet on this window.
-    pub(super) fn print(&mut self, _: &Print, window: &mut Window, _: &mut Context<Self>) {
+    pub(super) fn print(&mut self, _: &Print, window: &mut Window, cx: &mut Context<Self>) {
         #[cfg(target_os = "macos")]
         {
             let Some(open) = &self.open else {
@@ -26,10 +26,11 @@ impl DocumentView {
                 Some(builtin) => builtin.title().to_owned(),
                 None => open.editor.document().display_name(),
             };
-            crate::print::print(open.editor.model(), &title, &ns_window, mtm);
+            let settings = crate::app_settings::get(cx);
+            crate::print::print(open.editor.model(), &settings, &title, &ns_window, mtm);
         }
         #[cfg(not(target_os = "macos"))]
-        let _ = window;
+        let _ = (window, cx);
     }
 
     /// Shows one of Kami's built-in documents, view-only.

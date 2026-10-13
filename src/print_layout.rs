@@ -12,6 +12,7 @@ use std::ops::Range;
 use crate::inline::InlineText;
 use crate::model::Model;
 use crate::rendered::{ColumnAlignment, RenderedBlock};
+use crate::tabs::expand;
 
 /// A line break within a paragraph.
 pub const LINE_SEPARATOR: char = '\u{2028}';
@@ -32,6 +33,8 @@ pub struct PrintLayout {
     pub paragraphs: Vec<Paragraph>,
     /// The tables that `Frame::Cell` paragraphs belong to.
     pub tables: Vec<TableLayout>,
+    /// How many spaces a tab in code is printed as.
+    tab_width: u32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -100,9 +103,13 @@ pub struct TableLayout {
 }
 
 impl PrintLayout {
-    /// Lays out every block in `model` for printing.
-    pub fn new(model: &Model) -> Self {
-        let mut layout = Self::default();
+    /// Lays out every block in `model` for printing, with each tab in
+    /// code shown as `tab_width` spaces.
+    pub fn new(model: &Model, tab_width: u32) -> Self {
+        let mut layout = Self {
+            tab_width,
+            ..Self::default()
+        };
         for item in &model.items {
             layout.block(&item.rendered, 0., RunStyle::default());
         }
@@ -247,7 +254,7 @@ impl PrintLayout {
             }
             RenderedBlock::CodeBlock { code, .. } => {
                 self.push(
-                    code.text.trim_end_matches('\n'),
+                    &expand(code.text.trim_end_matches('\n'), self.tab_width),
                     RunStyle {
                         code: true,
                         ..RunStyle::default()
@@ -305,7 +312,7 @@ impl PrintLayout {
             }
             RenderedBlock::Html(source) | RenderedBlock::Raw(source) => {
                 self.push(
-                    source.trim_end(),
+                    &expand(source.trim_end(), self.tab_width),
                     RunStyle {
                         code: true,
                         muted: true,
@@ -329,7 +336,7 @@ mod tests {
     use super::*;
 
     fn layout(text: &str) -> PrintLayout {
-        PrintLayout::new(&Model::new(text))
+        PrintLayout::new(&Model::new(text), 4)
     }
 
     /// The text of each paragraph, without its newline.
@@ -395,6 +402,12 @@ mod tests {
             ["•  a", "•  b", "3.  c", "4.  d", "☐  e", "☑  f"]
         );
         assert_eq!(layout.paragraphs[0].indent, INDENT);
+    }
+
+    #[test]
+    fn code_tabs_are_expanded() {
+        let layout = PrintLayout::new(&Model::new("```\n\tx\n```\n"), 2);
+        assert_eq!(layout.text.trim_end(), "  x");
     }
 
     #[test]

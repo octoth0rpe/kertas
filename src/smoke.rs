@@ -552,6 +552,13 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
             !cx.update(|cx| app_settings::get(cx).editing_hint),
         );
 
+        cx.update(|cx| app_settings::set("tab_width", 8, cx)).ok();
+        settle(cx).await;
+        checks.check(
+            "tab_width setting applies",
+            cx.update(|cx| app_settings::get(cx).tab_width) == 8,
+        );
+
         // Changing the layout waits until Kami restarts: New still opens a
         // tab.
         cx.update(|cx| app_settings::set("layout", "windows", cx))
@@ -784,9 +791,10 @@ fn smoke_print(window: WindowHandle<DocumentView>, cx: &mut App) {
         pause(cx, 10).await;
         let path = std::path::PathBuf::from(std::env::var_os("KAMI_PRINT_PDF").unwrap_or_default());
         let model = window.read_with(cx, |view, _| view.model()).ok().flatten();
-        let printed = cx.update(|_| {
+        let printed = cx.update(|cx| {
             let mtm = objc2::MainThreadMarker::new()?;
-            Some(crate::print::save_pdf(&*model?, &path, mtm))
+            let settings = crate::app_settings::get(cx);
+            Some(crate::print::save_pdf(&*model?, &settings, &path, mtm))
         });
         let size = std::fs::metadata(&path).map_or(0, |metadata| metadata.len());
         checks.check(

@@ -46,7 +46,7 @@ pub fn open(cx: &mut App) {
             .update(cx, |_, window, _| window.activate_window())
             .ok();
     }
-    let bounds = Bounds::centered(None, size(px(540.), px(540.)), cx);
+    let bounds = Bounds::centered(None, size(px(540.), px(580.)), cx);
     let window = cx
         .open_window(
             WindowOptions {
@@ -76,6 +76,14 @@ const KEY_CONTEXT: &str = "SettingsWindow";
 
 /// The width of the labels on the left of each row.
 const LABEL_WIDTH: f32 = 150.;
+
+/// One of a setting's choices in the settings sheet.
+struct Choice {
+    label: SharedString,
+    /// The setting's value in the file when it's chosen.
+    value: toml_edit::Value,
+    selected: bool,
+}
 
 pub struct SettingsWindow {
     focus_handle: FocusHandle,
@@ -378,18 +386,17 @@ impl SettingsWindow {
 
     /// A row: a label, then buttons for the choices with the current one
     /// selected. Choosing one sets the setting in the settings file.
-    fn choices(
-        &self,
-        setting: &'static Setting,
-        choices: &'static [(&'static str, &'static str)],
-        current: &str,
-    ) -> impl IntoElement {
+    fn choices(&self, setting: &'static Setting, choices: Vec<Choice>) -> impl IntoElement {
         let theme = self.theme;
         let key = setting.key;
-        let buttons = choices.iter().map(|&(value, label)| {
-            let selected = value == current;
+        let buttons = choices.into_iter().map(|choice| {
+            let Choice {
+                label,
+                value,
+                selected,
+            } = choice;
             div()
-                .id(SharedString::from(format!("{key}-{value}")))
+                .id(SharedString::from(format!("{key}-{label}")))
                 .px_3()
                 .py(px(3.))
                 .rounded_md()
@@ -409,6 +416,7 @@ impl SettingsWindow {
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                     // Applying a setting updates this window, so wait until
                     // this event is handled.
+                    let value = value.clone();
                     cx.defer(move |cx| app_settings::set_or_report(key, value, cx));
                 })
                 .child(label)
@@ -431,9 +439,30 @@ impl SettingsWindow {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         match &setting.kind {
-            Kind::Choice { choices, get, .. } => self
-                .choices(setting, choices, get(settings))
-                .into_any_element(),
+            Kind::Choice { choices, get, .. } => {
+                let current = get(settings);
+                let choices = choices
+                    .iter()
+                    .map(|&(value, label)| Choice {
+                        label: label.into(),
+                        value: value.into(),
+                        selected: value == current,
+                    })
+                    .collect();
+                self.choices(setting, choices).into_any_element()
+            }
+            Kind::Numbers { choices, get, .. } => {
+                let current = get(settings);
+                let choices = choices
+                    .iter()
+                    .map(|&n| Choice {
+                        label: n.to_string().into(),
+                        value: i64::from(n).into(),
+                        selected: n == current,
+                    })
+                    .collect();
+                self.choices(setting, choices).into_any_element()
+            }
             Kind::Integer {
                 range, unit, get, ..
             } => self

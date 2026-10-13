@@ -12,6 +12,16 @@ use kami::rendered::heading_scale;
 
 use crate::theme::Theme;
 
+/// What document text is drawn with: the body font at the current size,
+/// the theme, and the text settings.
+#[derive(Clone)]
+pub struct Look {
+    pub font: Font,
+    pub theme: Theme,
+    /// How many spaces a tab is shown as.
+    pub tab_width: u32,
+}
+
 /// Code's text size relative to body text (13 px at 16 px).
 pub const CODE_TEXT_SIZE: f32 = 0.8125;
 

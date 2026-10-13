@@ -3,9 +3,11 @@
 
 use std::rc::Rc;
 
-use gpui::{Context, Pixels, TextLayout, Window, point, px};
+use gpui::{Context, Pixels, Window, point, px};
 use kami::editor::{Motion, Selection};
 use kami::reveal::styled_source;
+
+use crate::revealed_block::RevealedLayout;
 
 use super::{
     CARET_BLINK_INTERVAL, DocumentView, LineGoal, OpenDocument, Revealed, SelectAll, Unreveal,
@@ -206,7 +208,7 @@ impl DocumentView {
     }
 
     /// The revealed item's layout and start offset, if it's been painted.
-    pub(super) fn revealed_layout(&self) -> Option<(TextLayout, usize)> {
+    pub(super) fn revealed_layout(&self) -> Option<(RevealedLayout, usize)> {
         let open = self.open.as_ref()?;
         open.editor.selection()?;
         let revealed = open.revealed.iter().find(|revealed| revealed.target.head)?;

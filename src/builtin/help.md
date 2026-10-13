@@ -46,6 +46,7 @@ theme = "dark"       # "light", "dark" or "system"
 layout = "windows"   # "tabs" or "windows", from the next start
 text_width = "wide"  # "standard", "wide" or "full"
 font_size = 18       # 10 to 32
+tab_width = 2        # how wide tab characters in code look: 2, 4 or 8 spaces
 editing_hint = false # hide keyboard hints on the block being edited
 ```
 
