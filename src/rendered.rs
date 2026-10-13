@@ -648,8 +648,10 @@ mod tests {
                 .any(|block| matches!(block, RenderedBlock::Raw(_))),
             "every block in the fixture should be rendered"
         );
-        // Generous bound for unoptimized test builds; N1 is 500 ms end to end.
-        assert!(elapsed.as_millis() < 250, "took {elapsed:?}");
+        // Typically 34 ms in a debug build and 6 ms in release (M2,
+        // 2026-10-13); N1 is 500 ms end to end. The bound leaves room for a
+        // slow or busy machine.
+        assert!(elapsed.as_millis() < 150, "took {elapsed:?}");
         eprintln!("parsed and rendered {} blocks in {elapsed:?}", blocks.len());
     }
 }

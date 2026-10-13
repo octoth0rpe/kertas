@@ -387,6 +387,19 @@ impl DocumentView {
         }
     }
 
+    /// How many items the document has, for the smoke test.
+    #[cfg(debug_assertions)]
+    pub fn item_count(&self) -> usize {
+        self.open.as_ref().map_or(0, |open| open.model.items.len())
+    }
+
+    /// Where item `index`'s block starts in the document, for the smoke
+    /// test.
+    #[cfg(debug_assertions)]
+    pub fn item_start(&self, index: usize) -> Option<usize> {
+        Some(self.open.as_ref()?.model.items.get(index)?.block.start)
+    }
+
     /// Where item `index` starts in the document and its top on screen,
     /// for the smoke test.
     #[cfg(debug_assertions)]

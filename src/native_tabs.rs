@@ -101,13 +101,3 @@ pub fn selected_tab(window: &NativeWindow) -> Option<usize> {
     let selected = group.selectedWindow()?;
     group.windows().iter().position(|window| window == selected)
 }
-
-/// Whether `window`'s native tab bar is showing.
-#[cfg(debug_assertions)]
-pub fn tab_bar_visible(window: &NativeWindow) -> bool {
-    // SAFETY: as in `tab_group_size`.
-    let view = unsafe { window.0.cast::<NSView>().as_ref() };
-    view.window()
-        .and_then(|window| window.tabGroup())
-        .is_some_and(|group| group.isTabBarVisible())
-}
