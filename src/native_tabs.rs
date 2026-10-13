@@ -3,11 +3,14 @@
 //! GPUI only tabs new windows when the macOS "Prefer tabs when opening
 //! documents" preference allows it (by default, only in full screen). Kami
 //! has its own tabs/windows setting (REQUIREMENTS §8.2), so it adds the new
-//! window as a tab itself.
+//! window as a tab itself, and turns automatic tabbing off. Otherwise macOS
+//! adds "Show Tab Bar" and "Show All Tabs" to the View menu, which do
+//! nothing useful with Kami's own tab strip.
 
 use std::ptr::NonNull;
 
-use objc2_app_kit::{NSView, NSWindowOrderingMode};
+use objc2::MainThreadMarker;
+use objc2_app_kit::{NSView, NSWindow, NSWindowOrderingMode};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 /// A native window, captured from a GPUI window.
@@ -21,6 +24,20 @@ impl NativeWindow {
             _ => None,
         }
     }
+}
+
+/// Turns off macOS automatic window tabbing. GPUI turns it on whenever it
+/// opens a window with a tabbing identifier, so call this after each one.
+pub fn disable_automatic_tabbing() {
+    if let Some(mtm) = MainThreadMarker::new() {
+        NSWindow::setAllowsAutomaticWindowTabbing(false, mtm);
+    }
+}
+
+/// Whether macOS automatic window tabbing is on, for the smoke test.
+#[cfg(debug_assertions)]
+pub fn automatic_tabbing() -> bool {
+    MainThreadMarker::new().is_some_and(NSWindow::allowsAutomaticWindowTabbing)
 }
 
 /// How many times [`add_as_tab`] found both windows, for the smoke test.
@@ -63,6 +80,16 @@ pub fn tab_group_size(window: &NativeWindow) -> usize {
     view.window()
         .and_then(|window| window.tabbedWindows())
         .map_or(1, |group| group.count())
+}
+
+/// The position of the selected tab in `window`'s tab group.
+#[cfg(debug_assertions)]
+pub fn selected_tab(window: &NativeWindow) -> Option<usize> {
+    // SAFETY: as in `tab_group_size`.
+    let view = unsafe { window.0.cast::<NSView>().as_ref() };
+    let group = view.window()?.tabGroup()?;
+    let selected = group.selectedWindow()?;
+    group.windows().iter().position(|window| window == selected)
 }
 
 /// Whether `window`'s native tab bar is showing.

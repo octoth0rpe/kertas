@@ -97,6 +97,8 @@ pub fn open_window(
         .ok()?;
 
     #[cfg(target_os = "macos")]
+    crate::native_tabs::disable_automatic_tabbing();
+    #[cfg(target_os = "macos")]
     if layout == Layout::Tabs
         && let Some(previous) = previous
     {

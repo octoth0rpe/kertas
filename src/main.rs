@@ -1,5 +1,6 @@
 mod app_settings;
 mod document_view;
+mod menus;
 #[cfg(target_os = "macos")]
 mod native_tabs;
 mod rendered_block;
@@ -12,10 +13,9 @@ mod windows;
 
 use std::path::PathBuf;
 
-use document_view::{CloseWindow, New, Open, Quit, Save, SaveAs};
 use futures::StreamExt;
 use futures::channel::mpsc;
-use gpui::{App, Menu, MenuItem};
+use gpui::App;
 use gpui_platform::application;
 
 fn main() {
@@ -33,18 +33,7 @@ fn main() {
         app_settings::init(cx);
         windows::register(cx);
         cx.bind_keys(document_view::key_bindings());
-        cx.set_menus([
-            Menu::new("Kami").items([MenuItem::action("Quit Kami", Quit)]),
-            Menu::new("File").items([
-                MenuItem::action("New", New),
-                MenuItem::action("Open…", Open),
-                MenuItem::separator(),
-                MenuItem::action("Save", Save),
-                MenuItem::action("Save As…", SaveAs),
-                MenuItem::separator(),
-                MenuItem::action("Close", CloseWindow),
-            ]),
-        ]);
+        menus::init(cx);
 
         // Closing the last window quits.
         cx.on_window_closed(|cx, _| {

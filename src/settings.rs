@@ -30,11 +30,22 @@ pub enum Layout {
     Windows,
 }
 
+/// How wide the text column is (A1).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TextWidth {
+    #[default]
+    Standard,
+    Wide,
+    /// The whole window, less its margins.
+    Full,
+}
+
 /// All settings, with defaults for any the file doesn't set.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Settings {
     pub theme: ThemeSetting,
     pub layout: Layout,
+    pub text_width: TextWidth,
 }
 
 /// A problem in the settings file.
@@ -83,6 +94,17 @@ const SETTINGS: &[Setting] = &[
             }
         },
     },
+    Setting {
+        key: "text_width",
+        values: &["standard", "wide", "full"],
+        apply: |settings, value| {
+            settings.text_width = match value {
+                "wide" => TextWidth::Wide,
+                "full" => TextWidth::Full,
+                _ => TextWidth::Standard,
+            }
+        },
+    },
 ];
 
 impl ThemeSetting {
@@ -92,6 +114,17 @@ impl ThemeSetting {
             Self::Light => "light",
             Self::Dark => "dark",
             Self::System => "system",
+        }
+    }
+}
+
+impl TextWidth {
+    /// The value written in the settings file.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Wide => "wide",
+            Self::Full => "full",
         }
     }
 }
@@ -207,13 +240,15 @@ mod tests {
 
     #[test]
     fn reads_settings() {
-        let (settings, problems) = parse("# Mine\ntheme = \"dark\"\nlayout = \"windows\"\n");
+        let (settings, problems) =
+            parse("# Mine\ntheme = \"dark\"\nlayout = \"windows\"\ntext_width = \"wide\"\n");
         assert_eq!(problems, vec![]);
         assert_eq!(
             settings,
             Settings {
                 theme: ThemeSetting::Dark,
                 layout: Layout::Windows,
+                text_width: TextWidth::Wide,
             }
         );
     }
@@ -289,6 +324,10 @@ mod tests {
         for layout in [Layout::Tabs, Layout::Windows] {
             let text = set("", "layout", layout.as_str()).unwrap();
             assert_eq!(parse(&text).0.layout, layout);
+        }
+        for width in [TextWidth::Standard, TextWidth::Wide, TextWidth::Full] {
+            let text = set("", "text_width", width.as_str()).unwrap();
+            assert_eq!(parse(&text).0.text_width, width);
         }
     }
 }

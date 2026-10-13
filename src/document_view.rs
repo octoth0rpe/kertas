@@ -23,8 +23,9 @@ use kami::history::{EditKind, History};
 use kami::model::{Gap, Model};
 use kami::movement::{self, Selection};
 use kami::reveal::{StyledSource, styled_source};
+use kami::settings::TextWidth;
 
-use crate::app_settings::AppSettings;
+use crate::app_settings::{self, AppSettings};
 use crate::rendered_block::{ClickTarget, render_block};
 use crate::revealed_block::{RevealedBlock, TextInput, render_gap, render_revealed};
 use crate::tab_strip::{render_tab_strip, select_tab};
@@ -171,8 +172,15 @@ pub fn key_bindings() -> Vec<KeyBinding> {
     ]
 }
 
-/// Maximum width of the text column (A1).
-pub const MAX_TEXT_WIDTH: f32 = 720.;
+/// The text column's maximum width for each `text_width` setting (A1), or
+/// `None` to use the whole window.
+fn column_width(width: TextWidth) -> Option<Pixels> {
+    match width {
+        TextWidth::Standard => Some(px(720.)),
+        TextWidth::Wide => Some(px(960.)),
+        TextWidth::Full => None,
+    }
+}
 pub const BODY_TEXT_SIZE: f32 = 16.;
 pub const CODE_FONT: &str = "Menlo";
 
@@ -217,6 +225,7 @@ pub struct DocumentView {
     focus_handle: FocusHandle,
     open: Option<OpenDocument>,
     theme: Theme,
+    text_width: TextWidth,
     /// Whether the blinking caret is currently drawn.
     caret_visible: bool,
     /// Bumped to stop the current blink loop.
@@ -246,6 +255,11 @@ impl DocumentView {
         let settings_observer = cx.observe_global_in::<AppSettings>(window, |this, window, cx| {
             this.theme = Theme::current(window, cx);
             this.settings_problems_dismissed = false;
+            let text_width = app_settings::get(cx).text_width;
+            if text_width != this.text_width {
+                this.text_width = text_width;
+                this.text_width_changed();
+            }
             cx.notify();
         });
         // Closing the window (e.g. its close button) asks about unsaved
@@ -259,6 +273,7 @@ impl DocumentView {
             focus_handle,
             open: None,
             theme: Theme::current(window, cx),
+            text_width: app_settings::get(cx).text_width,
             caret_visible: true,
             blink_epoch: 0,
             confirming: false,
@@ -305,6 +320,20 @@ impl DocumentView {
             window.window_handle().window_id(),
             name.into(),
         );
+    }
+
+    /// Re-measures every block for the new column width, keeping the
+    /// caret's block in view.
+    fn text_width_changed(&mut self) {
+        let Some(open) = &mut self.open else {
+            return;
+        };
+        open.list_state.remeasure();
+        *open.revealed_layout.borrow_mut() = None;
+        if let Some(selection) = open.selection {
+            let index = open.model.item_at(selection.head);
+            open.list_state.scroll_to_reveal_item(index);
+        }
     }
 
     /// The theme the view is drawn with, for the smoke test.
@@ -1306,6 +1335,7 @@ impl Render for DocumentView {
                 });
                 let layout_slot = open.revealed_layout.clone();
                 let caret_visible = self.caret_visible;
+                let column_width = column_width(self.text_width);
                 let base_font = window.text_style().font();
                 let theme = self.theme;
                 let view = cx.entity();
@@ -1350,6 +1380,7 @@ impl Render for DocumentView {
                                     ClickTarget {
                                         view: view.downgrade(),
                                         block_start: item.block.start,
+                                        column_width,
                                     },
                                     input,
                                 ),
@@ -1360,6 +1391,7 @@ impl Render for DocumentView {
                                     ClickTarget {
                                         view: view.downgrade(),
                                         block_start: range.start,
+                                        column_width,
                                     },
                                     input,
                                 ),
@@ -1373,6 +1405,7 @@ impl Render for DocumentView {
                             ClickTarget {
                                 view: view.downgrade(),
                                 block_start: item.block.start,
+                                column_width,
                             },
                         ),
                     }
