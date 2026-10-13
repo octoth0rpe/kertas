@@ -46,6 +46,8 @@ actions!(
         Quit,
         NextTab,
         PreviousTab,
+        PageUp,
+        PageDown,
         SelectTab1,
         SelectTab2,
         SelectTab3,
@@ -144,6 +146,8 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("home", MoveLineStart, None),
         KeyBinding::new("end", MoveLineEnd, None),
         KeyBinding::new("cmd-up", MoveDocumentStart, None),
+        KeyBinding::new("pageup", PageUp, None),
+        KeyBinding::new("pagedown", PageDown, None),
         KeyBinding::new("cmd-down", MoveDocumentEnd, None),
         KeyBinding::new("shift-left", SelectLeft, None),
         KeyBinding::new("shift-right", SelectRight, None),
@@ -214,18 +218,31 @@ struct OpenDocument {
     marked: Option<Range<usize>>,
     /// The x position to keep when moving up and down.
     goal_x: Option<Pixels>,
-    revealed: Option<Revealed>,
-    /// The revealed item's text layout from the last frame.
+    /// The items shown as source, in order: the one holding the caret,
+    /// and any others the selection touches.
+    revealed: Vec<Revealed>,
+    /// The caret's revealed item's text layout from the last frame.
     revealed_layout: Rc<RefCell<Option<TextLayout>>>,
+    /// An item to keep at the same place on screen once the next frame is
+    /// laid out, and where it was (C7): revealing blocks changes their
+    /// heights, which would otherwise move the text under the pointer.
+    anchor: Option<(usize, Pixels)>,
+    /// Whether to scroll the caret into view once the next frame is laid
+    /// out.
+    reveal_caret: bool,
 }
 
-/// The item shown as source, or with the caret in the gap next to it.
+/// An item shown as source, or with the caret in the gap next to it.
+#[derive(Clone)]
 struct Revealed {
     index: usize,
     /// The source shown: the item's source, or an empty range at the caret
     /// in a gap.
     range: Range<usize>,
     gap: Option<Gap>,
+    /// Whether this item holds the caret. It takes typing and shows the
+    /// hint; other revealed items are only part of the selection.
+    head: bool,
     styled: Rc<StyledSource>,
 }
 
@@ -248,6 +265,9 @@ pub struct DocumentView {
     caret_visible: bool,
     /// Bumped to stop the current blink loop.
     blink_epoch: usize,
+    /// Whether the mouse button went down in the document and is still
+    /// down, so moving it extends the selection.
+    dragging: bool,
     /// Whether a "save changes?" prompt is already showing.
     confirming: bool,
     /// The edited state last shown in the window's close button.
@@ -299,6 +319,7 @@ impl DocumentView {
             theme: Theme::current(window, cx),
             text_width: app_settings::get(cx).text_width,
             caret_visible: true,
+            dragging: false,
             blink_epoch: 0,
             confirming: false,
             shown_edited: None,
@@ -324,8 +345,10 @@ impl DocumentView {
             selection: None,
             marked: None,
             goal_x: None,
-            revealed: None,
+            revealed: Vec::new(),
             revealed_layout: Rc::default(),
+            anchor: None,
+            reveal_caret: false,
         });
         self.stop_blink();
         self.update_window_title(window, cx);
@@ -362,6 +385,31 @@ impl DocumentView {
             let index = open.model.item_at(selection.head);
             open.list_state.scroll_to_reveal_item(index);
         }
+    }
+
+    /// Where item `index` starts in the document and its top on screen,
+    /// for the smoke test.
+    #[cfg(debug_assertions)]
+    pub fn item_position(&self, index: usize) -> Option<(usize, Pixels)> {
+        let open = self.open.as_ref()?;
+        let item = open.model.items.get(index)?;
+        let top = open.list_state.bounds_for_item(index)?.top();
+        Some((item.block.start, top))
+    }
+
+    /// How many items are revealed, and the selection, for the smoke test.
+    #[cfg(debug_assertions)]
+    pub fn reveal_state(&self) -> (usize, Option<Selection>) {
+        self.open
+            .as_ref()
+            .map_or((0, None), |open| (open.revealed.len(), open.selection))
+    }
+
+    /// The list's scroll position, for the smoke test.
+    #[cfg(debug_assertions)]
+    pub fn scroll_top(&self) -> Option<(usize, Pixels)> {
+        let top = self.open.as_ref()?.list_state.logical_scroll_top();
+        Some((top.item_ix, top.offset_in_item))
     }
 
     /// The document's text, for the smoke test.
@@ -635,7 +683,71 @@ impl DocumentView {
             open.goal_x = None;
             open.marked = None;
         }
+        self.dragging = true;
         self.move_caret(offset, extend, cx);
+    }
+
+    /// Stops extending the selection when the mouse moves.
+    pub fn end_drag(&mut self) {
+        self.dragging = false;
+    }
+
+    /// Extends the selection to document `offset` while dragging.
+    pub fn drag_to(&mut self, offset: usize, cx: &mut Context<Self>) {
+        let unchanged = self
+            .open
+            .as_ref()
+            .and_then(|open| open.selection)
+            .is_some_and(|selection| selection.head == offset);
+        if self.dragging && !unchanged {
+            self.set_caret(offset, true, cx);
+        }
+    }
+
+    /// Page Up and Page Down: scroll by a page, leaving the caret where it
+    /// is, as on macOS.
+    fn scroll_page(&mut self, down: bool, cx: &mut Context<Self>) {
+        let Some(open) = &self.open else {
+            return;
+        };
+        // Keep a little of the last page in view for context.
+        let page = (open.list_state.viewport_bounds().size.height - px(48.)).max(px(48.));
+        open.list_state.scroll_by(if down { page } else { -page });
+        cx.notify();
+    }
+
+    /// Once a frame is laid out: keeps the anchored item in place, then
+    /// scrolls the caret into view if it moved off screen.
+    fn after_layout(&mut self, cx: &mut Context<Self>) {
+        let mut shift = px(0.);
+        if let Some(open) = &mut self.open
+            && let Some((index, top)) = open.anchor.take()
+            && let Some(bounds) = open.list_state.bounds_for_item(index)
+        {
+            shift = bounds.top() - top;
+            open.list_state.scroll_by(shift);
+        }
+        let reveal_caret = self
+            .open
+            .as_mut()
+            .is_some_and(|open| std::mem::take(&mut open.reveal_caret));
+        if reveal_caret
+            && let Some((layout, start)) = self.revealed_layout()
+            && let Some(open) = &self.open
+            && let Some(selection) = open.selection
+            && let Some(position) = layout.position_for_index(selection.head.saturating_sub(start))
+        {
+            let viewport = open.list_state.viewport_bounds();
+            let line = layout.line_height();
+            let top = position.y - shift;
+            let bottom = top + line;
+            if top < viewport.top() {
+                open.list_state.scroll_by(top - viewport.top() - line);
+            } else if bottom > viewport.bottom() {
+                open.list_state.scroll_by(bottom - viewport.bottom() + line);
+            }
+        }
+        cx.notify();
     }
 
     /// Moves the caret to `offset` as a navigation (not an edit): it ends
@@ -668,8 +780,18 @@ impl DocumentView {
         };
         open.selection = Some(selection);
         let index = open.model.item_at(selection.head);
-        reveal(open, Some(selection.head));
-        open.list_state.scroll_to_reveal_item(index);
+        // Where the caret's item is now, to keep it there as blocks reveal.
+        let top = open
+            .list_state
+            .bounds_for_item(index)
+            .map(|bounds| bounds.top());
+        if reveal(open, Some(selection)) {
+            open.anchor = top.map(|top| (index, top));
+        }
+        if top.is_none() {
+            open.list_state.scroll_to_reveal_item(index);
+        }
+        open.reveal_caret = true;
         self.restart_blink(cx);
         cx.notify();
     }
@@ -717,6 +839,7 @@ impl DocumentView {
         open.marked = None;
         open.history.break_group();
         reveal(open, None);
+        open.anchor = None;
         self.stop_blink();
         cx.notify();
     }
@@ -759,7 +882,7 @@ impl DocumentView {
     fn revealed_layout(&self) -> Option<(TextLayout, usize)> {
         let open = self.open.as_ref()?;
         open.selection?;
-        let revealed = open.revealed.as_ref()?;
+        let revealed = open.revealed.iter().find(|revealed| revealed.head)?;
         let layout = open.revealed_layout.borrow().clone()?;
         Some((layout, revealed.range.start))
     }
@@ -808,7 +931,11 @@ impl DocumentView {
         let index = open.model.item_at(caret);
         let item = &open.model.items[index];
         let source = open.model.source_range(index);
-        let gap = open.revealed.as_ref().and_then(|revealed| revealed.gap);
+        let gap = open
+            .revealed
+            .iter()
+            .find(|revealed| revealed.head)
+            .and_then(|revealed| revealed.gap);
         let neighbor = match (gap, down) {
             (Some(Gap::Above), true) => Some(source.start),
             (Some(Gap::Below), false) => Some(source.end),
@@ -1148,46 +1275,93 @@ impl DocumentView {
     }
 }
 
-/// Reveals the item containing `caret` (or none), re-measuring the items
-/// that change. In a gap next to a block, the block stays rendered and the
-/// caret gets an empty line of its own.
-fn reveal(open: &mut OpenDocument, caret: Option<usize>) {
-    let target = caret.map(|caret| {
-        let index = open.model.item_at(caret);
-        let gap = open.model.gap_at(index, caret);
-        let range = match gap {
-            Some(_) => caret..caret,
-            None => open.model.source_range(index),
-        };
-        (index, range, gap)
-    });
-    let current = open
+/// Reveals the items `selection` touches (or none), re-measuring the items
+/// that change. Returns whether anything changed. With an empty selection
+/// in a gap next to a block, the block stays rendered and the caret gets an
+/// empty line of its own.
+fn reveal(open: &mut OpenDocument, selection: Option<Selection>) -> bool {
+    let model = &open.model;
+    let targets: Vec<(usize, Range<usize>, Option<Gap>, bool)> = match selection {
+        None => Vec::new(),
+        Some(selection) => {
+            let head = selection.head;
+            let head_index = model.item_at(head);
+            let range = selection.range();
+            let first = model.item_at(range.start);
+            let mut last = model.item_at(range.end);
+            // A selection that ends where the next item starts doesn't
+            // touch it.
+            if last > first && last != head_index && model.items[last].range.start == range.end {
+                last -= 1;
+            }
+            (first..=last)
+                .map(|index| {
+                    let is_head = index == head_index;
+                    let gap = (is_head && selection.is_empty())
+                        .then(|| model.gap_at(index, head))
+                        .flatten();
+                    let source = model.source_range(index);
+                    let shown = match gap {
+                        Some(_) => head..head,
+                        // A selection can reach into the blank lines beyond
+                        // the source; then show the whole item.
+                        None if is_head && !(source.start..=source.end).contains(&head) => {
+                            model.items[index].range.clone()
+                        }
+                        None => source,
+                    };
+                    (index, shown, gap, is_head)
+                })
+                .collect()
+        }
+    };
+    let current: Vec<(usize, Range<usize>, Option<Gap>, bool)> = open
         .revealed
-        .as_ref()
-        .map(|revealed| (revealed.index, revealed.range.clone(), revealed.gap));
-    if current == target {
-        return;
+        .iter()
+        .map(|revealed| {
+            (
+                revealed.index,
+                revealed.range.clone(),
+                revealed.gap,
+                revealed.head,
+            )
+        })
+        .collect();
+    if current == targets {
+        return false;
     }
-    if let Some(old) = open.revealed.take() {
-        open.list_state.splice(old.index..old.index + 1, 1);
-    }
-    *open.revealed_layout.borrow_mut() = None;
-    if let Some((index, range, gap)) = target {
-        let item = &open.model.items[index];
-        let kind = match gap {
-            Some(_) => BlockKind::Paragraph,
-            None => item.kind,
-        };
-        let source = &open.model.text[range.clone()];
-        let styled = styled_source(source, kind, &open.model.definitions);
-        open.revealed = Some(Revealed {
-            index,
-            range,
-            gap,
-            styled: Rc::new(styled),
-        });
+
+    // Re-measure every item that's revealed now or was before.
+    let mut changed: Vec<usize> = current
+        .iter()
+        .chain(&targets)
+        .map(|(index, ..)| *index)
+        .collect();
+    changed.sort_unstable();
+    changed.dedup();
+    for index in changed {
         open.list_state.splice(index..index + 1, 1);
     }
+    *open.revealed_layout.borrow_mut() = None;
+    open.revealed = targets
+        .into_iter()
+        .map(|(index, range, gap, head)| {
+            let kind = match gap {
+                Some(_) => BlockKind::Paragraph,
+                None => open.model.items[index].kind,
+            };
+            let source = &open.model.text[range.clone()];
+            let styled = styled_source(source, kind, &open.model.definitions);
+            Revealed {
+                index,
+                range,
+                gap,
+                head,
+                styled: Rc::new(styled),
+            }
+        })
+        .collect();
+    true
 }
 
 /// Rebuilds the model after the buffer changed, re-measuring only the
@@ -1198,8 +1372,8 @@ fn text_changed(open: &mut OpenDocument) {
     let (model, splice) = open.model.updated(&text);
     open.model = Rc::new(model);
     open.list_state.splice(splice.old, splice.new_count);
-    // The revealed item's index and source may have changed.
-    open.revealed = None;
+    // The revealed items' indices and sources may have changed.
+    open.revealed.clear();
     *open.revealed_layout.borrow_mut() = None;
 }
 
@@ -1420,6 +1594,14 @@ impl Render for DocumentView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Document text is sized in rems, so this sets the zoom.
         window.set_rem_size(px(zoom::size(cx) as f32));
+        if let Some(open) = &self.open
+            && (open.anchor.is_some() || open.reveal_caret)
+        {
+            let view = cx.entity().downgrade();
+            window.on_next_frame(move |_, cx| {
+                view.update(cx, |this, cx| this.after_layout(cx)).ok();
+            });
+        }
         // Show unsaved changes in the window's close button.
         let edited = self.is_dirty();
         if self.shown_edited != Some(edited) {
@@ -1434,14 +1616,7 @@ impl Render for DocumentView {
                 let model = open.model.clone();
                 let selection = open.selection;
                 let marked = open.marked.clone();
-                let revealed = open.revealed.as_ref().map(|revealed| {
-                    (
-                        revealed.index,
-                        revealed.range.clone(),
-                        revealed.gap,
-                        revealed.styled.clone(),
-                    )
-                });
+                let revealed = open.revealed.clone();
                 let layout_slot = open.revealed_layout.clone();
                 let caret_visible = self.caret_visible;
                 let column_width = column_width(self.text_width);
@@ -1451,14 +1626,21 @@ impl Render for DocumentView {
                 let focus_handle = self.focus_handle.clone();
                 list(open.list_state.clone(), move |index, _, _| {
                     let item = &model.items[index];
-                    match &revealed {
-                        Some((revealed_index, range, gap, styled)) if *revealed_index == index => {
+                    match revealed.iter().find(|revealed| revealed.index == index) {
+                        Some(Revealed {
+                            range,
+                            gap,
+                            head,
+                            styled,
+                            ..
+                        }) => {
                             let range = range.clone();
                             let selection = selection.unwrap_or_default();
                             let local =
                                 |offset: usize| offset.clamp(range.start, range.end) - range.start;
                             let selected = selection.range();
                             let caret = (caret_visible
+                                && *head
                                 && (range.contains(&selection.head)
                                     || selection.head == range.end))
                                 .then(|| selection.head - range.start);
@@ -1473,13 +1655,13 @@ impl Render for DocumentView {
                                 marked,
                                 first: index == 0,
                             };
-                            let input = TextInput {
+                            let input = head.then(|| TextInput {
                                 focus_handle: focus_handle.clone(),
                                 view: view.clone(),
                                 layout_slot: layout_slot.clone(),
-                            };
+                            });
                             match gap {
-                                Some(gap) => render_gap(
+                                Some(gap) if let Some(input) = input => render_gap(
                                     &item.rendered,
                                     *gap,
                                     block,
@@ -1493,7 +1675,7 @@ impl Render for DocumentView {
                                     },
                                     input,
                                 ),
-                                None => render_revealed(
+                                _ => render_revealed(
                                     block,
                                     &base_font,
                                     theme,
@@ -1568,6 +1750,12 @@ impl Render for DocumentView {
                 this.on_action(|_: &ResetZoom, _, cx| zoom::reset(cx))
             })
             .on_action(cx.listener(Self::unreveal))
+            .on_action(cx.listener(|this, _: &PageUp, _, cx| this.scroll_page(false, cx)))
+            .on_action(cx.listener(|this, _: &PageDown, _, cx| this.scroll_page(true, cx)))
+            .on_mouse_up(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _, _| this.end_drag()),
+            )
             .on_action(cx.listener(|this, _: &MoveLeft, _, cx| {
                 this.move_by(false, false, cx, movement::prev_grapheme)
             }))

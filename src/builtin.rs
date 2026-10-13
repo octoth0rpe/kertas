@@ -96,6 +96,8 @@ pub fn shortcut_label(keystroke: &Keystroke) -> String {
         "delete" => "⌦".to_owned(),
         "escape" => "Esc".to_owned(),
         "home" => "Home".to_owned(),
+        "pageup" => "Page Up".to_owned(),
+        "pagedown" => "Page Down".to_owned(),
         "end" => "End".to_owned(),
         key => key.to_uppercase(),
     };
