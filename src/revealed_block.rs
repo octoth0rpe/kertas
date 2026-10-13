@@ -27,7 +27,7 @@ const CARET_WIDTH: f32 = 2.;
 const HIGHLIGHT_INSET: f32 = 8.;
 
 /// Shown on the revealed block's border.
-const EDITING_HINT: &str = "esc to finish · ⌥↓ next block";
+const EDITING_HINT: &str = "esc to finish · ⌥↑ previous block · ⌥↓ next block";
 const HINT_HEIGHT: f32 = 14.;
 
 /// Space between a block and the caret's line in the gap next to it.
