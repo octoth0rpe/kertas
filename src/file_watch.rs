@@ -77,7 +77,7 @@ pub fn watch(path: PathBuf) -> Watch {
     let queue = stop_queue().map(Arc::new);
     if let Some(queue) = queue.clone() {
         std::thread::Builder::new()
-            .name("kami-file-watch".into())
+            .name("kertas-file-watch".into())
             .spawn(move || watch_until_stopped(&path, queue.as_raw_fd(), &changed))
             .ok();
     }
@@ -172,7 +172,7 @@ fn watch_until_stopped(path: &Path, queue: i32, changed: &mpsc::UnboundedSender<
 fn open_for_events(path: &Path) -> Option<i32> {
     let path = CString::new(path.as_os_str().as_bytes()).ok()?;
     // SAFETY: `path` is a valid C string. O_CLOEXEC keeps the descriptor
-    // out of child processes Kami starts.
+    // out of child processes Kertas starts.
     let fd = unsafe { libc::open(path.as_ptr(), libc::O_EVTONLY | libc::O_CLOEXEC) };
     (fd >= 0).then_some(fd)
 }
@@ -211,7 +211,7 @@ mod tests {
 
     #[test]
     fn reports_writes_replacements_and_new_files() {
-        let dir = std::env::temp_dir().join(format!("kami-file-watch-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("kertas-file-watch-{}", std::process::id()));
         std::fs::remove_dir_all(&dir).ok();
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.toml");
@@ -234,7 +234,8 @@ mod tests {
 
     #[test]
     fn dropping_stops_the_thread() {
-        let dir = std::env::temp_dir().join(format!("kami-file-watch-stop-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("kertas-file-watch-stop-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let watch = watch(dir.join("notes.md"));
         let queue = Arc::downgrade(watch.queue.as_ref().unwrap());

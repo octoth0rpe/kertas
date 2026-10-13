@@ -1,11 +1,11 @@
 //! Grouping document windows into native macOS tabs.
 //!
 //! GPUI only tabs new windows when the macOS "Prefer tabs when opening
-//! documents" preference allows it (by default, only in full screen). Kami
+//! documents" preference allows it (by default, only in full screen). Kertas
 //! has its own tabs/windows setting (REQUIREMENTS §8.2), so it adds the new
 //! window as a tab itself, and turns automatic tabbing off. Otherwise macOS
 //! adds "Show Tab Bar" and "Show All Tabs" to the View menu, which do
-//! nothing useful with Kami's own tab strip.
+//! nothing useful with Kertas's own tab strip.
 
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;

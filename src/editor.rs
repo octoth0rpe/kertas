@@ -997,7 +997,7 @@ mod tests {
     /// An editor on a file holding `text`, and a change to `changed` made
     /// by another app.
     fn edited_elsewhere(name: &str, text: &str, changed: &str) -> (Editor, DiskChange) {
-        let dir = std::env::temp_dir().join(format!("kami-editor-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("kertas-editor-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("notes.md");
         std::fs::write(&path, text).unwrap();

@@ -4,8 +4,8 @@
 use std::rc::Rc;
 
 use gpui::{Context, Pixels, Window, point, px};
-use kami::editor::{Motion, Selection};
-use kami::reveal::styled_source;
+use kertas::editor::{Motion, Selection};
+use kertas::reveal::styled_source;
 
 use crate::revealed_block::RevealedLayout;
 

@@ -4,7 +4,7 @@
 //! the settings change, to keep their checkmarks current.
 
 use gpui::{App, Menu, MenuItem, NoAction, actions};
-use kami::settings::{Settings, TextWidth, ThemeSetting};
+use kertas::settings::{Settings, TextWidth, ThemeSetting};
 
 use crate::app_settings::{self, AppSettings};
 use crate::builtin::{self, Builtin};
@@ -14,7 +14,7 @@ use crate::document_view::{
 use crate::settings_window;
 
 actions!(
-    kami,
+    kertas,
     [
         UseLightTheme,
         UseDarkTheme,
@@ -72,20 +72,20 @@ pub fn refresh(cx: &mut App) {
 fn menus(settings: Settings) -> Vec<Menu> {
     let theme = |value: ThemeSetting| settings.theme == value;
     let width = |value: TextWidth| settings.text_width == value;
-    let mut kami = vec![
-        MenuItem::action("About Kami", OpenAbout),
+    let mut kertas = vec![
+        MenuItem::action("About Kertas", OpenAbout),
         MenuItem::separator(),
         MenuItem::action("Settings…", OpenSettings),
         MenuItem::separator(),
     ];
     #[cfg(target_os = "macos")]
     {
-        kami.extend(crate::system_actions::menu_items());
-        kami.push(MenuItem::separator());
+        kertas.extend(crate::system_actions::menu_items());
+        kertas.push(MenuItem::separator());
     }
-    kami.push(MenuItem::action("Quit Kami", Quit));
+    kertas.push(MenuItem::action("Quit Kertas", Quit));
     vec![
-        Menu::new("Kami").items(kami),
+        Menu::new("Kertas").items(kertas),
         Menu::new("File").items([
             MenuItem::action("New", New),
             MenuItem::action("Open…", Open),
@@ -116,7 +116,7 @@ fn menus(settings: Settings) -> Vec<Menu> {
             MenuItem::separator(),
         ]),
         Menu::new("Help").items([
-            MenuItem::action("Kami Help", OpenHelp),
+            MenuItem::action("Kertas Help", OpenHelp),
             MenuItem::action("Keyboard Shortcuts", OpenKeyboardShortcuts),
             MenuItem::separator(),
             MenuItem::action("Licenses", OpenLicenses),

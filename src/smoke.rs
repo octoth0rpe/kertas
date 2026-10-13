@@ -1,7 +1,7 @@
 //! Debug-only smoke tests that drive the real app, which unit tests can't:
 //! the view, the list, text layout, windows, menus and macOS integration.
 //!
-//! `KAMI_SMOKE=<mode> cargo run -- some/file.md` runs one mode, prints a line
+//! `KERTAS_SMOKE=<mode> cargo run -- some/file.md` runs one mode, prints a line
 //! per check, then `SMOKE OK` (or `SMOKE FAILED`) and quits. A panic fails
 //! it. `scripts/smoke.sh` runs every mode. The modes:
 //!
@@ -30,9 +30,9 @@ use crate::document_view::{
 
 const STEP: Duration = Duration::from_millis(16);
 
-/// Starts the smoke test if `KAMI_SMOKE` is set.
+/// Starts the smoke test if `KERTAS_SMOKE` is set.
 pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
-    let Ok(mode) = std::env::var("KAMI_SMOKE") else {
+    let Ok(mode) = std::env::var("KERTAS_SMOKE") else {
         return;
     };
     match mode.as_str() {
@@ -325,7 +325,7 @@ const BENCH_INSERTS: usize = 500;
 const BENCH_MAX_INSERT_MS: f64 = 60.;
 const BENCH_MAX_FRAME_MS: f64 = 120.;
 
-/// `KAMI_SMOKE=bench`: types `BENCH_INSERTS` characters in the middle of
+/// `KERTAS_SMOKE=bench`: types `BENCH_INSERTS` characters in the middle of
 /// the document, one per frame, and reports the median and 95th percentile
 /// time per insert and until its frame is drawn.
 fn smoke_bench(window: WindowHandle<DocumentView>, cx: &mut App) {
@@ -386,7 +386,7 @@ fn smoke_bench(window: WindowHandle<DocumentView>, cx: &mut App) {
         }
 
         let mut checks = Checks::default();
-        // Allow a few missed frames, e.g. if another window covered Kami.
+        // Allow a few missed frames, e.g. if another window covered Kertas.
         checks.check(
             &format!(
                 "inserts drew frames ({} of {BENCH_INSERTS})",
@@ -423,7 +423,7 @@ fn percentiles(values: &mut [f64]) -> (f64, f64) {
 
 // The other modes.
 
-/// `KAMI_SMOKE=tabs`: New opens windows as tabs, ⌘-numbers switch tabs,
+/// `KERTAS_SMOKE=tabs`: New opens windows as tabs, ⌘-numbers switch tabs,
 /// the tabs close again, and New replaces the startup message.
 fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
     cx.spawn(async move |cx| {
@@ -456,7 +456,7 @@ fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
 
         // ⌘1 switches to the first tab, ⌘3 to the third, and ⌘9 does
         // nothing with four tabs. The selected tab is read from macOS,
-        // which doesn't depend on Kami being the frontmost app.
+        // which doesn't depend on Kertas being the frontmost app.
         #[cfg(target_os = "macos")]
         for (action, expected) in [
             (Box::new(SelectTab1) as Box<dyn Action>, Some(0)),
@@ -494,10 +494,10 @@ fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
                 after.is_some() && after == expected.or(before),
             );
         }
-        // Kami must group the tabs itself, whatever the macOS preference.
+        // Kertas must group the tabs itself, whatever the macOS preference.
         #[cfg(target_os = "macos")]
         checks.check(
-            "Kami grouped each new window",
+            "Kertas grouped each new window",
             crate::native_tabs::TABBING_CALLS.load(std::sync::atomic::Ordering::Relaxed) == 3,
         );
 
@@ -534,7 +534,7 @@ fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
     .detach();
 }
 
-/// `KAMI_SMOKE=settings`, with `KAMI_CONFIG_DIR` set to an empty
+/// `KERTAS_SMOKE=settings`, with `KERTAS_CONFIG_DIR` set to an empty
 /// directory: edits to the settings file apply live, problems are
 /// reported, changing a setting keeps the file's comments, the View menu
 /// and zoom work, and the layout setting waits for a restart.
@@ -543,7 +543,7 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
     use crate::document_view::{ResetZoom, ZoomIn, ZoomOut};
     use crate::theme::Theme;
 
-    let path = std::path::PathBuf::from(std::env::var_os("KAMI_CONFIG_DIR").unwrap_or_default())
+    let path = std::path::PathBuf::from(std::env::var_os("KERTAS_CONFIG_DIR").unwrap_or_default())
         .join("config.toml");
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
@@ -691,12 +691,12 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
             wait_for(cx, APPLY, |cx| {
                 window
                     .read_with(cx, |view, _| view.list_indent())
-                    .is_ok_and(|indent| indent == kami::settings::ListIndent::Wide)
+                    .is_ok_and(|indent| indent == kertas::settings::ListIndent::Wide)
             })
             .await,
         );
 
-        // Changing the layout waits until Kami restarts: New still opens a
+        // Changing the layout waits until Kertas restarts: New still opens a
         // tab.
         cx.update(|cx| app_settings::set("layout", "windows", cx))
             .ok();
@@ -711,7 +711,7 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
     .detach();
 }
 
-/// `KAMI_SMOKE=help`: the Help and Kami menus open built-in documents once
+/// `KERTAS_SMOKE=help`: the Help and Kertas menus open built-in documents once
 /// each, they can't be edited, and they close without asking.
 fn smoke_help(window: WindowHandle<DocumentView>, cx: &mut App) {
     use crate::builtin::Builtin;
@@ -735,7 +735,7 @@ fn smoke_help(window: WindowHandle<DocumentView>, cx: &mut App) {
         dispatch(window, cx, Box::new(OpenHelp));
         pause(cx, 20).await;
         let help = help_window(cx);
-        checks.check("Kami Help opens", help.is_some());
+        checks.check("Kertas Help opens", help.is_some());
         let Some(help) = help else {
             return checks.finish(cx);
         };
@@ -778,7 +778,7 @@ fn smoke_help(window: WindowHandle<DocumentView>, cx: &mut App) {
         checks.check("Keyboard Shortcuts opens", window_count(cx) == 3);
         dispatch(window, cx, Box::new(OpenAbout));
         pause(cx, 20).await;
-        checks.check("About Kami opens", window_count(cx) == 4);
+        checks.check("About Kertas opens", window_count(cx) == 4);
         dispatch(window, cx, Box::new(OpenLicenses));
         pause(cx, 20).await;
         checks.check("Licenses opens", window_count(cx) == 5);
@@ -794,7 +794,7 @@ fn smoke_help(window: WindowHandle<DocumentView>, cx: &mut App) {
     .detach();
 }
 
-/// `KAMI_SMOKE=settings-window`: ⌘, opens one settings sheet; New from it
+/// `KERTAS_SMOKE=settings-window`: ⌘, opens one settings sheet; New from it
 /// still opens a tab; Esc closes it; and Quit with it open quits. The
 /// caller checks that the process ends.
 fn smoke_settings_window(window: WindowHandle<DocumentView>, cx: &mut App) {
@@ -864,9 +864,9 @@ fn smoke_settings_window(window: WindowHandle<DocumentView>, cx: &mut App) {
             let back = theme(cx);
             checks.check(
                 &format!("Tab, ⇧Tab and Space choose settings ({light:?}, {dark:?}, {back:?})"),
-                light == kami::settings::ThemeSetting::Light
-                    && dark == kami::settings::ThemeSetting::Dark
-                    && back == kami::settings::ThemeSetting::Light,
+                light == kertas::settings::ThemeSetting::Light
+                    && dark == kertas::settings::ThemeSetting::Dark
+                    && back == kertas::settings::ThemeSetting::Light,
             );
             settings
                 .update(cx, |_, window, cx| {
@@ -887,7 +887,7 @@ fn smoke_settings_window(window: WindowHandle<DocumentView>, cx: &mut App) {
     .detach();
 }
 
-/// `KAMI_SMOKE=reveal`: Page Down scrolls without moving the caret,
+/// `KERTAS_SMOKE=reveal`: Page Down scrolls without moving the caret,
 /// clicking a block below a revealed one keeps it in place (C7), and
 /// dragging selects across blocks and reveals them all.
 fn smoke_reveal(window: WindowHandle<DocumentView>, cx: &mut App) {
@@ -968,7 +968,7 @@ fn smoke_reveal(window: WindowHandle<DocumentView>, cx: &mut App) {
     .detach();
 }
 
-/// `KAMI_SMOKE=clicks`, on `clicks.md`: clicking a link to a Markdown file
+/// `KERTAS_SMOKE=clicks`, on `clicks.md`: clicking a link to a Markdown file
 /// opens it in a tab and leaves the link's block rendered; clicking a
 /// checkbox toggles it, as one undo step, and leaves its list rendered;
 /// clicking plain text still reveals its block.
@@ -1112,7 +1112,7 @@ async fn a11y_tree(window: gpui::AnyWindowHandle, cx: &mut AsyncApp) -> String {
     tree
 }
 
-/// `KAMI_SMOKE=a11y`, on `a11y.md`: what VoiceOver is told about the
+/// `KERTAS_SMOKE=a11y`, on `a11y.md`: what VoiceOver is told about the
 /// document, the tab strip and the settings sheet (N5).
 fn smoke_a11y(window: WindowHandle<DocumentView>, cx: &mut App) {
     use crate::menus::OpenSettings;
@@ -1128,7 +1128,7 @@ fn smoke_a11y(window: WindowHandle<DocumentView>, cx: &mut App) {
             .ok();
         pause(cx, 20).await;
         let tree = a11y_tree(window.into(), cx).await;
-        if let Ok(path) = std::env::var("KAMI_A11Y_DUMP") {
+        if let Ok(path) = std::env::var("KERTAS_A11Y_DUMP") {
             std::fs::write(&path, &tree).ok();
         }
         // GPUI's description of the tree is pretty-printed JSON.
@@ -1212,7 +1212,7 @@ fn smoke_a11y(window: WindowHandle<DocumentView>, cx: &mut App) {
             Some(settings) => a11y_tree(settings, cx).await,
             None => String::new(),
         };
-        if let Ok(path) = std::env::var("KAMI_A11Y_DUMP") {
+        if let Ok(path) = std::env::var("KERTAS_A11Y_DUMP") {
             std::fs::write(format!("{path}.settings"), &tree).ok();
         }
         checks.check(
@@ -1255,13 +1255,14 @@ fn smoke_a11y(window: WindowHandle<DocumentView>, cx: &mut App) {
     .detach();
 }
 
-/// `KAMI_SMOKE=print`, with `KAMI_PRINT_PDF` set: prints the document to
+/// `KERTAS_SMOKE=print`, with `KERTAS_PRINT_PDF` set: prints the document to
 /// that PDF without any panels.
 fn smoke_print(window: WindowHandle<DocumentView>, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
         pause(cx, 10).await;
-        let path = std::path::PathBuf::from(std::env::var_os("KAMI_PRINT_PDF").unwrap_or_default());
+        let path =
+            std::path::PathBuf::from(std::env::var_os("KERTAS_PRINT_PDF").unwrap_or_default());
         let model = window.read_with(cx, |view, _| view.model()).ok().flatten();
         let printed = cx.update(|cx| {
             let mtm = objc2::MainThreadMarker::new()?;
@@ -1301,9 +1302,9 @@ async fn wait_for(
     done(cx)
 }
 
-/// `KAMI_SMOKE=disk`: changes made to the file by "another app" (F5). With
+/// `KERTAS_SMOKE=disk`: changes made to the file by "another app" (F5). With
 /// no unsaved changes it reloads, as one undo step; with unsaved changes
-/// the bar asks, and Keep Mine and Reload work; Kami's own saves aren't
+/// the bar asks, and Keep Mine and Reload work; Kertas's own saves aren't
 /// reported; a deleted file is reported, and saving puts it back.
 fn smoke_disk(window: WindowHandle<DocumentView>, cx: &mut App) {
     cx.spawn(async move |cx| {
@@ -1407,13 +1408,13 @@ fn smoke_disk(window: WindowHandle<DocumentView>, cx: &mut App) {
             text == "Theirs again.\n" && !dirty && !bar,
         );
 
-        // Kami's own saves aren't reported.
+        // Kertas's own saves aren't reported.
         type_text(cx, "Saved. ");
         dispatch(window, cx, Box::new(Save));
         pause(cx, 20).await;
         let (text, dirty, bar) = state(cx);
         checks.check(
-            "Kami's own save isn't reported",
+            "Kertas's own save isn't reported",
             text == "Saved. Theirs again.\n" && !dirty && !bar,
         );
 
@@ -1435,7 +1436,7 @@ fn smoke_disk(window: WindowHandle<DocumentView>, cx: &mut App) {
     .detach();
 }
 
-/// `KAMI_SMOKE=autosave`: with `autosave = 1`, edits save after a pause
+/// `KERTAS_SMOKE=autosave`: with `autosave = 1`, edits save after a pause
 /// without touching undo; a change made elsewhere isn't saved over; a
 /// failed autosave pauses it until a manual save; switching tabs saves;
 /// and finally Quit saves without asking. The caller checks that the
@@ -1555,7 +1556,7 @@ fn smoke_autosave(window: WindowHandle<DocumentView>, cx: &mut App) {
     .detach();
 }
 
-/// `KAMI_SMOKE=quit`: Quit, with an unedited document, exits the app. The
+/// `KERTAS_SMOKE=quit`: Quit, with an unedited document, exits the app. The
 /// caller checks that the process ends.
 fn smoke_quit(window: WindowHandle<DocumentView>, cx: &mut App) {
     cx.spawn(async move |cx| {

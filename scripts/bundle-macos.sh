@@ -1,7 +1,7 @@
 #!/bin/sh
-# Builds Kami.app in target/release/, signed for this Mac only.
+# Builds Kertas.app in target/release/, signed for this Mac only.
 #
-#   scripts/bundle-macos.sh             # build target/release/Kami.app
+#   scripts/bundle-macos.sh             # build target/release/Kertas.app
 #   scripts/bundle-macos.sh --install   # ...and copy it to ~/Applications
 #   scripts/bundle-macos.sh --release   # build from a clean checkout of the
 #                                       # current commit, after every check
@@ -48,16 +48,16 @@ fi
 cargo build --release
 
 version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
-app="$root/target/release/Kami.app"
+app="$root/target/release/Kertas.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 sed "s/@VERSION@/$version/g" macos/Info.plist > "$app/Contents/Info.plist"
-# Named Kami, as Activity Monitor and Force Quit show it.
-cp "$CARGO_TARGET_DIR/release/kami" "$app/Contents/MacOS/Kami"
+# Named Kertas, as Activity Monitor and Force Quit show it.
+cp "$CARGO_TARGET_DIR/release/kertas" "$app/Contents/MacOS/Kertas"
 cp macos/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
-# The kami command line tool, which Settings links into /usr/local/bin.
-cp macos/kami "$app/Contents/Resources/kami"
-chmod +x "$app/Contents/Resources/kami"
+# The kertas command line tool, which Settings links into /usr/local/bin.
+cp macos/kertas "$app/Contents/Resources/kertas"
+chmod +x "$app/Contents/Resources/kertas"
 plutil -lint "$app/Contents/Info.plist" >/dev/null
 
 # Ad-hoc signature: enough to run on this Mac. Distributing to others needs
@@ -67,9 +67,9 @@ echo "Built $app ($version)"
 
 if $install; then
     mkdir -p "$HOME/Applications"
-    rm -rf "$HOME/Applications/Kami.app"
-    cp -R "$app" "$HOME/Applications/Kami.app"
+    rm -rf "$HOME/Applications/Kertas.app"
+    cp -R "$app" "$HOME/Applications/Kertas.app"
     # Tell Launch Services about the app, so Finder offers it for Markdown.
-    /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$HOME/Applications/Kami.app"
-    echo "Installed ~/Applications/Kami.app"
+    /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$HOME/Applications/Kertas.app"
+    echo "Installed ~/Applications/Kertas.app"
 fi

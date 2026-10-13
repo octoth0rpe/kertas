@@ -36,7 +36,7 @@ impl DiskVersion {
     }
 }
 
-/// How a document's file differs from the version Kami last loaded, saved
+/// How a document's file differs from the version Kertas last loaded, saved
 /// or accepted: another app changed it (F5).
 #[derive(Debug)]
 pub struct DiskChange {
@@ -164,7 +164,7 @@ impl Document {
 
     /// How the file now differs from the version last loaded, saved or
     /// accepted, or `None` if it doesn't, or the document has no file.
-    /// Kami's own saves never count as changes.
+    /// Kertas's own saves never count as changes.
     pub fn disk_change(&self) -> Option<DiskChange> {
         let path = self.path.as_deref()?;
         let bytes = match fs::read(path) {
@@ -225,7 +225,7 @@ fn write_atomically(path: &Path, buffer: &Buffer) -> io::Result<()> {
         .file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "not a file path"))?;
     let temp = directory.join(format!(
-        ".{}.kami-save-{}",
+        ".{}.kertas-save-{}",
         file_name.to_string_lossy(),
         std::process::id()
     ));
@@ -339,7 +339,8 @@ mod tests {
     }
 
     fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("kami-document-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("kertas-document-{name}-{}", std::process::id()));
         fs::remove_dir_all(&dir).ok();
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -355,7 +356,7 @@ mod tests {
 
         document.buffer_mut().replace(0..0, "zero\n");
         document.save().unwrap();
-        assert!(document.disk_change().is_none(), "Kami's own save");
+        assert!(document.disk_change().is_none(), "Kertas's own save");
 
         fs::write(&path, "two\n").unwrap();
         let change = document.disk_change().expect("changed by another app");

@@ -1,4 +1,4 @@
-//! The settings window (G5), opened with Kami > Settings… (⌘,).
+//! The settings window (G5), opened with Kertas > Settings… (⌘,).
 //!
 //! It's a sheet on the front document window, so it can't get lost behind
 //! it. It shows the same settings as the settings file and the View menu,
@@ -11,7 +11,7 @@ use gpui::{
     SharedString, Stateful, Subscription, Toggled, Window, WindowBounds, WindowHandle, WindowKind,
     WindowOptions, actions, anchored, deferred, div, prelude::*, px, size,
 };
-use kami::settings::{Kind, SETTINGS, Setting, Settings};
+use kertas::settings::{Kind, SETTINGS, Setting, Settings};
 
 use crate::app_settings::{self, AppSettings};
 use crate::document_view::{CloseWindow, DocumentView};

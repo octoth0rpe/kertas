@@ -1,5 +1,5 @@
-//! The Kami menu's one-time system actions: making Kami the default app
-//! for Markdown files (#23) and installing the `kami` command (#27).
+//! The Kertas menu's one-time system actions: making Kertas the default app
+//! for Markdown files (#23) and installing the `kertas` command (#27).
 //! Each reports what happened, or why it couldn't, in an alert.
 
 use gpui::{App, AppContext, MenuItem, PromptLevel, actions};
@@ -10,7 +10,7 @@ use crate::document_view::DocumentView;
 use crate::menus;
 
 actions!(
-    kami,
+    kertas,
     [
         MakeDefaultMarkdownApp,
         InstallCommandLineTool,
@@ -29,10 +29,13 @@ pub fn init(cx: &mut App) {
     });
 }
 
-/// The Kami menu's items for the actions, showing the current state.
+/// The Kertas menu's items for the actions, showing the current state.
 pub fn menu_items() -> Vec<MenuItem> {
-    let default = MenuItem::action("Make Kami the Default Markdown App", MakeDefaultMarkdownApp)
-        .checked(default_app::status() == default_app::Status::Kami);
+    let default = MenuItem::action(
+        "Make Kertas the Default Markdown App",
+        MakeDefaultMarkdownApp,
+    )
+    .checked(default_app::status() == default_app::Status::Kertas);
     let command = match cli_tool::status() {
         cli_tool::Status::Installed => {
             MenuItem::action("Uninstall Command Line Tool", UninstallCommandLineTool)
@@ -44,10 +47,10 @@ pub fn menu_items() -> Vec<MenuItem> {
 
 fn make_default(cx: &mut App) {
     match default_app::status() {
-        default_app::Status::Kami => {}
+        default_app::Status::Kertas => {}
         default_app::Status::NotInstalled => alert(
-            "Kami can't be the default Markdown app",
-            "Kami isn't running as Kami.app. Install Kami.app, then try again.",
+            "Kertas can't be the default Markdown app",
+            "Kertas isn't running as Kertas.app. Install Kertas.app, then try again.",
             cx,
         ),
         default_app::Status::Other(_) => {
@@ -58,7 +61,7 @@ fn make_default(cx: &mut App) {
                 cx.update(|cx| {
                     if let Err(error) = result {
                         alert(
-                            "Kami couldn't become the default Markdown app",
+                            "Kertas couldn't become the default Markdown app",
                             &capitalize(&error),
                             cx,
                         );
@@ -76,8 +79,8 @@ fn make_default(cx: &mut App) {
 fn change_command(change: fn() -> Result<(), String>, installing: bool, cx: &mut App) {
     let problem = match cli_tool::status() {
         cli_tool::Status::NotInstalledApp => Some(
-            "Kami isn't running as Kami.app, so there's no command to install. \
-             Install Kami.app, then try again."
+            "Kertas isn't running as Kertas.app, so there's no command to install. \
+             Install Kertas.app, then try again."
                 .to_owned(),
         ),
         cli_tool::Status::Taken => Some(format!(
@@ -87,7 +90,7 @@ fn change_command(change: fn() -> Result<(), String>, installing: bool, cx: &mut
         _ => None,
     };
     if let Some(problem) = problem {
-        alert("Couldn't install the kami command", &problem, cx);
+        alert("Couldn't install the kertas command", &problem, cx);
         return;
     }
     let task = cx.background_spawn(async move { change() });
@@ -97,25 +100,27 @@ fn change_command(change: fn() -> Result<(), String>, installing: bool, cx: &mut
             menus::refresh(cx);
             match (result, installing) {
                 (Ok(()), true) => alert(
-                    "The kami command is installed",
+                    "The kertas command is installed",
                     &format!(
-                        "It's at {}. In Terminal, `kami notes.md` opens a file in Kami.",
+                        "It's at {}. In Terminal, `kertas notes.md` opens a file in Kertas.",
                         cli_tool::LINK
                     ),
                     cx,
                 ),
                 (Ok(()), false) => alert(
-                    "The kami command is uninstalled",
+                    "The kertas command is uninstalled",
                     &format!("{} has been removed.", cli_tool::LINK),
                     cx,
                 ),
                 // Cancelling the password prompt isn't an error.
                 (Err(error), _) if error.contains("(-128)") => {}
-                (Err(error), true) => {
-                    alert("Couldn't install the kami command", &capitalize(&error), cx)
-                }
+                (Err(error), true) => alert(
+                    "Couldn't install the kertas command",
+                    &capitalize(&error),
+                    cx,
+                ),
                 (Err(error), false) => alert(
-                    "Couldn't uninstall the kami command",
+                    "Couldn't uninstall the kertas command",
                     &capitalize(&error),
                     cx,
                 ),

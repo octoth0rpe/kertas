@@ -10,7 +10,7 @@
 | ⇧⌘S | Save As |
 | ⌘P | Print |
 | ⌘W | Close the document |
-| ⌘Q | Quit Kami |
+| ⌘Q | Quit Kertas |
 | ⌘, | Settings |
 | ⇧⌘] or ⌃⇥ | Next tab |
 | ⇧⌘[ or ⌃⇧⇥ | Previous tab |

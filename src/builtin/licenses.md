@@ -1,6 +1,6 @@
 # Licenses
 
-Kami is built on open-source libraries, listed in **Kami → About Kami**. These are the notices their licenses ask to be included with Kami. Libraries that share a notice word for word are listed together.
+Kertas is built on open-source libraries, listed in **Kertas → About Kertas**. These are the notices their licenses ask to be included with Kertas. Libraries that share a notice word for word are listed together.
 
 **ryu 1.0.23** (Apache License 2.0)
 

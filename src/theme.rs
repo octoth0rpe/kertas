@@ -3,7 +3,7 @@
 //! The `theme` setting picks one, or follows the macOS appearance.
 
 use gpui::{App, Hsla, Window, WindowAppearance, rgb, rgba};
-use kami::settings::ThemeSetting;
+use kertas::settings::ThemeSetting;
 
 use crate::app_settings;
 

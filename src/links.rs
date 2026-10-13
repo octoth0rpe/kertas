@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 /// What following a link does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LinkTarget {
-    /// A Markdown file, opened in Kami.
+    /// A Markdown file, opened in Kertas.
     Markdown(PathBuf),
     /// Another file or a folder, opened in its default app.
     File(PathBuf),
@@ -122,7 +122,7 @@ mod tests {
     impl Folder {
         fn new(name: &str) -> Self {
             let path =
-                std::env::temp_dir().join(format!("kami-links-{name}-{}", std::process::id()));
+                std::env::temp_dir().join(format!("kertas-links-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&path);
             std::fs::create_dir_all(path.join("sub")).unwrap();
             for file in [

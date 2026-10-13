@@ -13,7 +13,7 @@
 //! Blank lines between blocks belong to no block.
 //!
 //! Front matter is detected here rather than by pulldown-cmark, which
-//! accepts metadata blocks anywhere in a document. Kami only treats it as
+//! accepts metadata blocks anywhere in a document. Kertas only treats it as
 //! front matter at the very start of the file, after an optional byte-order
 //! mark. Elsewhere, `---` lines are thematic breaks or setext underlines.
 
@@ -56,7 +56,7 @@ pub struct Block {
     pub range: Range<usize>,
 }
 
-/// The parser options Kami uses everywhere: CommonMark plus the GFM
+/// The parser options Kertas uses everywhere: CommonMark plus the GFM
 /// extensions in M2. Front matter is handled separately; see the module docs.
 pub fn parser_options() -> Options {
     Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS
@@ -256,7 +256,7 @@ fn block_kind(tag: &Tag) -> Option<BlockKind> {
         },
         Tag::Table(_) => BlockKind::Table,
         Tag::HtmlBlock => BlockKind::HtmlBlock,
-        // Other tags are inline, nested-only, or belong to extensions Kami
+        // Other tags are inline, nested-only, or belong to extensions Kertas
         // doesn't enable.
         _ => return None,
     })
@@ -478,9 +478,9 @@ mod tests {
     #[test]
     fn yaml_front_matter() {
         assert_eq!(
-            parse("---\ntitle: kami\n---\n\n# Heading\n"),
+            parse("---\ntitle: kertas\n---\n\n# Heading\n"),
             [
-                (FrontMatter, "---\ntitle: kami\n---"),
+                (FrontMatter, "---\ntitle: kertas\n---"),
                 (Heading { level: 1 }, "# Heading"),
             ]
         );
@@ -489,9 +489,9 @@ mod tests {
     #[test]
     fn toml_front_matter() {
         assert_eq!(
-            parse("+++\ntitle = \"kami\"\n+++\n\nText"),
+            parse("+++\ntitle = \"kertas\"\n+++\n\nText"),
             [
-                (FrontMatter, "+++\ntitle = \"kami\"\n+++"),
+                (FrontMatter, "+++\ntitle = \"kertas\"\n+++"),
                 (Paragraph, "Text")
             ]
         );
@@ -500,8 +500,11 @@ mod tests {
     #[test]
     fn yaml_front_matter_closed_with_dots() {
         assert_eq!(
-            parse("---\ntitle: kami\n...\nText"),
-            [(FrontMatter, "---\ntitle: kami\n..."), (Paragraph, "Text")]
+            parse("---\ntitle: kertas\n...\nText"),
+            [
+                (FrontMatter, "---\ntitle: kertas\n..."),
+                (Paragraph, "Text")
+            ]
         );
     }
 
@@ -556,9 +559,9 @@ mod tests {
     #[test]
     fn link_reference_definitions() {
         assert_eq!(
-            parse("See [kami][k].\n\n[k]: https://example.com \"Title\"\n[other]: /path\n"),
+            parse("See [kertas][k].\n\n[k]: https://example.com \"Title\"\n[other]: /path\n"),
             [
-                (Paragraph, "See [kami][k]."),
+                (Paragraph, "See [kertas][k]."),
                 (
                     LinkReferenceDefinition,
                     "[k]: https://example.com \"Title\""

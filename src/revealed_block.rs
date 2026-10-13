@@ -10,14 +10,14 @@ use gpui::{
     Point, SharedString, StyledText, TextLayout, TextRun, canvas, div, fill, prelude::*, px, rems,
     size,
 };
-use kami::inline::InlineStyle;
-use kami::model::Gap;
-use kami::reveal::{RevealFont, SpanStyle, StyledSource};
-use kami::tabs::ExpandedTabs;
+use kertas::inline::InlineStyle;
+use kertas::model::Gap;
+use kertas::reveal::{RevealFont, SpanStyle, StyledSource};
+use kertas::tabs::ExpandedTabs;
 
 use crate::document_view::DocumentView;
 use crate::text_style::{Look, code_text, heading_text, inline_run, underline};
-use kami::rendered::RenderedBlock;
+use kertas::rendered::RenderedBlock;
 
 use crate::rendered_block::{ClickTarget, block_frame, rendered_content, rendered_heading};
 
@@ -163,7 +163,7 @@ fn revealed_content(
     if covered != block.source.len() {
         #[cfg(debug_assertions)]
         eprintln!(
-            "KAMI BUG: styled spans cover {covered} of {} bytes: {:?} spans {:?}",
+            "KERTAS BUG: styled spans cover {covered} of {} bytes: {:?} spans {:?}",
             block.source.len(),
             block.source,
             block
@@ -377,8 +377,8 @@ fn split_at(range: Range<usize>, cuts: &[usize]) -> Vec<Range<usize>> {
 mod tests {
     use super::*;
     use crate::theme::Theme;
-    use kami::model::Model;
-    use kami::reveal::styled_source;
+    use kertas::model::Model;
+    use kertas::reveal::styled_source;
 
     /// GPUI requires a revealed block's text runs to cover its text
     /// exactly, whatever is selected or being composed (T2).
@@ -389,7 +389,7 @@ mod tests {
             code_font: "Menlo".into(),
             theme: Theme::light(),
             tab_width: 4,
-            list_indent: kami::settings::ListIndent::Standard,
+            list_indent: kertas::settings::ListIndent::Standard,
         };
         for name in ["showcase.md", "10k.md"] {
             let path = format!("{}/spikes/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));

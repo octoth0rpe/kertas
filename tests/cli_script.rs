@@ -1,4 +1,4 @@
-//! The `kami` command line script (macos/kami), run with a stand-in for
+//! The `kertas` command line script (macos/kertas), run with a stand-in for
 //! macOS's `open` that prints its arguments.
 
 #![cfg(target_os = "macos")]
@@ -8,15 +8,19 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::Command;
 
-/// Runs the script from inside a fake Kami.app, in `cwd`, returning the
+/// Runs the script from inside a fake Kertas.app, in `cwd`, returning the
 /// arguments it passed to `open`, one per line.
 fn run(args: &[&str], cwd: &str) -> Vec<String> {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("cli-script");
     fs::remove_dir_all(&dir).ok();
-    let resources = dir.join("Kami.app/Contents/Resources");
+    let resources = dir.join("Kertas.app/Contents/Resources");
     fs::create_dir_all(&resources).unwrap();
-    let script = resources.join("kami");
-    fs::copy(concat!(env!("CARGO_MANIFEST_DIR"), "/macos/kami"), &script).unwrap();
+    let script = resources.join("kertas");
+    fs::copy(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/macos/kertas"),
+        &script,
+    )
+    .unwrap();
     let fake_open = dir.join("fake-open");
     fs::write(
         &fake_open,
@@ -28,11 +32,11 @@ fn run(args: &[&str], cwd: &str) -> Vec<String> {
     let output = Command::new(&script)
         .args(args)
         .current_dir(cwd)
-        .env("KAMI_OPEN", &fake_open)
+        .env("KERTAS_OPEN", &fake_open)
         .output()
         .unwrap();
     assert!(output.status.success(), "{output:?}");
-    let app = fs::canonicalize(dir.join("Kami.app")).unwrap();
+    let app = fs::canonicalize(dir.join("Kertas.app")).unwrap();
     String::from_utf8(output.stdout)
         .unwrap()
         .lines()
@@ -41,8 +45,8 @@ fn run(args: &[&str], cwd: &str) -> Vec<String> {
 }
 
 #[test]
-fn no_files_brings_kami_forward() {
-    assert_eq!(run(&[], "/tmp"), ["-a", "APP", "kami://activate"]);
+fn no_files_brings_kertas_forward() {
+    assert_eq!(run(&[], "/tmp"), ["-a", "APP", "kertas://activate"]);
 }
 
 #[test]
@@ -52,8 +56,8 @@ fn files_become_encoded_absolute_paths() {
         [
             "-a",
             "APP",
-            "kami://open?path=/tmp/My%20Notes/caf%C3%A9%20%26%20100%25.md",
-            "kami://open?path=/usr/b.md",
+            "kertas://open?path=/tmp/My%20Notes/caf%C3%A9%20%26%20100%25.md",
+            "kertas://open?path=/usr/b.md",
         ]
     );
 }

@@ -1,5 +1,5 @@
 # Configuration for cargo-about, which scripts/acknowledgements.sh uses to
-# collect the license notices of Kami's dependencies.
+# collect the license notices of Kertas's dependencies.
 # The same licenses deny.toml allows. For a library offered under several,
 # the first one listed here is used: the short permissive ones first, so the
 # notices are as short as they can be.

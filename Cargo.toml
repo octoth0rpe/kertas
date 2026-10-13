@@ -1,5 +1,5 @@
 [package]
-name = "kami"
+name = "kertas"
 version = "0.2.0"
 edition = "2024"
 rust-version = "1.98"
@@ -18,7 +18,7 @@ unicode-segmentation = "1"
 toml_edit = "0.25.17"
 
 [lints.clippy]
-# kami often builds lists of byte ranges, including lists with one range.
+# kertas often builds lists of byte ranges, including lists with one range.
 single_range_in_vec_init = "allow"
 
 [target.'cfg(target_os = "macos")'.dependencies]

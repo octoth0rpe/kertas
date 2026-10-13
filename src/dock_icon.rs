@@ -1,7 +1,7 @@
 //! The Dock icon, which follows the system's light or dark mode.
 //!
 //! An app bundle's `.icns` icon can't switch with the appearance (that
-//! needs an Xcode asset catalog), so Kami sets its Dock icon itself while
+//! needs an Xcode asset catalog), so Kertas sets its Dock icon itself while
 //! it runs, updating it when macOS reports an appearance change. The icons
 //! are built from `macos/icon-light.svg` and `macos/icon-dark.svg` by
 //! `scripts/make-icon.sh`.
@@ -36,14 +36,14 @@ pub fn init() {
         )
     };
     // The notification center copies the block and keeps the observer
-    // registered until it's removed. Kami observes for as long as it runs
+    // registered until it's removed. Kertas observes for as long as it runs
     // and never removes it, so the token that would remove it is leaked
     // on purpose.
     std::mem::forget(observer);
 }
 
-/// Whether the system (not Kami's theme setting) is in dark mode. The Dock
-/// follows the system, whatever Kami's own theme is.
+/// Whether the system (not Kertas's theme setting) is in dark mode. The Dock
+/// follows the system, whatever Kertas's own theme is.
 fn system_is_dark() -> bool {
     let style = NSUserDefaults::standardUserDefaults()
         .stringForKey(&NSString::from_str("AppleInterfaceStyle"));

@@ -7,7 +7,7 @@ use gpui::{
     Bounds, ClipboardItem, Context, EntityInputHandler, Pixels, Point, UTF16Selection, Window, px,
     size,
 };
-use kami::editor::{Change, Editor};
+use kertas::editor::{Change, Editor};
 
 use super::{Copy, Cut, DeleteToLineStart, DocumentView, Paste, Redo, Undo};
 

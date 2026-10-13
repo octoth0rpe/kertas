@@ -1,9 +1,9 @@
 #!/bin/sh
-# Builds Kami's icons from the SVGs in macos/, using only tools that come
+# Builds Kertas's icons from the SVGs in macos/, using only tools that come
 # with macOS. Run it again after changing either SVG.
 #
 # - macos/AppIcon.icns, from icon-light.svg: the app's icon in Finder.
-# - macos/dock-light.png and dock-dark.png: the Dock icon, which Kami
+# - macos/dock-light.png and dock-dark.png: the Dock icon, which Kertas
 #   switches to follow the system's light or dark mode while running.
 set -eu
 

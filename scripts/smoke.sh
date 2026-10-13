@@ -5,21 +5,21 @@
 #
 #   scripts/smoke.sh
 #
-# The smoke tests open Kami windows and take keyboard focus for about two
+# The smoke tests open Kertas windows and take keyboard focus for about two
 # minutes, so leave the keyboard alone while they run.
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
 cargo build --quiet
-kami="${CARGO_TARGET_DIR:-$root/target}/debug/kami"
+kertas="${CARGO_TARGET_DIR:-$root/target}/debug/kertas"
 fixtures="$root/spikes/fixtures"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 # Runs one mode on a copy of a fixture, with a time limit. Extra
 # environment variables can follow the fixture name. Prints the output and
-# succeeds only if it says "SMOKE OK" (or, with --exits, if Kami quit by
+# succeeds only if it says "SMOKE OK" (or, with --exits, if Kertas quit by
 # itself).
 run() {
     mode=$1
@@ -34,9 +34,9 @@ run() {
     mkdir -p "$dir/config"
     cp "$fixtures/$fixture" "$dir/$fixture"
     echo "==> $mode ($fixture)"
-    # macOS has no timeout(1); perl's alarm kills Kami if it hangs.
-    if ! output=$(env KAMI_SMOKE="$mode" KAMI_CONFIG_DIR="$dir/config" "$@" \
-        perl -e 'alarm shift; exec @ARGV' 300 "$kami" "$dir/$fixture" 2>&1); then
+    # macOS has no timeout(1); perl's alarm kills Kertas if it hangs.
+    if ! output=$(env KERTAS_SMOKE="$mode" KERTAS_CONFIG_DIR="$dir/config" "$@" \
+        perl -e 'alarm shift; exec @ARGV' 300 "$kertas" "$dir/$fixture" 2>&1); then
         echo "$output" | tail -20
         echo "smoke.sh: FAILED: $mode exited with an error" >&2
         exit 1
@@ -60,8 +60,8 @@ grep -q "Saved by smoke test." "$work/save/showcase.md" || {
 echo "==> write"
 mkdir -p "$work/write/config"
 printf 'Para' > "$work/write/write.md"
-KAMI_SMOKE=write KAMI_CONFIG_DIR="$work/write/config" \
-    perl -e 'alarm shift; exec @ARGV' 120 "$kami" "$work/write/write.md" >/dev/null 2>&1
+KERTAS_SMOKE=write KERTAS_CONFIG_DIR="$work/write/config" \
+    perl -e 'alarm shift; exec @ARGV' 120 "$kertas" "$work/write/write.md" >/dev/null 2>&1
 expected=$(printf 'Para\n\n\nNew paragraph\\\nsecond line\n\n- item\n  - [ ] task\n- [ ] sub\n\n> quote\n\n\n\n```\nfn\t\n        x\n    y')
 if [ "$(cat "$work/write/write.md")" != "$expected" ]; then
     echo "smoke.sh: FAILED: write produced different text:" >&2
@@ -77,7 +77,7 @@ run help showcase.md
 run reveal showcase.md
 run clicks clicks.md
 run a11y a11y.md
-run print showcase.md KAMI_PRINT_PDF="$work/print/out.pdf"
+run print showcase.md KERTAS_PRINT_PDF="$work/print/out.pdf"
 run disk showcase.md
 run autosave showcase.md
 grep -q "^Quitting. Still paused. " "$work/autosave/showcase.md" || {
