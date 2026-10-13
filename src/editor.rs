@@ -419,6 +419,40 @@ impl Editor {
         Change { splice, selection }
     }
 
+    /// Ticks or unticks the task list checkbox whose `[ ]` or `[x]` starts
+    /// at `marker`, as one undo step. The selection stays as it is, so a
+    /// click on a checkbox doesn't reveal its list. Returns the items to
+    /// re-measure, or `None` if there's no checkbox there or the document
+    /// is read-only.
+    pub fn toggle_task(&mut self, marker: usize) -> Option<Splice> {
+        if self.read_only {
+            return None;
+        }
+        let mark = match self.text().get(marker..marker + 3)? {
+            "[ ]" => "x",
+            "[x]" | "[X]" => " ",
+            _ => return None,
+        };
+        let selection = self.selection;
+        let before = selection.unwrap_or(Selection::caret(marker));
+        self.history.break_group();
+        let after = self.history.replace(
+            self.document.buffer_mut(),
+            marker + 1..marker + 2,
+            mark,
+            EditKind::Other,
+            before,
+            Instant::now(),
+        );
+        self.history.break_group();
+        let change = self.text_changed(after);
+        // Redo restores the selection as it was too.
+        self.history.set_selection_after(before);
+        self.selection = selection;
+        self.marked = None;
+        Some(change.splice)
+    }
+
     /// Replaces the selection with `text`.
     pub fn insert(&mut self, text: &str) -> Option<Change> {
         let range = self.selection?.range();
@@ -816,6 +850,45 @@ mod tests {
         assert!(editor.undo().is_none());
         assert_eq!(editor.text(), "Help\n");
         assert!(!editor.is_dirty());
+    }
+
+    #[test]
+    fn toggle_task_flips_the_checkbox_as_one_undo_step() {
+        let mut editor = open("- [ ] a\n- [X] b\n\nText\n");
+        assert!(editor.select(Selection::caret(18)));
+        let splice = editor.toggle_task(2).unwrap();
+        assert_eq!(editor.text(), "- [x] a\n- [X] b\n\nText\n");
+        assert_eq!(splice.old, 0..1);
+        assert_eq!(editor.selection(), Some(Selection::caret(18)));
+        assert!(editor.is_dirty());
+        editor.toggle_task(10).unwrap();
+        assert_eq!(editor.text(), "- [x] a\n- [ ] b\n\nText\n");
+
+        editor.undo().unwrap();
+        assert_eq!(editor.text(), "- [x] a\n- [X] b\n\nText\n");
+        editor.undo().unwrap();
+        assert_eq!(editor.text(), "- [ ] a\n- [X] b\n\nText\n");
+        assert!(!editor.is_dirty());
+    }
+
+    #[test]
+    fn toggle_task_without_a_selection_keeps_none() {
+        let mut editor = open("- [x] a\n");
+        editor.toggle_task(2).unwrap();
+        assert_eq!(editor.text(), "- [ ] a\n");
+        assert_eq!(editor.selection(), None);
+    }
+
+    #[test]
+    fn toggle_task_needs_a_checkbox() {
+        let mut editor = open("- [ ] a\n");
+        assert!(editor.toggle_task(0).is_none());
+        assert!(editor.toggle_task(7).is_none());
+        assert!(editor.toggle_task(99).is_none());
+        assert_eq!(editor.text(), "- [ ] a\n");
+        let mut builtin = Editor::new(Document::from_text("- [ ] a\n"), true);
+        assert!(builtin.toggle_task(2).is_none());
+        assert_eq!(builtin.text(), "- [ ] a\n");
     }
 
     #[test]

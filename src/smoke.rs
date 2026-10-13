@@ -11,7 +11,7 @@
 //! - `write`: only the writing steps (Enter, lists, quotes, code), then
 //!   saves, so the text can be checked.
 //! - `bench`: times 500 inserts in the middle of the document.
-//! - `tabs`, `settings`, `settings-window`, `help`, `reveal`, `links`,
+//! - `tabs`, `settings`, `settings-window`, `help`, `reveal`, `clicks`,
 //!   `print`, `disk`, `autosave`, `quit`: see each function.
 
 use std::cell::Cell;
@@ -42,7 +42,7 @@ pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
         "help" => smoke_help(window, cx),
         "settings-window" => smoke_settings_window(window, cx),
         "reveal" => smoke_reveal(window, cx),
-        "links" => smoke_links(window, cx),
+        "clicks" => smoke_clicks(window, cx),
         "print" => smoke_print(window, cx),
         "disk" => smoke_disk(window, cx),
         "autosave" => smoke_autosave(window, cx),
@@ -886,10 +886,11 @@ fn smoke_reveal(window: WindowHandle<DocumentView>, cx: &mut App) {
     .detach();
 }
 
-/// `KAMI_SMOKE=links`, on `links.md`: clicking a link to a Markdown file
-/// opens it in a tab and leaves the link's block rendered; clicking plain
-/// text still reveals its block.
-fn smoke_links(window: WindowHandle<DocumentView>, cx: &mut App) {
+/// `KAMI_SMOKE=clicks`, on `clicks.md`: clicking a link to a Markdown file
+/// opens it in a tab and leaves the link's block rendered; clicking a
+/// checkbox toggles it, as one undo step, and leaves its list rendered;
+/// clicking plain text still reveals its block.
+fn smoke_clicks(window: WindowHandle<DocumentView>, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
         pause(cx, 10).await;
@@ -939,11 +940,38 @@ fn smoke_links(window: WindowHandle<DocumentView>, cx: &mut App) {
             revealed == 0 && selection.is_none(),
         );
 
-        // Plain text in the second block reveals it.
         window
             .update(cx, |_, window, _| window.activate_window())
             .ok();
         pause(cx, 10).await;
+
+        // The third block is a task list.
+        let text = |cx: &mut AsyncApp| {
+            window
+                .read_with(cx, |view, _| view.text())
+                .unwrap_or_default()
+        };
+        if let Some(list) = origin(cx, 2) {
+            mouse_click(window, cx, text_position(list)).await;
+        }
+        pause(cx, 5).await;
+        let (revealed, selection) = window
+            .read_with(cx, |view, _| view.reveal_state())
+            .unwrap_or_default();
+        let dirty = window
+            .read_with(cx, |view, _| view.is_dirty())
+            .unwrap_or(false);
+        checks.check(
+            &format!("clicking a checkbox ticks it ({revealed} revealed, {selection:?})"),
+            text(cx).ends_with("- [x] Task\n") && revealed == 0 && selection.is_none() && dirty,
+        );
+        dispatch(window, cx, Box::new(Undo));
+        pause(cx, 5).await;
+        checks.check("undo unticks it", text(cx).ends_with("- [ ] Task\n"));
+        dispatch(window, cx, Box::new(Unreveal));
+        pause(cx, 5).await;
+
+        // Plain text in the second block reveals it.
         let start = window
             .read_with(cx, |view, _| view.item_start(1))
             .ok()

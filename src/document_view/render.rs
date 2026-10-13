@@ -121,6 +121,7 @@ impl DocumentView {
         let view = cx.entity();
         let focus_handle = self.focus_handle.clone();
         let hint = app_settings::get(cx).editing_hint;
+        let editable = !open.editor.read_only();
         list(open.list_state.clone(), move |index, _, _| {
             let item = &model.items[index];
             match revealed
@@ -170,6 +171,7 @@ impl DocumentView {
                                 view: view.downgrade(),
                                 block_start: item.block.start,
                                 column_width,
+                                editable,
                             },
                             input,
                         ),
@@ -180,6 +182,7 @@ impl DocumentView {
                                 view: view.downgrade(),
                                 block_start: range.start,
                                 column_width,
+                                editable,
                             },
                             input,
                         ),
@@ -193,6 +196,7 @@ impl DocumentView {
                         view: view.downgrade(),
                         block_start: item.block.start,
                         column_width,
+                        editable,
                     },
                 ),
             }

@@ -146,7 +146,7 @@ impl Builder {
                 items,
             } => {
                 for (number, item) in items.iter().enumerate() {
-                    let marker = match (item.task, first) {
+                    let marker = match (item.task.map(|task| task.checked), first) {
                         (Some(true), _) => "☑".to_owned(),
                         (Some(false), _) => "☐".to_owned(),
                         (None, Some(first)) => format!("{}.", first + number as u64),
