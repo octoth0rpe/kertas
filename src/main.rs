@@ -37,7 +37,7 @@ use gpui_platform::application;
 fn main() {
     let path = std::env::args_os().nth(1).map(PathBuf::from);
 
-    // Files opened from Finder, the Dock or the `kertas` command arrive as
+    // Files opened from Finder, the Dock or the `kt` command arrive as
     // URLs, outside of any app context, so pass them to a task that opens
     // them.
     let (opened_urls, mut urls_to_open) = mpsc::unbounded::<Vec<String>>();

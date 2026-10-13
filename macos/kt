@@ -1,17 +1,17 @@
 #!/bin/sh
-# kertas: open files in Kertas from the terminal.
+# kt: open files in Kertas from the terminal.
 #
-#   kertas notes.md todo.md   # open (or switch to) these files
-#   kertas new-idea.md        # a file that doesn't exist yet: saving creates it
-#   kertas                    # bring Kertas to the front
+#   kt notes.md todo.md   # open (or switch to) these files
+#   kt new-idea.md        # a file that doesn't exist yet: saving creates it
+#   kt                    # bring Kertas to the front
 #
 # This script lives inside Kertas.app. Kertas's settings install it as
-# /usr/local/bin/kertas, a link to this file, so it always opens the Kertas.app
+# /usr/local/bin/kt, a link to this file, so it always opens the Kertas.app
 # it came from. It hands files to Kertas as kertas:// links, which reach a
 # running Kertas or launch it, and work for files that don't exist yet.
 set -eu
 
-# Kertas.app is three levels up from Contents/Resources/kertas.
+# Kertas.app is three levels up from Contents/Resources/kt.
 script=$(realpath "$0")
 app=$(dirname "$(dirname "$(dirname "$script")")")
 

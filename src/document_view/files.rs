@@ -236,7 +236,7 @@ impl DocumentView {
     /// Opens the file at `path`, replacing the current document. Shows an
     /// alert if it can't be opened, and keeps the current document.
     pub fn open_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        // A file that doesn't exist yet (e.g. `kertas new.md`) starts as an
+        // A file that doesn't exist yet (e.g. `kt new.md`) starts as an
         // empty document that saving creates.
         if !path.exists() && path.parent().is_some_and(Path::is_dir) {
             self.load(Document::new_at(path), window, cx);

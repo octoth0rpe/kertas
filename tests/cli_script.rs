@@ -1,4 +1,4 @@
-//! The `kertas` command line script (macos/kertas), run with a stand-in for
+//! The `kt` command line script (macos/kt), run with a stand-in for
 //! macOS's `open` that prints its arguments.
 
 #![cfg(target_os = "macos")]
@@ -15,12 +15,8 @@ fn run(args: &[&str], cwd: &str) -> Vec<String> {
     fs::remove_dir_all(&dir).ok();
     let resources = dir.join("Kertas.app/Contents/Resources");
     fs::create_dir_all(&resources).unwrap();
-    let script = resources.join("kertas");
-    fs::copy(
-        concat!(env!("CARGO_MANIFEST_DIR"), "/macos/kertas"),
-        &script,
-    )
-    .unwrap();
+    let script = resources.join("kt");
+    fs::copy(concat!(env!("CARGO_MANIFEST_DIR"), "/macos/kt"), &script).unwrap();
     let fake_open = dir.join("fake-open");
     fs::write(
         &fake_open,

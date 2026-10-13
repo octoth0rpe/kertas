@@ -29,7 +29,7 @@
     <true/>
     <key>NSSupportsAutomaticGraphicsSwitching</key>
     <true/>
-    <!-- kertas:// links, sent by the kertas command line tool. -->
+    <!-- kertas:// links, sent by the kt command line tool. -->
     <key>CFBundleURLTypes</key>
     <array>
         <dict>

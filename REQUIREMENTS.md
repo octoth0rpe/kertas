@@ -53,7 +53,7 @@ A selection that spans several blocks reveals all of them.
 | F4 | Unsaved-changes indicator, and a prompt before closing with unsaved changes. | MUST |
 | F5 | Detect when the file changes on disk and offer to reload. | SHOULD |
 | F6 | Autosave: after typing pauses, when a document loses focus, and on quit. Never saves over changes made by another app (F5). | SHOULD |
-| F7 | Open a file from the command line (e.g. `kertas notes.md`). | SHOULD |
+| F7 | Open a file from the command line (e.g. `kt notes.md`). | SHOULD |
 | F8 | Recent files list. | LATER |
 
 ## 4. Editing experience

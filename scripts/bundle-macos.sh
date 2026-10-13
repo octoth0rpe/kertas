@@ -55,9 +55,9 @@ sed "s/@VERSION@/$version/g" macos/Info.plist > "$app/Contents/Info.plist"
 # Named Kertas, as Activity Monitor and Force Quit show it.
 cp "$CARGO_TARGET_DIR/release/kertas" "$app/Contents/MacOS/Kertas"
 cp macos/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
-# The kertas command line tool, which Settings links into /usr/local/bin.
-cp macos/kertas "$app/Contents/Resources/kertas"
-chmod +x "$app/Contents/Resources/kertas"
+# The kt command line tool, which Settings links into /usr/local/bin.
+cp macos/kt "$app/Contents/Resources/kt"
+chmod +x "$app/Contents/Resources/kt"
 plutil -lint "$app/Contents/Info.plist" >/dev/null
 
 # Ad-hoc signature: enough to run on this Mac. Distributing to others needs

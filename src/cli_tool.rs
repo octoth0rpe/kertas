@@ -1,6 +1,6 @@
-//! Installing the `kertas` command line tool (#27): a link at
-//! `/usr/local/bin/kertas` to the script inside Kertas.app
-//! (`Contents/Resources/kertas`, from `macos/kertas`).
+//! Installing the `kt` command line tool (#27): a link at
+//! `/usr/local/bin/kt` to the script inside Kertas.app
+//! (`Contents/Resources/kt`, from `macos/kt`).
 //!
 //! `/usr/local/bin` usually belongs to the system, so installing and
 //! uninstalling fall back to asking for an administrator password, with the
@@ -11,7 +11,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub const LINK: &str = "/usr/local/bin/kertas";
+pub const LINK: &str = "/usr/local/bin/kt";
 
 /// Whether the command is installed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,9 +36,7 @@ pub fn status() -> Status {
     let link = Path::new(LINK);
     match fs::read_link(link) {
         Ok(target) if target == script => Status::Installed,
-        Ok(target) if target.ends_with("Kertas.app/Contents/Resources/kertas") => {
-            Status::OtherKertas
-        }
+        Ok(target) if target.ends_with("Kertas.app/Contents/Resources/kt") => Status::OtherKertas,
         Ok(_) => Status::Taken,
         Err(_) if link.symlink_metadata().is_ok() => Status::Taken,
         Err(_) => Status::NotInstalled,
@@ -66,7 +64,7 @@ pub fn install() -> Result<(), String> {
                 "mkdir -p /usr/local/bin && ln -sfn {} {LINK}",
                 shell_quote(&script.to_string_lossy())
             ),
-            "Kertas wants to install the kertas command in /usr/local/bin.",
+            "Kertas wants to install the kt command in /usr/local/bin.",
         ),
         Err(err) => Err(err.to_string()),
     }
@@ -81,7 +79,7 @@ pub fn uninstall() -> Result<(), String> {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == io::ErrorKind::PermissionDenied => as_administrator(
             &format!("rm -f {LINK}"),
-            "Kertas wants to remove the kertas command from /usr/local/bin.",
+            "Kertas wants to remove the kt command from /usr/local/bin.",
         ),
         Err(err) => Err(err.to_string()),
     }
@@ -90,9 +88,9 @@ pub fn uninstall() -> Result<(), String> {
 /// This Kertas.app's script, if Kertas is running as an app bundle.
 fn script() -> Option<PathBuf> {
     let executable = std::env::current_exe().ok()?.canonicalize().ok()?;
-    // Kertas.app/Contents/MacOS/Kertas → Kertas.app/Contents/Resources/kertas
+    // Kertas.app/Contents/MacOS/Kertas → Kertas.app/Contents/Resources/kt
     let contents = executable.parent()?.parent()?;
-    let script = contents.join("Resources/kertas");
+    let script = contents.join("Resources/kt");
     (contents.parent()?.extension()? == "app" && script.is_file()).then_some(script)
 }
 
