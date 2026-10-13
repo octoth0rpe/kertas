@@ -477,6 +477,10 @@ fn smoke_help(window: WindowHandle<DocumentView>, cx: &mut App) {
         wait().await;
         let count = cx.update(|cx| cx.windows().len());
         check("Keyboard Shortcuts opens", count == 3);
+        dispatch(cx, Box::new(crate::menus::OpenAbout));
+        wait().await;
+        let count = cx.update(|cx| cx.windows().len());
+        check("About Kami opens", count == 4);
 
         // Closing them doesn't ask about saving.
         let windows = cx.update(|cx| cx.windows());

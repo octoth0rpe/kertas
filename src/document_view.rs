@@ -379,7 +379,7 @@ impl DocumentView {
     /// Shows one of Kami's built-in documents, view-only.
     pub fn open_builtin(&mut self, builtin: Builtin, window: &mut Window, cx: &mut Context<Self>) {
         self.builtin = Some(builtin);
-        self.load(Document::from_text(builtin.text()), window, cx);
+        self.load(Document::from_text(&builtin.text()), window, cx);
     }
 
     /// The built-in document shown, if any.

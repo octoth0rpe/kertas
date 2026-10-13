@@ -47,6 +47,10 @@ text_width = "wide"  # "standard" (the default), "wide" or "full"
 
 The View menu changes `theme` and `text_width` too.
 
+### Dependencies
+
+The About tab lists the open-source libraries Kami uses. After adding or updating a dependency, run `scripts/acknowledgements.sh` to regenerate the list.
+
 ### Installing Kami.app
 
 ```sh
