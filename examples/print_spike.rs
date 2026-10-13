@@ -380,12 +380,32 @@ fn main() {
     }
     let paper = info.paperSize();
     let width = paper.width - 108.;
-    // TextKit 2 (the default since macOS 12) doesn't lay out NSTextTable
-    // or NSTextBlock, which tables and code blocks need, so use TextKit 1.
-    let view = NSTextView::initUsingTextLayoutManager(mtm.alloc(), false);
+    // KAMI_TEXTKIT picks the text system, to compare them:
+    // - "1" (default): TextKit 1 from the start.
+    // - "2": TextKit 2, as NSTextView comes.
+    // - "2-touch": TextKit 2, then ask for the NSLayoutManager after the
+    //   content is set, which is the documented way to switch to TextKit 1.
+    let mode = std::env::var("KAMI_TEXTKIT").unwrap_or_else(|_| "1".into());
+    let view = NSTextView::initUsingTextLayoutManager(mtm.alloc(), mode != "1");
     view.setFrameSize(CGSize::new(width, paper.height));
+    let textkit = |view: &NSTextView| {
+        if view.textLayoutManager().is_some() {
+            2
+        } else {
+            1
+        }
+    };
+    println!("mode {mode}: created with TextKit {}", textkit(&view));
     unsafe {
         view.textStorage().unwrap().setAttributedString(&attributed);
+    }
+    println!("after setting the text: TextKit {}", textkit(&view));
+    if mode == "2-touch" {
+        let _ = unsafe { view.layoutManager() };
+        println!(
+            "after asking for the layout manager: TextKit {}",
+            textkit(&view)
+        );
     }
     view.setVerticallyResizable(true);
     view.setHorizontallyResizable(false);
@@ -403,5 +423,6 @@ fn main() {
     operation.setShowsPrintPanel(false);
     operation.setShowsProgressPanel(false);
     let ok = operation.runOperation();
+    println!("after printing: TextKit {}", textkit(&view));
     println!("printed: {ok} -> {output}");
 }
