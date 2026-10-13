@@ -560,6 +560,13 @@ impl DocumentView {
     /// Opens the file at `path`, replacing the current document. Shows an
     /// alert if it can't be opened, and keeps the current document.
     pub fn open_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        // A file that doesn't exist yet (e.g. `kami new.md`) starts as an
+        // empty document that saving creates.
+        if !path.exists() && path.parent().is_some_and(Path::is_dir) {
+            self.load(Document::new_at(path), window, cx);
+            self.move_caret(0, false, cx);
+            return;
+        }
         match Document::open(path) {
             Ok(document) => self.load(document, window, cx),
             Err(err) => show_open_error(&err, window, cx),

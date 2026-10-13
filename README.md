@@ -60,6 +60,8 @@ scripts/bundle-macos.sh --install   # ...and installs it in ~/Applications
 
 The app runs on Apple Silicon Macs, and opens Markdown files from Finder, Open With and the Dock. It's signed for the Mac it was built on only. Distributing it to others needs a Developer ID signature and notarization, which is planned for later.
 
+Kami → Settings… can install a `kami` command for the terminal (`kami notes.md` opens files in Kami). It's a link at `/usr/local/bin/kami` to a script inside Kami.app, `macos/kami`.
+
 The icon is built from `macos/icon-light.svg` and `macos/icon-dark.svg`. After changing either, run `scripts/make-icon.sh`. Finder shows the light icon. While Kami runs, its Dock icon follows the system's light or dark mode.
 
 ## License

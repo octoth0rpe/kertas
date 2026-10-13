@@ -23,6 +23,10 @@ See **Help → Keyboard Shortcuts** for every shortcut.
 
 Each document opens in its own tab. **⌘1** to **⌘9** go straight to a tab. To open documents in separate windows instead, choose **Windows** for "Open documents in" in **Kami → Settings…**. That takes effect the next time Kami starts.
 
+## From the terminal
+
+**Kami → Settings…** can install the `kami` command. Then `kami notes.md` opens a file in Kami. A file that doesn't exist yet opens as a new document, and saving creates it.
+
 ## Appearance
 
 **View → Appearance** chooses Light, Dark or Match System. **View → Text Width** chooses how wide the text is: Standard, Wide, or the whole window.

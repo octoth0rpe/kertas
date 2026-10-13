@@ -18,6 +18,9 @@ sed "s/@VERSION@/$version/g" macos/Info.plist > "$app/Contents/Info.plist"
 # Named Kami, as Activity Monitor and Force Quit show it.
 cp target/release/kami "$app/Contents/MacOS/Kami"
 cp macos/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
+# The kami command line tool, which Settings links into /usr/local/bin.
+cp macos/kami "$app/Contents/Resources/kami"
+chmod +x "$app/Contents/Resources/kami"
 plutil -lint "$app/Contents/Info.plist" >/dev/null
 
 # Ad-hoc signature: enough to run on this Mac. Distributing to others needs
