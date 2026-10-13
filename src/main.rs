@@ -1,4 +1,6 @@
 mod app_settings;
+#[cfg(target_os = "macos")]
+mod dock_icon;
 mod document_view;
 mod menus;
 #[cfg(target_os = "macos")]
@@ -31,6 +33,8 @@ fn main() {
 
     app.run(move |cx: &mut App| {
         app_settings::init(cx);
+        #[cfg(target_os = "macos")]
+        dock_icon::init(cx);
         windows::register(cx);
         cx.bind_keys(document_view::key_bindings());
         menus::init(cx);
