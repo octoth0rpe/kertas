@@ -11,7 +11,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use gpui::{App, Global, WindowAppearance};
+use gpui::{App, BorrowAppContext, Global, WindowAppearance};
 use kami::settings::{self, Problem, Settings, ThemeSetting};
 
 /// How often to check the settings file for changes.
@@ -57,12 +57,16 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
+/// Changes a setting, like [`set`], reporting any problem in the bar
+/// that shows settings file problems.
+pub fn set_or_report(key: &str, value: &str, cx: &mut App) {
+    if let Err(problem) = set(key, value, cx) {
+        cx.update_global::<AppSettings, _>(|state, _| state.problems.insert(0, problem));
+    }
+}
+
 /// Changes setting `key` to `value` in the settings file, creating it if
 /// needed, and applies it.
-#[cfg_attr(
-    not(debug_assertions),
-    expect(dead_code, reason = "used by the View menu (#16)")
-)]
 pub fn set(key: &str, value: &str, cx: &mut App) -> Result<(), Problem> {
     let path = cx.global::<AppSettings>().path.clone();
     let text = match fs::read_to_string(&path) {

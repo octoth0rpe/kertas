@@ -2,14 +2,14 @@
 //! source offsets.
 
 use gpui::{
-    AnyElement, App, Font, FontStyle, FontWeight, Hsla, MouseButton, SharedString,
+    AnyElement, App, Font, FontStyle, FontWeight, Hsla, MouseButton, Pixels, SharedString,
     StrikethroughStyle, StyledText, TextRun, UnderlineStyle, WeakEntity, Window, div, prelude::*,
     px, relative,
 };
 use kami::inline::InlineText;
 use kami::rendered::{ColumnAlignment, ListItem, RenderedBlock, Table};
 
-use crate::document_view::{BODY_TEXT_SIZE, CODE_FONT, DocumentView, MAX_TEXT_WIDTH};
+use crate::document_view::{BODY_TEXT_SIZE, CODE_FONT, DocumentView};
 use crate::theme::Theme;
 
 /// Space between blocks inside lists and blockquotes.
@@ -24,12 +24,15 @@ struct TextStyle {
     click: ClickTarget,
 }
 
-/// Where clicks on a block's text are reported.
+/// Where clicks on a block's text are reported, and the text column the
+/// block is drawn in.
 #[derive(Clone)]
 pub struct ClickTarget {
     pub view: WeakEntity<DocumentView>,
     /// The block's start offset in the document.
     pub block_start: usize,
+    /// The text column's maximum width, or `None` for the full window.
+    pub column_width: Option<Pixels>,
 }
 
 impl ClickTarget {
@@ -101,6 +104,7 @@ pub fn block_frame(
         _ => 0.,
     };
     let outside = click.clone();
+    let column_width = click.column_width;
     div()
         .w_full()
         .px_8()
@@ -113,7 +117,7 @@ pub fn block_frame(
         .child(
             div()
                 .w_full()
-                .max_w(px(MAX_TEXT_WIDTH))
+                .when_some(column_width, |this, width| this.max_w(width))
                 .mx_auto()
                 .pt(px(top))
                 .on_mouse_down(MouseButton::Left, move |event, window, cx| {

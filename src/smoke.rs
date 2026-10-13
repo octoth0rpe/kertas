@@ -318,6 +318,29 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
         wait().await;
         check("written setting applies", theme(cx) == Some(Theme::light()));
 
+        // The View menu's commands change settings.
+        for action in [
+            Box::new(crate::menus::UseDarkTheme) as Box<dyn Action>,
+            Box::new(crate::menus::UseFullWidth),
+        ] {
+            window
+                .update(cx, |_, window, cx| window.dispatch_action(action, cx))
+                .ok();
+        }
+        wait().await;
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        check(
+            "View menu writes settings",
+            text == "# Mine\ntheme = \"dark\"  # at night\ntext_width = \"full\"\n",
+        );
+        check("View menu theme applies", theme(cx) == Some(Theme::dark()));
+        window
+            .update(cx, |_, window, cx| {
+                window.dispatch_action(Box::new(crate::menus::UseStandardWidth), cx)
+            })
+            .ok();
+        wait().await;
+
         // New documents open in their own window in the windows layout.
         cx.update(|cx| app_settings::set("layout", "windows", cx))
             .ok();

@@ -40,9 +40,12 @@ The first build downloads GPUI from the Zed repository and takes a few minutes.
 Settings live in `~/Library/Application Support/kami/config.toml`. The file is optional, and edits to it apply straight away:
 
 ```toml
-theme = "dark"     # "light", "dark" or "system" (the default)
-layout = "windows" # "tabs" (the default) or "windows"
+theme = "dark"       # "light", "dark" or "system" (the default)
+layout = "windows"   # "tabs" (the default) or "windows"
+text_width = "wide"  # "standard" (the default), "wide" or "full"
 ```
+
+The View menu changes `theme` and `text_width` too.
 
 ### Installing Kami.app
 
