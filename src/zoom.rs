@@ -1,7 +1,7 @@
 //! The text size for this session (#28).
 //!
 //! Zooming changes the size in every document. It isn't saved: Kami starts
-//! at the `font_size` setting, and Actual Size returns to it. Changing the
+//! at the `font_size` setting, and Reset Zoom returns to it. Changing the
 //! setting also changes the current size.
 
 use gpui::{App, Global};

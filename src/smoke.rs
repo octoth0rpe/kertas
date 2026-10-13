@@ -369,7 +369,7 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
             .ok();
         wait().await;
 
-        // Zoom steps through sizes, stops at the limits, and Actual Size
+        // Zoom steps through sizes, stops at the limits, and Reset Zoom
         // returns to the font_size setting, which also resets it.
         // Each step waits for a frame: zoom commands are only available
         // when the last frame allowed them.
@@ -384,11 +384,11 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
             cx.background_executor().timer(STEP * 3).await;
             cx.update(|cx| crate::zoom::size(cx))
         }
-        use crate::document_view::{ActualSize, ZoomIn, ZoomOut};
+        use crate::document_view::{ResetZoom, ZoomIn, ZoomOut};
         check("zoom in", zoom(window, cx, Box::new(ZoomIn)).await == 17);
         check(
-            "actual size",
-            zoom(window, cx, Box::new(ActualSize)).await == 16,
+            "reset zoom",
+            zoom(window, cx, Box::new(ResetZoom)).await == 16,
         );
         for _ in 0..20 {
             zoom(window, cx, Box::new(ZoomOut)).await;

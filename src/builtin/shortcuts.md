@@ -21,7 +21,7 @@
 |---|---|
 | ⌘+ or ⌘= | Zoom in |
 | ⌘- | Zoom out |
-| ⌘0 | Actual size |
+| ⌘0 | Reset zoom |
 
 ## Moving around
 

@@ -56,7 +56,7 @@ actions!(
         SelectTab9,
         ZoomIn,
         ZoomOut,
-        ActualSize,
+        ResetZoom,
         Unreveal,
         MoveLeft,
         MoveRight,
@@ -129,7 +129,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-=", ZoomIn, None),
         KeyBinding::new("cmd-+", ZoomIn, None),
         KeyBinding::new("cmd--", ZoomOut, None),
-        KeyBinding::new("cmd-0", ActualSize, None),
+        KeyBinding::new("cmd-0", ResetZoom, None),
         KeyBinding::new("escape", Unreveal, None),
         KeyBinding::new("left", MoveLeft, None),
         KeyBinding::new("right", MoveRight, None),
@@ -1531,7 +1531,7 @@ impl Render for DocumentView {
                 this.on_action(move |_: &ZoomOut, _, cx| zoom::set(size, cx))
             })
             .when(zoom::is_zoomed(cx), |this| {
-                this.on_action(|_: &ActualSize, _, cx| zoom::reset(cx))
+                this.on_action(|_: &ResetZoom, _, cx| zoom::reset(cx))
             })
             .on_action(cx.listener(Self::unreveal))
             .on_action(cx.listener(|this, _: &MoveLeft, _, cx| {
