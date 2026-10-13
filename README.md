@@ -35,6 +35,17 @@ cargo run
 
 The first build downloads GPUI from the Zed repository and takes a few minutes.
 
+### Installing Kami.app
+
+```sh
+scripts/bundle-macos.sh             # builds target/release/Kami.app
+scripts/bundle-macos.sh --install   # ...and installs it in ~/Applications
+```
+
+The app runs on Apple Silicon Macs, and opens Markdown files from Finder, Open With and the Dock. It's signed for the Mac it was built on only. Distributing it to others needs a Developer ID signature and notarization, which is planned for later.
+
+The icon is built from `macos/icon.svg`. After changing the SVG, run `scripts/make-icon.sh` to rebuild `macos/AppIcon.icns`.
+
 ## License
 
 _TBD_
