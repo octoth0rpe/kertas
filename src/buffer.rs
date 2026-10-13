@@ -74,6 +74,20 @@ impl Buffer {
         self.rope.remove(start..end);
         self.rope.insert(start, text);
     }
+
+    /// The UTF-16 offset of byte `offset`, which the platform's text input
+    /// uses. An offset past the end maps to the end.
+    pub fn byte_to_utf16(&self, offset: usize) -> usize {
+        let offset = offset.min(self.rope.len_bytes());
+        self.rope.char_to_utf16_cu(self.rope.byte_to_char(offset))
+    }
+
+    /// The byte offset of UTF-16 `offset`. An offset past the end maps to
+    /// the end, and one inside a surrogate pair to the character's start.
+    pub fn utf16_to_byte(&self, offset: usize) -> usize {
+        let offset = offset.min(self.rope.len_utf16_cu());
+        self.rope.char_to_byte(self.rope.utf16_cu_to_char(offset))
+    }
 }
 
 /// 1-based line number of the position just after `prefix`.
@@ -216,5 +230,29 @@ mod tests {
         // First two bytes of a three-byte character.
         let err = Buffer::from_bytes(b"abc\xE7\xB4").unwrap_err();
         assert!(matches!(err, LoadError::InvalidUtf8 { offset: 3, line: 1 }));
+    }
+
+    #[test]
+    fn maps_offsets_to_and_from_utf16() {
+        // "é" is two bytes and one UTF-16 unit; "😀" is four bytes and a
+        // surrogate pair.
+        let buffer = Buffer::from_bytes("aé😀\r\nb".as_bytes()).unwrap();
+        let pairs = [(0, 0), (1, 1), (3, 2), (7, 4), (8, 5), (9, 6), (10, 7)];
+        for (byte, utf16) in pairs {
+            assert_eq!(buffer.byte_to_utf16(byte), utf16, "byte {byte}");
+            assert_eq!(buffer.utf16_to_byte(utf16), byte, "UTF-16 {utf16}");
+        }
+        // Inside the surrogate pair: the emoji's start.
+        assert_eq!(buffer.utf16_to_byte(3), 3);
+        // Past the end: the end.
+        assert_eq!(buffer.byte_to_utf16(99), 7);
+        assert_eq!(buffer.utf16_to_byte(99), 10);
+    }
+
+    #[test]
+    fn empty_buffer_maps_to_zero() {
+        let buffer = Buffer::default();
+        assert_eq!(buffer.byte_to_utf16(0), 0);
+        assert_eq!(buffer.utf16_to_byte(5), 0);
     }
 }

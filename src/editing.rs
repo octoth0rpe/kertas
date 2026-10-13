@@ -674,9 +674,34 @@ fn combine(text: &str, mut patches: Vec<Patch>, selection: Selection) -> Option<
     })
 }
 
+/// The line ending a document uses: CRLF if it has any, otherwise LF.
+pub fn line_ending(text: &str) -> &'static str {
+    if text.contains("\r\n") { "\r\n" } else { "\n" }
+}
+
+/// Converts all line endings in `text` to `line_ending`.
+pub fn normalize_line_endings(text: &str, line_ending: &str) -> String {
+    text.replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .replace('\n', line_ending)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detects_line_ending() {
+        assert_eq!(line_ending("a\nb"), "\n");
+        assert_eq!(line_ending("a\r\nb"), "\r\n");
+        assert_eq!(line_ending(""), "\n");
+    }
+
+    #[test]
+    fn normalizes_pasted_line_endings() {
+        assert_eq!(normalize_line_endings("a\r\nb\nc\rd", "\n"), "a\nb\nc\nd");
+        assert_eq!(normalize_line_endings("a\nb\r\nc", "\r\n"), "a\r\nb\r\nc");
+    }
 
     const LIST: BlockKind = BlockKind::List { ordered: false };
 
