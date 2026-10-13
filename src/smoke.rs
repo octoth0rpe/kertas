@@ -4,15 +4,17 @@
 //! itself a long sequence of movement and editing steps one frame apart,
 //! then prints `SMOKE OK` and quits. A panic along the way fails it. This
 //! exercises the real view, list and text layout, which unit tests can't.
-//! It never saves, and it doesn't touch the clipboard.
+//! It doesn't save unless `KAMI_SMOKE=save`, and it doesn't touch the
+//! clipboard.
 
 use std::time::Duration;
 
 use gpui::{Action, App, EntityInputHandler, WindowHandle};
 
 use crate::document_view::{
-    Backspace, Delete, DeleteWordLeft, DocumentView, MoveDocumentEnd, MoveDocumentStart, MoveDown,
-    MoveLeft, MoveRight, MoveUp, Newline, Redo, SelectAll, SelectDown, SelectUp, Undo,
+    Backspace, CloseWindow, Delete, DeleteWordLeft, DocumentView, MoveDocumentEnd,
+    MoveDocumentStart, MoveDown, MoveLeft, MoveRight, MoveUp, New, Newline, Quit, Redo, Save,
+    SelectAll, SelectDown, SelectUp, Undo,
 };
 
 const STEP: Duration = Duration::from_millis(16);
@@ -24,8 +26,11 @@ enum Step {
 
 /// Starts the smoke test if `KAMI_SMOKE` is set.
 pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
-    if std::env::var_os("KAMI_SMOKE").is_none() {
-        return;
+    match std::env::var("KAMI_SMOKE").as_deref() {
+        Err(_) => return,
+        Ok("tabs") => return smoke_tabs(window, cx),
+        Ok("quit") => return smoke_quit(window, cx),
+        Ok(_) => {}
     }
     let mut steps: Vec<Step> = Vec::new();
     let steps_ref = &mut steps;
@@ -72,6 +77,12 @@ pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
     repeat(steps_ref, &Backspace, 3);
     repeat(steps_ref, &Undo, 3);
 
+    // `KAMI_SMOKE=save` ends by saving, to check the file on disk.
+    if std::env::var("KAMI_SMOKE").as_deref() == Ok("save") {
+        steps.push(Step::Type("Saved by smoke test.\n"));
+        steps.push(Step::Action(Box::new(Save)));
+    }
+
     cx.spawn(async move |cx| {
         let total = steps.len();
         for step in steps {
@@ -85,6 +96,91 @@ pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
         }
         println!("SMOKE OK ({total} steps)");
         cx.update(|cx| cx.quit());
+    })
+    .detach();
+}
+
+/// `KAMI_SMOKE=tabs`: New opens windows (tabs), and they close again.
+fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        for _ in 0..3 {
+            cx.background_executor().timer(STEP * 10).await;
+            window
+                .update(cx, |_, window, cx| {
+                    window.dispatch_action(Box::new(New), cx)
+                })
+                .ok();
+        }
+        // Hold so the windows can be inspected from outside.
+        cx.background_executor().timer(Duration::from_secs(2)).await;
+        let opened = cx.update(|cx| cx.windows().len());
+        println!("windows after 3 x New: {opened}");
+        #[cfg(target_os = "macos")]
+        let tabs = window
+            .update(cx, |_, window, _| {
+                crate::native_tabs::NativeWindow::of(window)
+                    .map_or(0, |native| crate::native_tabs::tab_group_size(&native))
+            })
+            .unwrap_or(0);
+        #[cfg(not(target_os = "macos"))]
+        let tabs = opened;
+        println!("tabs in the first window's group: {tabs}");
+        let strip_tabs = window
+            .update(cx, |_, window, cx| {
+                let id = window.window_handle().window_id();
+                cx.try_global::<gpui::SystemWindowTabController>()
+                    .and_then(|controller| controller.tabs(id))
+                    .map_or(0, |tabs| tabs.len())
+            })
+            .unwrap_or(0);
+        println!("tabs in the tab strip: {strip_tabs}");
+        #[cfg(target_os = "macos")]
+        let tabbing_calls = {
+            let visible = window
+                .update(cx, |_, window, _| {
+                    crate::native_tabs::NativeWindow::of(window)
+                        .is_some_and(|native| crate::native_tabs::tab_bar_visible(&native))
+                })
+                .unwrap_or(false);
+            println!("native tab bar visible: {visible}");
+            let calls =
+                crate::native_tabs::TABBING_CALLS.load(std::sync::atomic::Ordering::Relaxed);
+            println!("kami tabbing calls: {calls}");
+            calls
+        };
+        // Kami must group the tabs itself, whatever the macOS preference.
+        #[cfg(not(target_os = "macos"))]
+        let tabbing_calls = 3;
+        let windows = cx.update(|cx| cx.windows());
+        for other in windows.into_iter().filter(|other| *other != *window) {
+            other
+                .update(cx, |_, window, cx| {
+                    window.dispatch_action(Box::new(CloseWindow), cx)
+                })
+                .ok();
+            cx.background_executor().timer(STEP * 10).await;
+        }
+        let remaining = cx.update(|cx| cx.windows().len());
+        println!("windows after closing them: {remaining}");
+        let ok =
+            opened == 4 && tabs == 4 && strip_tabs == 4 && tabbing_calls == 3 && remaining == 1;
+        println!("SMOKE {}", if ok { "OK" } else { "FAILED" });
+        cx.update(|cx| cx.quit());
+    })
+    .detach();
+}
+
+/// `KAMI_SMOKE=quit`: Quit, with an unedited document, exits the app. The
+/// caller checks that the process ends.
+fn smoke_quit(window: WindowHandle<DocumentView>, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        cx.background_executor().timer(STEP * 20).await;
+        println!("dispatching Quit");
+        window
+            .update(cx, |_, window, cx| {
+                window.dispatch_action(Box::new(Quit), cx)
+            })
+            .ok();
     })
     .detach();
 }

@@ -6,16 +6,16 @@
 
 use std::cell::RefCell;
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui::{
     Bounds, ClipboardItem, Context, EntityInputHandler, FocusHandle, KeyBinding, ListAlignment,
-    ListState, PathPromptOptions, Pixels, Point, PromptLevel, Subscription, TextLayout,
-    UTF16Selection, Window, actions, div, list, point, prelude::*, px, relative, size,
+    ListState, Pixels, Point, PromptLevel, Subscription, SystemWindowTabController, Task,
+    TextLayout, UTF16Selection, Window, actions, div, list, point, prelude::*, px, relative, size,
 };
-use kami::document::{Document, OpenError};
+use kami::document::{Document, OpenError, SaveError};
 use kami::history::{EditKind, History};
 use kami::model::Model;
 use kami::movement::{self, Selection};
@@ -23,13 +23,20 @@ use kami::reveal::{StyledSource, styled_source};
 
 use crate::rendered_block::{ClickTarget, render_block};
 use crate::revealed_block::{RevealedBlock, TextInput, render_revealed};
+use crate::tab_strip::render_tab_strip;
 use crate::theme::Theme;
 
 actions!(
     kami,
     [
+        New,
         Open,
+        Save,
+        SaveAs,
         CloseWindow,
+        Quit,
+        NextTab,
+        PreviousTab,
         Unreveal,
         MoveLeft,
         MoveRight,
@@ -69,6 +76,16 @@ actions!(
 /// Key bindings for the document view (macOS conventions).
 pub fn key_bindings() -> Vec<KeyBinding> {
     vec![
+        KeyBinding::new("cmd-n", New, None),
+        KeyBinding::new("cmd-o", Open, None),
+        KeyBinding::new("cmd-s", Save, None),
+        KeyBinding::new("cmd-shift-s", SaveAs, None),
+        KeyBinding::new("cmd-w", CloseWindow, None),
+        KeyBinding::new("cmd-q", Quit, None),
+        KeyBinding::new("cmd-shift-]", NextTab, None),
+        KeyBinding::new("cmd-shift-[", PreviousTab, None),
+        KeyBinding::new("ctrl-tab", NextTab, None),
+        KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
         KeyBinding::new("escape", Unreveal, None),
         KeyBinding::new("left", MoveLeft, None),
         KeyBinding::new("right", MoveRight, None),
@@ -157,7 +174,12 @@ pub struct DocumentView {
     caret_visible: bool,
     /// Bumped to stop the current blink loop.
     blink_epoch: usize,
+    /// Whether a "save changes?" prompt is already showing.
+    confirming: bool,
+    /// The edited state last shown in the window's close button.
+    shown_edited: Option<bool>,
     _appearance_observer: Subscription,
+    _tabs_observer: Subscription,
 }
 
 impl DocumentView {
@@ -169,13 +191,232 @@ impl DocumentView {
             this.theme = Theme::for_appearance(window.appearance());
             cx.notify();
         });
+        // Closing the window (e.g. its close button) asks about unsaved
+        // changes first.
+        let view = cx.entity().downgrade();
+        window.on_window_should_close(cx, move |window, cx| {
+            view.update(cx, |this, cx| this.should_close(window, cx))
+                .unwrap_or(true)
+        });
         Self {
             focus_handle,
             open: None,
             theme: Theme::for_appearance(window.appearance()),
             caret_visible: true,
             blink_epoch: 0,
+            confirming: false,
+            shown_edited: None,
             _appearance_observer: appearance_observer,
+            // Redraw the tab strip when tabs are added, removed or renamed.
+            _tabs_observer: cx
+                .observe_global_in::<SystemWindowTabController>(window, |_, _, cx| cx.notify()),
+        }
+    }
+
+    /// Shows `document`, replacing the current one.
+    fn load(&mut self, document: Document, window: &mut Window, cx: &mut Context<Self>) {
+        let model = Model::new(&document.buffer().rope().to_string());
+        let list_state = ListState::new(model.items.len(), ListAlignment::Top, px(1000.));
+        self.open = Some(OpenDocument {
+            document,
+            model: Rc::new(model),
+            history: History::default(),
+            list_state,
+            selection: None,
+            marked: None,
+            goal_x: None,
+            revealed: None,
+            revealed_layout: Rc::default(),
+        });
+        self.stop_blink();
+        self.update_window_title(window, cx);
+        cx.notify();
+    }
+
+    fn update_window_title(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(open) = &self.open else {
+            return;
+        };
+        let name = open.document.display_name();
+        window.set_window_title(&name);
+        window.set_document_path(open.document.path());
+        // GPUI doesn't update tab titles from the window title.
+        SystemWindowTabController::update_tab_title(
+            cx,
+            window.window_handle().window_id(),
+            name.into(),
+        );
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        self.open
+            .as_ref()
+            .is_some_and(|open| open.document.is_dirty())
+    }
+
+    // Files
+
+    /// Starts a new untitled document, ready for typing.
+    pub fn start_untitled(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.load(Document::untitled(), window, cx);
+        self.move_caret(0, false, cx);
+    }
+
+    /// The open document's file, if it has one.
+    pub fn document_path(&self) -> Option<&Path> {
+        self.open.as_ref()?.document.path()
+    }
+
+    /// Whether the window holds nothing worth keeping: no document, or an
+    /// untitled one that's still empty. Opening a file reuses such a window
+    /// instead of adding a tab.
+    pub fn is_pristine(&self) -> bool {
+        self.open
+            .as_ref()
+            .is_none_or(|open| open.document.path().is_none() && open.document.buffer().is_empty())
+    }
+
+    fn save(&mut self, _: &Save, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_document(false, window, cx).detach();
+    }
+
+    fn save_as(&mut self, _: &SaveAs, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_document(true, window, cx).detach();
+    }
+
+    /// Saves the document, asking for a location if it's untitled or
+    /// `choose_path` is set. Resolves to whether it was saved.
+    fn save_document(
+        &mut self,
+        choose_path: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<bool> {
+        let Some(open) = &mut self.open else {
+            return Task::ready(false);
+        };
+        let current_path = open.document.path().map(Path::to_owned);
+        if !choose_path && current_path.is_some() {
+            let result = open.document.save();
+            return Task::ready(self.finish_save(result, window, cx));
+        }
+
+        let directory = current_path
+            .as_deref()
+            .and_then(Path::parent)
+            .map(Path::to_owned)
+            .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+            .unwrap_or_else(|| PathBuf::from("/"));
+        let suggested = match &current_path {
+            Some(_) => open.document.display_name(),
+            None => "Untitled.md".to_owned(),
+        };
+        let path = cx.prompt_for_new_path(&directory, Some(&suggested));
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(path))) = path.await else {
+                return false;
+            };
+            this.update_in(cx, |this, window, cx| {
+                let Some(open) = &mut this.open else {
+                    return false;
+                };
+                let result = open.document.save_as(path);
+                this.finish_save(result, window, cx)
+            })
+            .unwrap_or(false)
+        })
+    }
+
+    /// Updates the window after a save, or shows why it failed.
+    fn finish_save(
+        &mut self,
+        result: Result<(), SaveError>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        match result {
+            Ok(()) => {
+                self.update_window_title(window, cx);
+                cx.notify();
+                true
+            }
+            Err(err) => {
+                show_save_error(&err, window, cx);
+                false
+            }
+        }
+    }
+
+    /// Asks whether to save unsaved changes before they'd be lost. Resolves
+    /// to whether it's OK to continue: there were no changes, they were
+    /// saved, or the user chose not to save them.
+    fn confirm_discard(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<bool> {
+        if !self.is_dirty() {
+            return Task::ready(true);
+        }
+        if self.confirming {
+            return Task::ready(false);
+        }
+        self.confirming = true;
+        let name = self
+            .open
+            .as_ref()
+            .map(|open| open.document.display_name())
+            .unwrap_or_default();
+        let message = format!("Do you want to save the changes you made to “{name}”?");
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            &message,
+            Some("Your changes will be lost if you don't save them."),
+            &["Save", "Don't Save", "Cancel"],
+            cx,
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            let answer = answer.await.ok();
+            let save = this
+                .update_in(cx, |this, window, cx| {
+                    this.confirming = false;
+                    match answer {
+                        Some(0) => Some(this.save_document(false, window, cx)),
+                        _ => None,
+                    }
+                })
+                .ok()
+                .flatten();
+            match (answer, save) {
+                (Some(0), Some(save)) => save.await,
+                (Some(1), _) => true,
+                _ => false,
+            }
+        })
+    }
+
+    /// Whether the window may close now. With unsaved changes, asks first
+    /// and closes the window itself once that's resolved.
+    fn should_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !self.is_dirty() {
+            return true;
+        }
+        let confirmed = self.confirm_discard(window, cx);
+        cx.spawn_in(window, async move |this, cx| {
+            if confirmed.await {
+                this.update_in(cx, |this, window, _| {
+                    // Don't ask again on the way out.
+                    if let Some(open) = &mut this.open {
+                        open.document = Document::untitled();
+                    }
+                    window.remove_window();
+                })
+                .ok();
+            }
+        })
+        .detach();
+        false
+    }
+
+    fn close_window(&mut self, _: &CloseWindow, window: &mut Window, cx: &mut Context<Self>) {
+        if self.should_close(window, cx) {
+            window.remove_window();
         }
     }
 
@@ -183,48 +424,9 @@ impl DocumentView {
     /// alert if it can't be opened, and keeps the current document.
     pub fn open_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         match Document::open(path) {
-            Ok(document) => {
-                window.set_window_title(&document.display_name());
-                let model = Model::new(&document.buffer().rope().to_string());
-                let list_state = ListState::new(model.items.len(), ListAlignment::Top, px(1000.));
-                self.open = Some(OpenDocument {
-                    document,
-                    model: Rc::new(model),
-                    history: History::default(),
-                    list_state,
-                    selection: None,
-                    marked: None,
-                    goal_x: None,
-                    revealed: None,
-                    revealed_layout: Rc::default(),
-                });
-                self.stop_blink();
-                cx.notify();
-            }
+            Ok(document) => self.load(document, window, cx),
             Err(err) => show_open_error(&err, window, cx),
         }
-    }
-
-    fn open(&mut self, _: &Open, window: &mut Window, cx: &mut Context<Self>) {
-        let paths = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: None,
-        });
-        cx.spawn_in(window, async move |this, cx| {
-            // The outer error means the dialog was dropped, the inner one that
-            // the platform couldn't show it; `None` means the user cancelled.
-            let Ok(Ok(Some(paths))) = paths.await else {
-                return;
-            };
-            let Some(path) = paths.into_iter().next() else {
-                return;
-            };
-            this.update_in(cx, |this, window, cx| this.open_path(path, window, cx))
-                .ok();
-        })
-        .detach();
     }
 
     /// Places the caret at document `offset` after a click.
@@ -829,6 +1031,13 @@ fn show_open_error(err: &OpenError, window: &mut Window, cx: &mut Context<Docume
     cx.spawn(async move |_, _| answer.await.ok()).detach();
 }
 
+fn show_save_error(err: &SaveError, window: &mut Window, cx: &mut Context<DocumentView>) {
+    let message = format!("Couldn't save “{}”", err.display_name());
+    let detail = capitalize(&err.source.to_string());
+    let answer = window.prompt(PromptLevel::Critical, &message, Some(&detail), &["OK"], cx);
+    cx.spawn(async move |_, _| answer.await.ok()).detach();
+}
+
 fn capitalize(text: &str) -> String {
     let mut chars = text.chars();
     match chars.next() {
@@ -839,6 +1048,14 @@ fn capitalize(text: &str) -> String {
 
 impl Render for DocumentView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Show unsaved changes in the window's close button.
+        let edited = self.is_dirty();
+        if self.shown_edited != Some(edited) {
+            window.set_window_edited(edited);
+            self.shown_edited = Some(edited);
+        }
+        let tab_strip = render_tab_strip(window, cx, self.theme, edited);
+
         let content = match &self.open {
             Some(open) => {
                 let model = open.model.clone();
@@ -913,14 +1130,24 @@ impl Render for DocumentView {
                 .items_center()
                 .justify_center()
                 .text_color(self.theme.muted_text)
-                .child("Open a Markdown file with ⌘O")
+                .child("Open a Markdown file with ⌘O, or start a new one with ⌘N")
                 .into_any_element(),
         };
 
         div()
             .track_focus(&self.focus_handle)
-            .on_action(cx.listener(Self::open))
-            .on_action(|_: &CloseWindow, window, _| window.remove_window())
+            .on_action(cx.listener(Self::save))
+            .on_action(cx.listener(Self::save_as))
+            .on_action(cx.listener(Self::close_window))
+            .on_action(|_: &NextTab, window, cx| {
+                SystemWindowTabController::select_next_tab(cx, window.window_handle().window_id())
+            })
+            .on_action(|_: &PreviousTab, window, cx| {
+                SystemWindowTabController::select_previous_tab(
+                    cx,
+                    window.window_handle().window_id(),
+                )
+            })
             .on_action(cx.listener(Self::unreveal))
             .on_action(cx.listener(|this, _: &MoveLeft, _, cx| {
                 this.move_by(false, false, cx, movement::prev_grapheme)
@@ -1009,7 +1236,10 @@ impl Render for DocumentView {
             .text_color(self.theme.text)
             .text_size(px(BODY_TEXT_SIZE))
             .line_height(relative(1.6))
-            .child(content)
+            .flex()
+            .flex_col()
+            .children(tab_strip)
+            .child(div().flex_1().min_h(px(0.)).child(content))
     }
 }
 
