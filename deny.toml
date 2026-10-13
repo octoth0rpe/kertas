@@ -1,0 +1,50 @@
+# cargo-deny's checks for Kami (REQUIREMENTS T6–T8). Run them with
+# scripts/check.sh, or `cargo deny check`.
+
+[graph]
+# Kami builds for macOS only in v0.1, so only check what goes into that
+# build.
+targets = ["aarch64-apple-darwin"]
+
+[licenses]
+# Licenses compatible with an Apache-2.0 project (T7). A dependency under
+# "A OR B" passes if either is allowed. GPL, LGPL and AGPL are never
+# allowed (T6).
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "BlueOak-1.0.0",
+    "Unicode-3.0",
+    "MPL-2.0",
+]
+confidence-threshold = 0.9
+# The list is the policy, not an inventory: allowed licenses no dependency
+# uses yet are fine.
+unused-allowed-license = "allow"
+
+[licenses.private]
+# Kami itself isn't published, and its own license is still open (Q6).
+ignore = true
+
+[advisories]
+# Known vulnerabilities, from the RustSec database, fail wherever they are.
+# Unmaintained crates only fail when Kami depends on them directly: those
+# deep in GPUI are Zed's to replace. Any exception must say why it's safe.
+unmaintained = "workspace"
+ignore = []
+
+[bans]
+# GPUI pulls in several versions of some crates; that's fine.
+multiple-versions = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+# GPUI is pinned to a Zed commit (Cargo.toml), and pins Zed's forks of a
+# few crates (e.g. font-kit) the same way.
+[sources.allow-org]
+github = ["zed-industries"]

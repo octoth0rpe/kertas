@@ -52,11 +52,17 @@ The View menu changes `theme` and `text_width` too.
 
 The About tab lists the open-source libraries Kami uses. After adding or updating a dependency, run `scripts/acknowledgements.sh` to regenerate the list.
 
+### Checks
+
+`scripts/check.sh` runs every check a release must pass: formatting, clippy, the tests, and `cargo-deny`, which checks dependency licenses against the allow-list in `deny.toml` (REQUIREMENTS T6–T7), security advisories, and where crates come from. It needs `cargo install --locked cargo-deny`.
+
 ### Installing Kami.app
 
 ```sh
 scripts/bundle-macos.sh             # builds target/release/Kami.app
 scripts/bundle-macos.sh --install   # ...and installs it in ~/Applications
+scripts/bundle-macos.sh --release   # a release: runs every check on a clean checkout of
+                                    # the current commit, then builds from it
 ```
 
 The app runs on Apple Silicon Macs, and opens Markdown files from Finder, Open With and the Dock. It's signed for the Mac it was built on only. Distributing it to others needs a Developer ID signature and notarization, which is planned for later.

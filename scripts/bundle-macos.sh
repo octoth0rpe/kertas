@@ -3,20 +3,53 @@
 #
 #   scripts/bundle-macos.sh             # build target/release/Kami.app
 #   scripts/bundle-macos.sh --install   # ...and copy it to ~/Applications
+#   scripts/bundle-macos.sh --release   # build from a clean checkout of the
+#                                       # current commit, after every check
+#                                       # (scripts/check.sh) passes
+#
+# The options can be combined: --release --install.
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
 
+release=false
+install=false
+for arg in "$@"; do
+    case $arg in
+        --release) release=true ;;
+        --install) install=true ;;
+        *) echo "bundle-macos.sh: unknown option $arg" >&2; exit 2 ;;
+    esac
+done
+
+# Build artifacts always go in this checkout's target/, so a release build
+# reuses compiled dependencies.
+export CARGO_TARGET_DIR="$root/target"
+
+if $release; then
+    # A release is built from the commit, never from uncommitted changes.
+    if [ -n "$(git status --porcelain)" ]; then
+        echo "Note: uncommitted changes are not included in a release build."
+    fi
+    worktree="$root/target/release-worktree"
+    git worktree remove --force "$worktree" 2>/dev/null || rm -rf "$worktree"
+    git worktree add --detach --quiet "$worktree" HEAD
+    trap 'git -C "$root" worktree remove --force "$worktree"' EXIT
+    echo "Release build of $(git rev-parse --short HEAD)"
+    "$worktree/scripts/check.sh"
+    cd "$worktree"
+fi
+
 cargo build --release
 
 version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
-app="target/release/Kami.app"
+app="$root/target/release/Kami.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 sed "s/@VERSION@/$version/g" macos/Info.plist > "$app/Contents/Info.plist"
 # Named Kami, as Activity Monitor and Force Quit show it.
-cp target/release/kami "$app/Contents/MacOS/Kami"
+cp "$CARGO_TARGET_DIR/release/kami" "$app/Contents/MacOS/Kami"
 cp macos/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 # The kami command line tool, which Settings links into /usr/local/bin.
 cp macos/kami "$app/Contents/Resources/kami"
@@ -28,7 +61,7 @@ plutil -lint "$app/Contents/Info.plist" >/dev/null
 codesign --force --sign - "$app"
 echo "Built $app ($version)"
 
-if [ "${1:-}" = "--install" ]; then
+if $install; then
     mkdir -p "$HOME/Applications"
     rm -rf "$HOME/Applications/Kami.app"
     cp -R "$app" "$HOME/Applications/Kami.app"
