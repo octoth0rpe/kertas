@@ -77,6 +77,11 @@ run help showcase.md
 run reveal showcase.md
 run print showcase.md KAMI_PRINT_PDF="$work/print/out.pdf"
 run disk showcase.md
+run autosave showcase.md
+grep -q "^Quitting. Still paused. " "$work/autosave/showcase.md" || {
+    echo "smoke.sh: FAILED: quitting didn't autosave" >&2
+    exit 1
+}
 run quit showcase.md --exits
 run bench 10k.md
 echo "All smoke tests passed."

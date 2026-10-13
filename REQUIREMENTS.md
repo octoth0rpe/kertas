@@ -52,7 +52,7 @@ A selection that spans several blocks reveals all of them.
 | F3 | Create a new document. | MUST |
 | F4 | Unsaved-changes indicator, and a prompt before closing with unsaved changes. | MUST |
 | F5 | Detect when the file changes on disk and offer to reload. | SHOULD |
-| F6 | Autosave. | LATER |
+| F6 | Autosave: after typing pauses, when a document loses focus, and on quit. Never saves over changes made by another app (F5). | SHOULD |
 | F7 | Open a file from the command line (e.g. `kami notes.md`). | SHOULD |
 | F8 | Recent files list. | LATER |
 
@@ -126,7 +126,7 @@ A selection that spans several blocks reveals all of them.
 | Front matter display | `hidden`, `collapsed`, `shown` | `collapsed` | LATER |
 | Link click | `click`, `modifier-click` | `modifier-click` | LATER |
 | Restore open files on launch | `true` / `false` | `true` | LATER |
-| Autosave | `off` or an interval | `off` | LATER |
+| Autosave | `off`, or seconds after typing pauses (1–300) | `off` | SHOULD |
 
 Deliberately **not** settings:
 - **Indentation and line-ending style.** Fidelity (F2) means Kami keeps whatever each file already uses.

@@ -8,6 +8,7 @@
 //! ([`files`]), the caret and selection ([`caret`]), editing and the
 //! platform's text input ([`input`]), and drawing ([`render`]).
 
+mod autosave;
 mod caret;
 mod disk;
 mod files;
@@ -21,7 +22,7 @@ use std::time::Duration;
 
 use gpui::{
     Context, FocusHandle, KeyBinding, ListAlignment, ListState, Pixels, Subscription,
-    SystemWindowTabController, Task, Window, actions, px,
+    SystemWindowTabController, Task, Window, WindowHandle, actions, px,
 };
 use kami::document::{DiskChange, Document};
 use kami::editor::{Editor, RevealTarget};
@@ -214,6 +215,8 @@ struct OpenDocument {
     watched: Option<(PathBuf, Task<()>)>,
     /// A change to the file that the bar at the top is asking about.
     disk_change: Option<DiskChange>,
+    /// Set when an autosave fails, until the user saves the document.
+    autosave_paused: bool,
 }
 
 /// An item shown as source, or with the caret in the gap next to it.
@@ -254,7 +257,12 @@ pub struct DocumentView {
     /// Whether the user closed the bar reporting problems in the settings
     /// file. It shows again when the file changes.
     settings_problems_dismissed: bool,
+    /// This view's window, to autosave in it later.
+    window_handle: Option<WindowHandle<DocumentView>>,
+    /// Bumped by each edit, so only the last one's autosave timer saves.
+    autosave_epoch: usize,
     _appearance_observer: Subscription,
+    _activation_observer: Subscription,
     _settings_observer: Subscription,
     _zoom_observer: Subscription,
     _tabs_observer: Subscription,
@@ -276,6 +284,10 @@ impl DocumentView {
         });
         let settings_observer = cx.observe_global_in::<AppSettings>(window, |this, window, cx| {
             this.theme = Theme::current(window, cx);
+            // Turning autosave on saves changes already made.
+            if this.is_dirty() {
+                this.schedule_autosave(cx);
+            }
             this.settings_problems_dismissed = false;
             let text_settings = TextSettings::from(&app_settings::get(cx));
             if text_settings != this.text_settings {
@@ -283,6 +295,12 @@ impl DocumentView {
                 this.layout_changed();
             }
             cx.notify();
+        });
+        // Autosave when the window or tab loses focus.
+        let activation_observer = cx.observe_window_activation(window, |this, window, cx| {
+            if !window.is_window_active() {
+                this.autosave(window, cx);
+            }
         });
         // Closing the window (e.g. its close button) asks about unsaved
         // changes first.
@@ -303,7 +321,10 @@ impl DocumentView {
             confirming: false,
             shown_edited: None,
             settings_problems_dismissed: false,
+            window_handle: window.window_handle().downcast(),
+            autosave_epoch: 0,
             _appearance_observer: appearance_observer,
+            _activation_observer: activation_observer,
             _settings_observer: settings_observer,
             _zoom_observer: zoom_observer,
             // Redraw the tab strip when tabs are added, removed or renamed.
@@ -327,6 +348,7 @@ impl DocumentView {
             reveal_caret: false,
             watched: None,
             disk_change: None,
+            autosave_paused: false,
         });
         self.watch_file(window, cx);
         self.stop_blink();

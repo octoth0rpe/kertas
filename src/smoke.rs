@@ -12,7 +12,7 @@
 //!   saves, so the text can be checked.
 //! - `bench`: times 500 inserts in the middle of the document.
 //! - `tabs`, `settings`, `settings-window`, `help`, `reveal`, `print`,
-//!   `disk`, `quit`: see each function.
+//!   `disk`, `autosave`, `quit`: see each function.
 
 use std::cell::Cell;
 use std::path::Path;
@@ -44,6 +44,7 @@ pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
         "reveal" => smoke_reveal(window, cx),
         "print" => smoke_print(window, cx),
         "disk" => smoke_disk(window, cx),
+        "autosave" => smoke_autosave(window, cx),
         "bench" => smoke_bench(window, cx),
         _ => smoke_steps(window, &mode, cx),
     }
@@ -669,6 +670,15 @@ fn smoke_settings_window(window: WindowHandle<DocumentView>, cx: &mut App) {
             pause(cx, 20).await;
         }
         checks.check("⌘, opens one settings window", window_count(cx) == 2);
+        let spare = cx.update(|cx| {
+            cx.try_global::<crate::settings_window::RowsFit>()
+                .map(|fit| fit.footer_top - fit.rows_bottom)
+        });
+        // The rows end a gap above the Done button when they all fit.
+        checks.check(
+            &format!("every row fits in the settings window ({spare:?} below them)"),
+            spare.is_some_and(|spare| spare >= gpui::px(20.)),
+        );
 
         let settings = cx.update(|cx| {
             cx.windows()
@@ -951,6 +961,126 @@ fn smoke_disk(window: WindowHandle<DocumentView>, cx: &mut App) {
                 && !state(cx).2,
         );
         checks.finish(cx);
+    })
+    .detach();
+}
+
+/// `KAMI_SMOKE=autosave`: with `autosave = 1`, edits save after a pause
+/// without touching undo; a change made elsewhere isn't saved over; a
+/// failed autosave pauses it until a manual save; switching tabs saves;
+/// and finally Quit saves without asking. The caller checks that the
+/// process ends and the last text was saved.
+fn smoke_autosave(window: WindowHandle<DocumentView>, cx: &mut App) {
+    use std::os::unix::fs::PermissionsExt;
+
+    cx.spawn(async move |cx| {
+        let mut checks = Checks::default();
+        pause(cx, 10).await;
+        let Some(path) = window
+            .read_with(cx, |view, _| view.document_path().map(Path::to_owned))
+            .ok()
+            .flatten()
+        else {
+            checks.check("the document has a file", false);
+            return checks.finish(cx);
+        };
+        let original = std::fs::read_to_string(&path).unwrap_or_default();
+        cx.update(|cx| crate::app_settings::set("autosave", 1, cx))
+            .ok();
+        let on_disk = || std::fs::read_to_string(&path).unwrap_or_default();
+        let dirty = |cx: &mut AsyncApp| {
+            window
+                .read_with(cx, |view, _| view.is_dirty())
+                .unwrap_or(true)
+        };
+        let type_text = |cx: &mut AsyncApp, text: &'static str| {
+            window
+                .update(cx, |view, window, cx| {
+                    view.click(0, false, window, cx);
+                    view.replace_text_in_range(None, text, window, cx);
+                })
+                .ok();
+        };
+
+        type_text(cx, "Autosaved. ");
+        pause(cx, 20).await;
+        checks.check(
+            "doesn't save straight away",
+            dirty(cx) && on_disk() == original,
+        );
+        let saved = wait_until(cx, |cx| !dirty(cx)).await;
+        checks.check(
+            "saves after the pause",
+            saved && on_disk() == format!("Autosaved. {original}"),
+        );
+        dispatch(window, cx, Box::new(Undo));
+        pause(cx, 5).await;
+        let text = window
+            .read_with(cx, |view, _| view.text())
+            .unwrap_or_default();
+        checks.check("undo still undoes the edit", text == original);
+        checks.check(
+            "and that's saved too",
+            wait_until(cx, |cx| !dirty(cx)).await && on_disk() == original,
+        );
+
+        // A change made elsewhere is never saved over.
+        type_text(cx, "Mine. ");
+        std::fs::write(&path, "Theirs.\n").ok();
+        pause(cx, 150).await;
+        let shown = window
+            .read_with(cx, |view, _| view.disk_change_shown())
+            .unwrap_or(false);
+        checks.check(
+            "doesn't save over a change made elsewhere",
+            on_disk() == "Theirs.\n" && shown && dirty(cx),
+        );
+        window.update(cx, |view, _, cx| view.keep_mine(cx)).ok();
+        checks.check(
+            "saves after Keep Mine",
+            wait_until(cx, |cx| !dirty(cx)).await && on_disk() == format!("Mine. {original}"),
+        );
+
+        // Switching to another tab saves at once.
+        type_text(cx, "Switching. ");
+        dispatch(window, cx, Box::new(New));
+        pause(cx, 10).await;
+        checks.check(
+            "switching tabs saves",
+            !dirty(cx) && on_disk().starts_with("Switching. "),
+        );
+        dispatch(window, cx, Box::new(SelectTab1));
+        pause(cx, 10).await;
+
+        // A failed autosave pauses autosave until a manual save.
+        let directory = path.parent().unwrap_or(Path::new("/")).to_owned();
+        let permissions =
+            |mode| std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(mode)).ok();
+        permissions(0o555);
+        type_text(cx, "Failing. ");
+        let paused = wait_until(cx, |cx| {
+            window
+                .read_with(cx, |view, _| view.autosave_paused())
+                .unwrap_or(false)
+        })
+        .await;
+        checks.check("a failed autosave pauses autosave", paused && dirty(cx));
+        permissions(0o755);
+        type_text(cx, "Still paused. ");
+        pause(cx, 120).await;
+        checks.check("stays paused", dirty(cx));
+        dispatch(window, cx, Box::new(Save));
+        pause(cx, 5).await;
+        let resumed = !window
+            .read_with(cx, |view, _| view.autosave_paused())
+            .unwrap_or(true);
+        checks.check("a manual save resumes it", resumed && !dirty(cx));
+        // The alert is still showing; quitting closes it.
+
+        type_text(cx, "Quitting. ");
+        checks.report();
+        println!("dispatching Quit");
+        dispatch(window, cx, Box::new(Quit));
     })
     .detach();
 }

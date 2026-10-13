@@ -50,6 +50,13 @@ pub const FONT_SIZES: RangeInclusive<u32> = 10..=32;
 /// The default text size, in pixels.
 pub const DEFAULT_FONT_SIZE: u32 = 16;
 
+/// The pauses after which autosave can save, in seconds.
+pub const AUTOSAVE_SECONDS: RangeInclusive<u32> = 1..=300;
+
+/// The pause the Settings sheet chooses when turning autosave on, in
+/// seconds.
+pub const DEFAULT_AUTOSAVE_SECONDS: u32 = 5;
+
 /// All settings, with defaults for any the file doesn't set.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
@@ -66,6 +73,9 @@ pub struct Settings {
     pub code_font: Option<String>,
     /// Whether the block being edited shows its keyboard hints.
     pub editing_hint: bool,
+    /// Save documents once typing has paused this many seconds, or
+    /// `None` not to save them automatically (F6).
+    pub autosave: Option<u32>,
 }
 
 impl Default for Settings {
@@ -79,6 +89,7 @@ impl Default for Settings {
             body_font: None,
             code_font: None,
             editing_hint: true,
+            autosave: None,
         }
     }
 }
@@ -154,6 +165,14 @@ pub enum Kind {
     Bool {
         get: fn(&Settings) -> bool,
         apply: fn(&mut Settings, bool),
+    },
+    /// `"off"`, or a whole number in a range.
+    OffOrInteger {
+        range: RangeInclusive<u32>,
+        /// The number the settings sheet sets when turning it on.
+        on: u32,
+        get: fn(&Settings) -> Option<u32>,
+        apply: fn(&mut Settings, Option<u32>),
     },
 }
 
@@ -252,6 +271,17 @@ pub const SETTINGS: &[Setting] = &[
         },
     },
     Setting {
+        key: "autosave",
+        label: "Autosave",
+        note: None,
+        kind: Kind::OffOrInteger {
+            range: AUTOSAVE_SECONDS,
+            on: DEFAULT_AUTOSAVE_SECONDS,
+            get: |settings| settings.autosave,
+            apply: |settings, seconds| settings.autosave = seconds,
+        },
+    },
+    Setting {
         key: "layout",
         label: "Open documents in",
         note: Some("Takes effect the next time Kami starts."),
@@ -319,6 +349,11 @@ impl Kind {
                 Some(value) => apply(settings, value),
                 None => return invalid(),
             },
+            Self::OffOrInteger { range, apply, .. } => match (value.as_str(), number) {
+                (Some("off"), _) => apply(settings, None),
+                (_, Some(n)) if range.contains(&n) => apply(settings, Some(n)),
+                _ => return invalid(),
+            },
         }
         Ok(())
     }
@@ -339,6 +374,11 @@ impl Kind {
             }
             Self::Font { .. } => "a font name, e.g. \"Charter\"".to_owned(),
             Self::Bool { .. } => one_of(&["true", "false"]),
+            Self::OffOrInteger { range, .. } => format!(
+                "`off` or a whole number from {} to {}",
+                range.start(),
+                range.end()
+            ),
         }
     }
 }
@@ -534,8 +574,25 @@ mod tests {
                 body_font: None,
                 code_font: None,
                 editing_hint: true,
+                autosave: None,
             }
         );
+    }
+
+    #[test]
+    fn autosave_is_off_or_seconds() {
+        assert_eq!(parse("autosave = 30\n").0.autosave, Some(30));
+        assert_eq!(parse("autosave = \"off\"\n").0.autosave, None);
+        for bad in ["0", "301", "\"on\"", "true", "2.5"] {
+            let (settings, problems) = parse(&format!("autosave = {bad}\n"));
+            assert_eq!(settings.autosave, None, "{bad}");
+            assert_eq!(
+                problems[0].message,
+                "`autosave` must be `off` or a whole number from 1 to 300; using the default",
+                "{bad}"
+            );
+        }
+        assert!(set("", "autosave", 0).is_err());
     }
 
     #[test]
@@ -768,6 +825,14 @@ mod tests {
                         let text = set("", setting.key, b).unwrap();
                         assert_eq!(get(&parse(&text).0), b, "{}", setting.key);
                     }
+                }
+                Kind::OffOrInteger { range, on, get, .. } => {
+                    for n in [*range.start(), *on, *range.end()] {
+                        let text = set("", setting.key, i64::from(n)).unwrap();
+                        assert_eq!(get(&parse(&text).0), Some(n), "{}", setting.key);
+                    }
+                    let text = set("", setting.key, "off").unwrap();
+                    assert_eq!(get(&parse(&text).0), None, "{}", setting.key);
                 }
             }
         }
