@@ -273,7 +273,9 @@ pub struct DocumentView {
 
 impl DocumentView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let focus_handle = cx.focus_handle();
+        // A tab stop, so Tab can come back to the document from the bars'
+        // buttons.
+        let focus_handle = cx.focus_handle().tab_stop(true);
         focus_handle.focus(window, cx);
         // Follow the theme setting and the macOS appearance, switching live
         // when either changes.
@@ -477,6 +479,13 @@ impl DocumentView {
         self.open
             .as_ref()
             .is_some_and(|open| open.editor.is_dirty())
+    }
+
+    /// Whether the bar reporting problems in the settings file is showing,
+    /// for the smoke test.
+    #[cfg(debug_assertions)]
+    pub fn settings_problems_shown(&self) -> bool {
+        !self.settings_problems_dismissed
     }
 
     /// The document's model, for the smoke test.

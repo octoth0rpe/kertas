@@ -12,7 +12,7 @@
 //!   saves, so the text can be checked.
 //! - `bench`: times 500 inserts in the middle of the document.
 //! - `tabs`, `settings`, `settings-window`, `help`, `reveal`, `clicks`,
-//!   `print`, `disk`, `autosave`, `quit`: see each function.
+//!   `a11y`, `print`, `disk`, `autosave`, `quit`: see each function.
 
 use std::cell::Cell;
 use std::path::Path;
@@ -43,6 +43,7 @@ pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
         "settings-window" => smoke_settings_window(window, cx),
         "reveal" => smoke_reveal(window, cx),
         "clicks" => smoke_clicks(window, cx),
+        "a11y" => smoke_a11y(window, cx),
         "print" => smoke_print(window, cx),
         "disk" => smoke_disk(window, cx),
         "autosave" => smoke_autosave(window, cx),
@@ -136,6 +137,30 @@ async fn mouse_click(
             click_count: 1,
         }),
     );
+}
+
+/// Presses and releases `key` (e.g. `"shift-tab"`) in `window`, as the
+/// keyboard would.
+async fn press_key(window: gpui::AnyWindowHandle, cx: &mut AsyncApp, key: &str) {
+    let Ok(keystroke) = gpui::Keystroke::parse(key) else {
+        return;
+    };
+    let up = keystroke.clone();
+    window
+        .update(cx, |_, window, cx| {
+            window.dispatch_keystroke(keystroke, cx);
+        })
+        .ok();
+    pause(cx, 2).await;
+    window
+        .update(cx, |_, window, cx| {
+            window.dispatch_event(
+                gpui::PlatformInput::KeyUp(gpui::KeyUpEvent { keystroke: up }),
+                cx,
+            );
+        })
+        .ok();
+    pause(cx, 3).await;
 }
 
 fn window_count(cx: &mut AsyncApp) -> usize {
@@ -551,6 +576,21 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
         std::fs::write(&path, "theme = \"blue\"\nfont = 1\n").ok();
         settle(cx).await;
         checks.check("bad file reports 2 problems", problems(cx) == 2);
+        // With no block being edited, Tab reaches the bar's dismiss button
+        // and Space presses it.
+        let shown = |cx: &mut AsyncApp| {
+            window
+                .read_with(cx, |view, _| view.settings_problems_shown())
+                .unwrap_or(false)
+        };
+        let shown_before = shown(cx);
+        press_key(window.into(), cx, "tab").await;
+        press_key(window.into(), cx, "space").await;
+        pause(cx, 5).await;
+        checks.check(
+            "Tab and Space dismiss the problems bar",
+            shown_before && !shown(cx),
+        );
 
         std::fs::write(&path, "# Mine\ntheme = \"dark\"  # at night\n").ok();
         settle(cx).await;
@@ -785,7 +825,32 @@ fn smoke_settings_window(window: WindowHandle<DocumentView>, cx: &mut App) {
             window_count(cx) == 3 && tab_count(window, cx) == 2,
         );
 
+        // From the keyboard: Tab reaches the first control (Appearance's
+        // Light), Space chooses it, and Tab moves on to Dark.
+        let theme = |cx: &mut AsyncApp| cx.update(|cx| crate::app_settings::get(cx).theme);
         if let Some(settings) = settings {
+            settings
+                .update(cx, |_, window, _| window.activate_window())
+                .ok();
+            pause(cx, 10).await;
+            press_key(settings, cx, "tab").await;
+            press_key(settings, cx, "space").await;
+            pause(cx, 10).await;
+            let light = theme(cx);
+            press_key(settings, cx, "tab").await;
+            press_key(settings, cx, "space").await;
+            pause(cx, 10).await;
+            let dark = theme(cx);
+            press_key(settings, cx, "shift-tab").await;
+            press_key(settings, cx, "space").await;
+            pause(cx, 10).await;
+            let back = theme(cx);
+            checks.check(
+                &format!("Tab, ⇧Tab and Space choose settings ({light:?}, {dark:?}, {back:?})"),
+                light == kami::settings::ThemeSetting::Light
+                    && dark == kami::settings::ThemeSetting::Dark
+                    && back == kami::settings::ThemeSetting::Light,
+            );
             settings
                 .update(cx, |_, window, cx| {
                     window.dispatch_keystroke(gpui::Keystroke::parse("escape").unwrap(), cx);
@@ -989,6 +1054,185 @@ fn smoke_clicks(window: WindowHandle<DocumentView>, cx: &mut App) {
                 && start
                     .is_some_and(|start| selection.is_some_and(|selection| selection.head > start)),
         );
+        checks.finish(cx);
+    })
+    .detach();
+}
+
+/// Turns on `window`'s accessibility tree, as VoiceOver does by asking
+/// the window's view about its contents, and returns GPUI's description of
+/// the tree once it's built.
+async fn a11y_tree(window: gpui::AnyWindowHandle, cx: &mut AsyncApp) -> String {
+    window
+        .update(cx, |_, window, _| {
+            let Some(ns_window) = crate::native_tabs::ns_window(window) else {
+                return;
+            };
+            if let Some(view) = ns_window.contentView() {
+                // SAFETY: `accessibilityChildren` is an NSAccessibility
+                // method every NSView has; it takes no arguments and returns
+                // an object (an array, or nil), which is dropped unused.
+                let _: Option<objc2::rc::Retained<objc2::runtime::AnyObject>> =
+                    unsafe { objc2::msg_send![&*view, accessibilityChildren] };
+            }
+        })
+        .ok();
+    let mut tree = String::new();
+    for _ in 0..50 {
+        pause(cx, 5).await;
+        window
+            .update(cx, |_, window, cx| {
+                // Draw a frame with the tree in it.
+                window.refresh();
+                let _ = cx;
+                tree = window.debug_a11y_tree_json().unwrap_or_default();
+            })
+            .ok();
+        if tree.contains("\"Document\"") || tree.contains("\"Dialog\"") {
+            break;
+        }
+    }
+    tree
+}
+
+/// `KAMI_SMOKE=a11y`, on `a11y.md`: what VoiceOver is told about the
+/// document, the tab strip and the settings sheet (N5).
+fn smoke_a11y(window: WindowHandle<DocumentView>, cx: &mut App) {
+    use crate::menus::OpenSettings;
+
+    cx.spawn(async move |cx| {
+        let mut checks = Checks::default();
+        pause(cx, 10).await;
+        // A second tab, so there's a tab strip.
+        dispatch(window, cx, Box::new(New));
+        pause(cx, 20).await;
+        window
+            .update(cx, |_, window, _| window.activate_window())
+            .ok();
+        pause(cx, 20).await;
+        let tree = a11y_tree(window.into(), cx).await;
+        if let Ok(path) = std::env::var("KAMI_A11Y_DUMP") {
+            std::fs::write(&path, &tree).ok();
+        }
+        // GPUI's description of the tree is pretty-printed JSON.
+        let has = |tree: &str, fields: &[&str]| {
+            tree.split("\"aria\": {")
+                .any(|node| fields.iter().all(|field| node.contains(field)))
+        };
+        checks.check(
+            "the document is named after its file",
+            has(&tree, &["\"role\": \"Document\"", "\"label\": \"a11y.md\""]),
+        );
+        checks.check(
+            "headings have their level",
+            has(
+                &tree,
+                &[
+                    "\"role\": \"Heading\"",
+                    "\"label\": \"Title\"",
+                    "\"level\": 1",
+                ],
+            ),
+        );
+        checks.check(
+            "paragraphs and code are labels",
+            has(
+                &tree,
+                &["\"role\": \"Label\"", "\"value\": \"A paragraph.\""],
+            ) && has(&tree, &["\"role\": \"Label\"", "\"value\": \"code\""]),
+        );
+        checks.check(
+            "task checkboxes are named and checked",
+            has(
+                &tree,
+                &[
+                    "\"role\": \"CheckBox\"",
+                    "\"label\": \"Done task\"",
+                    "\"toggled\": \"True\"",
+                ],
+            ) && has(
+                &tree,
+                &[
+                    "\"role\": \"CheckBox\"",
+                    "\"label\": \"Open task\"",
+                    "\"toggled\": \"False\"",
+                ],
+            ),
+        );
+        checks.check(
+            "tabs are named, and the current one selected",
+            has(&tree, &["\"role\": \"TabList\""])
+                && has(
+                    &tree,
+                    &[
+                        "\"role\": \"Tab\"",
+                        "\"label\": \"a11y.md\"",
+                        "\"selected\": true",
+                    ],
+                )
+                && has(
+                    &tree,
+                    &[
+                        "\"role\": \"Tab\"",
+                        "\"label\": \"Untitled\"",
+                        "\"selected\": false",
+                    ],
+                )
+                && has(
+                    &tree,
+                    &["\"role\": \"Button\"", "\"label\": \"Close a11y.md\""],
+                ),
+        );
+
+        dispatch(window, cx, Box::new(OpenSettings));
+        pause(cx, 20).await;
+        let settings = cx.update(|cx| {
+            cx.windows()
+                .into_iter()
+                .find(|other| other.downcast::<DocumentView>().is_none())
+        });
+        let tree = match settings {
+            Some(settings) => a11y_tree(settings, cx).await,
+            None => String::new(),
+        };
+        if let Ok(path) = std::env::var("KAMI_A11Y_DUMP") {
+            std::fs::write(format!("{path}.settings"), &tree).ok();
+        }
+        checks.check(
+            "the settings sheet is a dialog with named choices",
+            has(&tree, &["\"role\": \"Dialog\"", "\"label\": \"Settings\""])
+                && has(
+                    &tree,
+                    &["\"role\": \"RadioGroup\"", "\"label\": \"Appearance\""],
+                )
+                && has(
+                    &tree,
+                    &[
+                        "\"role\": \"RadioButton\"",
+                        "\"label\": \"Match System\"",
+                        "\"toggled\": \"True\"",
+                    ],
+                )
+                && has(
+                    &tree,
+                    &["\"role\": \"CheckBox\"", "\"label\": \"Editing hint\""],
+                )
+                && has(
+                    &tree,
+                    &[
+                        "\"role\": \"Button\"",
+                        "\"label\": \"Increase default text size",
+                    ],
+                )
+                && has(
+                    &tree,
+                    &["\"role\": \"DefaultButton\"", "\"label\": \"Done\""],
+                ),
+        );
+        if let Some(settings) = settings {
+            dispatch(settings, cx, Box::new(CloseWindow));
+        }
+        pause(cx, 10).await;
         checks.finish(cx);
     })
     .detach();

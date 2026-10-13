@@ -55,9 +55,14 @@ impl DocumentView {
     /// it went down on. The selection stays as it is, so the list stays
     /// rendered.
     pub fn release_task(&mut self, marker: usize, cx: &mut Context<Self>) {
-        if self.pressed_task.take() != Some(marker) {
-            return;
+        if self.pressed_task.take() == Some(marker) {
+            self.toggle_task(marker, cx);
         }
+    }
+
+    /// Toggles the checkbox whose `[ ]` starts at document offset
+    /// `marker`, leaving the selection as it is.
+    pub fn toggle_task(&mut self, marker: usize, cx: &mut Context<Self>) {
         let Some(open) = &mut self.open else {
             return;
         };

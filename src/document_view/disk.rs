@@ -158,33 +158,24 @@ impl DocumentView {
         };
         let theme = self.theme;
         let buttons = buttons.iter().map(|&(label, action)| {
-            div()
-                .id(label)
-                .flex_none()
-                .px_2()
-                .py(px(2.))
-                .rounded_md()
-                .cursor_pointer()
-                .border_1()
-                .border_color(theme.rule)
-                .bg(theme.background)
-                .hover(|style| style.bg(theme.rule))
-                .child(label)
-                .on_mouse_down(
-                    gpui::MouseButton::Left,
-                    cx.listener(move |this, _, window, cx| {
-                        cx.stop_propagation();
-                        match action {
-                            BarAction::Reload => this.reload_pending(cx),
-                            BarAction::KeepMine => this.keep_mine(cx),
-                            BarAction::Save => window.dispatch_action(Box::new(Save), cx),
-                            BarAction::SaveAs => window.dispatch_action(Box::new(SaveAs), cx),
-                        }
-                    }),
-                )
+            super::render::bar_button(theme, label, label, label).on_click(cx.listener(
+                move |this, _, window, cx| {
+                    // The bar closes, so focus would be left on nothing.
+                    this.focus_handle.focus(window, cx);
+                    match action {
+                        BarAction::Reload => this.reload_pending(cx),
+                        BarAction::KeepMine => this.keep_mine(cx),
+                        BarAction::Save => window.dispatch_action(Box::new(Save), cx),
+                        BarAction::SaveAs => window.dispatch_action(Box::new(SaveAs), cx),
+                    }
+                },
+            ))
         });
         Some(
             div()
+                .id("disk-change")
+                .role(gpui::Role::Alert)
+                .aria_label(message.clone())
                 .flex()
                 .items_center()
                 .gap_2()

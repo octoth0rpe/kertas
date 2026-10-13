@@ -1,14 +1,16 @@
 //! Drawing blocks in rendered mode, and mapping clicks on them back to
 //! source offsets.
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, ElementId, Font, FontWeight, Hsla, InteractiveText, MouseButton, Rems,
-    SharedString, StyledText, WeakEntity, Window, div, prelude::*, px, rems,
+    AccessibleAction, AnyElement, App, ElementId, Font, FontWeight, Hsla, InteractiveText,
+    MouseButton, Rems, Role, SharedString, StyledText, Toggled, WeakEntity, Window, div,
+    prelude::*, px, rems,
 };
 use kami::inline::InlineText;
-use kami::rendered::{ColumnAlignment, ListItem, RenderedBlock, Table};
+use kami::rendered::{ColumnAlignment, ListItem, RenderedBlock, Table, Task};
 use kami::settings::ListIndent;
 use kami::tabs::ExpandedTabs;
 
@@ -36,6 +38,19 @@ struct TextStyle {
     list_indent: ListIndent,
     code_font: SharedString,
     click: ClickTarget,
+    /// How many accessibility nodes the block has so far, to number them.
+    nodes: Rc<Cell<usize>>,
+}
+
+impl TextStyle {
+    /// An ID for the block's next accessibility node, unique within the
+    /// block. Nodes need IDs to be reported, and the block's own ID keeps
+    /// them apart from other blocks' nodes.
+    fn node_id(&self, kind: &'static str) -> ElementId {
+        let index = self.nodes.get();
+        self.nodes.set(index + 1);
+        ElementId::named_usize(kind, index)
+    }
 }
 
 /// Where clicks on a block's text are reported, and the text column the
@@ -86,6 +101,15 @@ impl ClickTarget {
             .ok();
     }
 
+    /// Toggles the checkbox at `marker` in the block's source, as VoiceOver
+    /// asks.
+    pub fn toggle_task(&self, marker: usize, cx: &mut App) {
+        let marker = self.block_start + marker;
+        self.view
+            .update(cx, |view, cx| view.toggle_task(marker, cx))
+            .ok();
+    }
+
     /// Follows a clicked link to `destination`.
     pub fn follow_link(&self, destination: &str, window: &mut Window, cx: &mut App) {
         self.view
@@ -129,9 +153,13 @@ pub fn rendered_content(block: &RenderedBlock, look: &Look, click: ClickTarget) 
         tab_width: look.tab_width,
         list_indent: look.list_indent,
         code_font: look.code_font.clone(),
+        nodes: Rc::default(),
         click,
     };
-    render_content(block, &style, 0)
+    div()
+        .id(ElementId::named_usize("block", style.click.block_start))
+        .child(render_content(block, &style, 0))
+        .into_any_element()
 }
 
 /// Wraps a block's content as a list item: centered in the text column,
@@ -178,7 +206,7 @@ pub fn block_frame(
 /// how many lists the block is nested in, which picks the bullet style.
 fn render_content(block: &RenderedBlock, style: &TextStyle, depth: usize) -> AnyElement {
     match block {
-        RenderedBlock::Paragraph(text) => clickable_text(text, style),
+        RenderedBlock::Paragraph(text) => clickable_text(text, style, true),
         RenderedBlock::Heading { level, text } => {
             let mut heading_style = style.clone();
             heading_style.font.weight = FontWeight::SEMIBOLD;
@@ -186,7 +214,13 @@ fn render_content(block: &RenderedBlock, style: &TextStyle, depth: usize) -> Any
                 heading_style.color = style.theme.muted_text;
             }
             heading_text(div(), *level)
-                .child(clickable_text(text, &heading_style))
+                .id(style.node_id("heading"))
+                .role(Role::Heading)
+                .aria_level(usize::from(*level))
+                .aria_label(text.text.clone())
+                // The heading's name is its text, so the text isn't
+                // reported again.
+                .child(clickable_text(text, &heading_style, false))
                 .into_any_element()
         }
         RenderedBlock::ThematicBreak => div()
@@ -261,56 +295,89 @@ fn render_list(
         })
         .collect();
     let column = marker_column(style.list_indent, &markers);
+    let count = items.len();
     div()
+        .id(style.node_id("list"))
+        .role(Role::List)
         .flex()
         .flex_col()
         .gap(px(4.))
-        .children(items.iter().zip(markers).map(|(item, marker)| {
-            div()
-                .flex()
-                .child(
+        .children(
+            items
+                .iter()
+                .zip(markers)
+                .enumerate()
+                .map(|(index, (item, marker))| {
                     div()
-                        .flex_none()
-                        .w(rems(column))
-                        .pr(rems(MARKER_GAP))
-                        .text_right()
-                        .text_color(style.color)
-                        .child(match item.task {
-                            Some(task) if style.click.editable => {
-                                task_checkbox(marker, task.marker, &style.click)
-                            }
-                            _ => marker.into_any_element(),
-                        }),
-                )
-                .child(div().flex_1().min_w(px(0.)).child(render_children(
-                    &item.children,
-                    style,
-                    depth + 1,
-                )))
-        }))
+                        .id(style.node_id("item"))
+                        .role(Role::ListItem)
+                        .aria_position_in_set(index + 1)
+                        .aria_size_of_set(count)
+                        .flex()
+                        .child(
+                            div()
+                                .flex_none()
+                                .w(rems(column))
+                                .pr(rems(MARKER_GAP))
+                                .text_right()
+                                .text_color(style.color)
+                                .child(match item.task {
+                                    Some(task) => task_checkbox(marker, task, item, style),
+                                    None => marker.into_any_element(),
+                                }),
+                        )
+                        .child(div().flex_1().min_w(px(0.)).child(render_children(
+                            &item.children,
+                            style,
+                            depth + 1,
+                        )))
+                }),
+        )
         .into_any_element()
 }
 
-/// A task list item's checkbox, which toggles when clicked. `marker` is
-/// where its `[ ]` starts in the block's source.
-fn task_checkbox(checkbox: String, marker: usize, click: &ClickTarget) -> AnyElement {
-    let (press, release) = (click.clone(), click.clone());
+/// A task list item's checkbox, which toggles when clicked unless the
+/// document is view-only.
+fn task_checkbox(checkbox: String, task: Task, item: &ListItem, style: &TextStyle) -> AnyElement {
+    // Named after the task, for VoiceOver.
+    let name = match item.children.first() {
+        Some(RenderedBlock::Paragraph(text)) => text.text.clone(),
+        _ => String::new(),
+    };
+    let marker = task.marker;
+    let click = &style.click;
+    let (press, release, toggle) = (click.clone(), click.clone(), click.clone());
+    let checkbox = div()
+        .id(style.node_id("checkbox"))
+        .role(Role::CheckBox)
+        .aria_label(name)
+        .aria_toggled(if task.checked {
+            Toggled::True
+        } else {
+            Toggled::False
+        })
+        .child(checkbox);
+    let checkbox = if click.editable {
+        checkbox
+            .cursor_pointer()
+            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                // Leave the list rendered.
+                press.press_task(marker, cx);
+                cx.stop_propagation();
+            })
+            .on_mouse_up(MouseButton::Left, move |_, _, cx| {
+                release.release_task(marker, cx);
+            })
+            .on_a11y_action(AccessibleAction::Click, move |_, _, cx| {
+                toggle.toggle_task(marker, cx);
+            })
+    } else {
+        checkbox
+    };
     div()
         .flex()
         .justify_end()
-        .child(
-            div()
-                .cursor_pointer()
-                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                    // Leave the list rendered.
-                    press.press_task(marker, cx);
-                    cx.stop_propagation();
-                })
-                .on_mouse_up(MouseButton::Left, move |_, _, cx| {
-                    release.release_task(marker, cx);
-                })
-                .child(checkbox),
-        )
+        .child(checkbox)
         .into_any_element()
 }
 
@@ -362,7 +429,7 @@ fn render_table(table: &Table, style: &TextStyle) -> AnyElement {
                         ColumnAlignment::Right => this.text_right(),
                         ColumnAlignment::Left | ColumnAlignment::None => this,
                     })
-                    .child(clickable_text(cell, style))
+                    .child(clickable_text(cell, style, true))
             }))
     };
 
@@ -384,8 +451,9 @@ fn heading_top_space(level: u8) -> f32 {
 
 /// Inline text that places the caret at the matching source position
 /// when clicked. A plain click on a link follows it instead, and the
-/// pointer is a hand over links.
-fn clickable_text(text: &InlineText, style: &TextStyle) -> AnyElement {
+/// pointer is a hand over links. The text is reported to VoiceOver as a
+/// label if `accessible` is set.
+fn clickable_text(text: &InlineText, style: &TextStyle, accessible: bool) -> AnyElement {
     let styled = styled_text(text, style);
     let layout = styled.layout().clone();
     let inline = text.clone();
@@ -398,25 +466,25 @@ fn clickable_text(text: &InlineText, style: &TextStyle) -> AnyElement {
         // on, like links elsewhere.
         let ranges = text.links.iter().map(|link| link.display.clone()).collect();
         let (links, follow) = (text.links.clone(), click.clone());
-        let first = text
-            .segments
-            .first()
-            .map_or(0, |segment| segment.source.start);
-        InteractiveText::new(
-            ElementId::named_usize("links", click.block_start + first),
-            styled,
-        )
-        .on_click(ranges, move |index, window, cx| {
-            if window.modifiers().modified() {
-                return;
-            }
-            if let Some(link) = links.get(index) {
-                follow.follow_link(&link.destination, window, cx);
-            }
-        })
-        .into_any_element()
+        // Text with links reports itself as a label.
+        InteractiveText::new(style.node_id("links"), styled)
+            .on_click(ranges, move |index, window, cx| {
+                if window.modifiers().modified() {
+                    return;
+                }
+                if let Some(link) = links.get(index) {
+                    follow.follow_link(&link.destination, window, cx);
+                }
+            })
+            .into_any_element()
     };
+    let label =
+        (accessible && text.links.is_empty() && !text.text.is_empty()).then(|| text.text.clone());
     div()
+        .id(style.node_id("text"))
+        .when_some(label, |this, label| {
+            this.role(Role::Label).aria_value(label)
+        })
         .on_mouse_down(MouseButton::Left, move |event, window, cx| {
             let index = layout.index_for_position(event.position);
             // A plain click on a link leaves the block rendered.
@@ -450,12 +518,17 @@ fn clickable_source(
     to_source: impl Fn(usize) -> usize + 'static,
 ) -> AnyElement {
     let tabs = ExpandedTabs::new(text, style.tab_width);
-    let styled = StyledText::new(SharedString::from(tabs.text.clone()));
+    let shown = SharedString::from(tabs.text.clone());
+    let styled = StyledText::new(shown.clone());
     let layout = styled.layout().clone();
     let click = style.click.clone();
     let to_source = Rc::new(move |shown: usize| to_source(tabs.to_source(shown)));
     let (drag_layout, drag_to_source, drag) = (layout.clone(), to_source.clone(), click.clone());
     div()
+        .id(style.node_id("source"))
+        .when(!shown.is_empty(), |this| {
+            this.role(Role::Label).aria_value(shown)
+        })
         .on_mouse_down(MouseButton::Left, move |event, window, cx| {
             let (Ok(index) | Err(index)) = layout.index_for_position(event.position);
             click.report(to_source(index), event.modifiers.shift, window, cx);

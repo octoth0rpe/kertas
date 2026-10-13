@@ -1,8 +1,8 @@
 //! Drawing the document view, its actions, and the settings problems bar.
 
 use gpui::{
-    AnyElement, Context, Div, Rems, SystemWindowTabController, Window, div, list, prelude::*, px,
-    relative, rems,
+    AnyElement, Context, Div, Rems, Role, SharedString, Stateful, SystemWindowTabController,
+    Window, div, list, prelude::*, px, relative, rems,
 };
 use kami::editor::{Motion, RevealTarget};
 use kami::settings::TextWidth;
@@ -34,6 +34,35 @@ fn column_width(width: TextWidth) -> Option<Rems> {
         TextWidth::Wide => Some(rems(60.)),
         TextWidth::Full => None,
     }
+}
+
+/// A button in one of the bars at the top and bottom of the window,
+/// showing `label`. `name` is what it's called for VoiceOver. It's
+/// reachable with Tab when no block is being edited, and ringed when it
+/// has keyboard focus.
+pub(super) fn bar_button(
+    theme: crate::theme::Theme,
+    id: impl Into<SharedString>,
+    label: impl Into<SharedString>,
+    name: impl Into<SharedString>,
+) -> Stateful<Div> {
+    div()
+        .id(id.into())
+        .focusable()
+        .tab_stop(true)
+        .role(Role::Button)
+        .aria_label(name)
+        .flex_none()
+        .px_2()
+        .py(px(2.))
+        .rounded_md()
+        .cursor_pointer()
+        .border_1()
+        .border_color(theme.rule)
+        .bg(theme.background)
+        .hover(|style| style.bg(theme.rule))
+        .focus_visible(move |style| style.border_color(theme.caret))
+        .child(label.into())
 }
 
 impl DocumentView {
@@ -70,6 +99,9 @@ impl DocumentView {
         let theme = self.theme;
         Some(
             div()
+                .id("settings-problems")
+                .role(Role::Status)
+                .aria_label(message.clone())
                 .flex()
                 .items_center()
                 .gap_2()
@@ -83,20 +115,22 @@ impl DocumentView {
                 .text_color(theme.muted_text)
                 .child(div().flex_1().child(message))
                 .child(
-                    div()
-                        .px_1()
-                        .rounded_sm()
-                        .cursor_pointer()
-                        .hover(|this| this.bg(theme.rule))
-                        .child("×")
-                        .on_mouse_down(
-                            gpui::MouseButton::Left,
-                            cx.listener(|this, _, _, cx| {
-                                this.settings_problems_dismissed = true;
-                                cx.notify();
-                                cx.stop_propagation();
-                            }),
-                        ),
+                    bar_button(
+                        theme,
+                        "dismiss-settings-problems",
+                        "×",
+                        "Dismiss settings problems",
+                    )
+                    .px_1()
+                    .py_0()
+                    .border_color(gpui::transparent_black())
+                    .bg(gpui::transparent_black())
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.settings_problems_dismissed = true;
+                        // Focus would otherwise be left on nothing.
+                        this.focus_handle.focus(window, cx);
+                        cx.notify();
+                    })),
                 )
                 .into_any_element(),
         )
@@ -332,11 +366,19 @@ impl DocumentView {
             .on_action(cx.listener(|this, _: &LineBreak, _, cx| {
                 this.edit(cx, |editor| editor.newline(true))
             }))
-            .on_action(cx.listener(|this, _: &IndentTab, _, cx| {
-                this.edit(cx, |editor| editor.indent(false, false))
+            .on_action(cx.listener(|this, _: &IndentTab, window, cx| {
+                if this.is_editing(window) {
+                    this.edit(cx, |editor| editor.indent(false, false));
+                } else {
+                    window.focus_next(cx);
+                }
             }))
-            .on_action(cx.listener(|this, _: &OutdentTab, _, cx| {
-                this.edit(cx, |editor| editor.indent(true, false))
+            .on_action(cx.listener(|this, _: &OutdentTab, window, cx| {
+                if this.is_editing(window) {
+                    this.edit(cx, |editor| editor.indent(true, false));
+                } else {
+                    window.focus_prev(cx);
+                }
             }))
             .on_action(cx.listener(|this, _: &IndentLines, _, cx| {
                 this.edit(cx, |editor| editor.indent(false, true))
@@ -391,6 +433,14 @@ impl Render for DocumentView {
         let disk_bar = self.render_disk_change(cx);
         let problems_bar = self.render_settings_problems(cx);
 
+        let name = match self.builtin {
+            Some(builtin) => builtin.title().to_owned(),
+            None => self
+                .open
+                .as_ref()
+                .map(|open| open.editor.document().display_name())
+                .unwrap_or_default(),
+        };
         let content = match &self.open {
             Some(open) => self.render_document(open, window, cx),
             None => div()
@@ -415,6 +465,10 @@ impl Render for DocumentView {
             .children(disk_bar)
             .child(
                 div()
+                    .id("document")
+                    .when(self.open.is_some(), |this| {
+                        this.role(Role::Document).aria_label(name)
+                    })
                     .flex_1()
                     .min_h(px(0.))
                     // List markers and the like follow the body font too.

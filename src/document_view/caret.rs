@@ -32,6 +32,17 @@ impl DocumentView {
         self.move_caret(offset, extend, cx);
     }
 
+    /// Whether a block is being edited here: the document has the caret
+    /// and the keyboard focus. Otherwise Tab moves the focus between the
+    /// document and the buttons in its bars.
+    pub(super) fn is_editing(&self, window: &Window) -> bool {
+        self.focus_handle.is_focused(window)
+            && self
+                .open
+                .as_ref()
+                .is_some_and(|open| open.editor.selection().is_some())
+    }
+
     /// Stops extending the selection when the mouse moves.
     pub fn end_drag(&mut self) {
         self.dragging = false;

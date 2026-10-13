@@ -7,9 +7,9 @@
 use std::ops::RangeInclusive;
 
 use gpui::{
-    AnyElement, App, Bounds, Context, FocusHandle, Global, KeyBinding, MouseButton, SharedString,
-    Subscription, Window, WindowBounds, WindowHandle, WindowKind, WindowOptions, anchored,
-    deferred, div, prelude::*, px, size,
+    AnyElement, App, Bounds, Context, Div, FocusHandle, Global, KeyBinding, MouseButton, Role,
+    SharedString, Stateful, Subscription, Toggled, Window, WindowBounds, WindowHandle, WindowKind,
+    WindowOptions, actions, anchored, deferred, div, prelude::*, px, size,
 };
 use kami::settings::{Kind, SETTINGS, Setting, Settings};
 
@@ -65,11 +65,17 @@ pub fn open(cx: &mut App) {
     cx.activate(true);
 }
 
-/// Keys that close the settings window, as for any sheet.
+actions!(settings_window, [FocusNext, FocusPrevious]);
+
+/// Keys for the settings window. Esc and Return close it, as for any
+/// sheet (Return is Done, the default button), and Tab and ⇧Tab move
+/// between its controls. Space activates the focused control.
 pub fn key_bindings() -> Vec<KeyBinding> {
     vec![
         KeyBinding::new("escape", CloseWindow, Some(KEY_CONTEXT)),
         KeyBinding::new("enter", CloseWindow, Some(KEY_CONTEXT)),
+        KeyBinding::new("tab", FocusNext, Some(KEY_CONTEXT)),
+        KeyBinding::new("shift-tab", FocusPrevious, Some(KEY_CONTEXT)),
     ]
 }
 
@@ -175,20 +181,35 @@ impl SettingsWindow {
                 }
             }
         };
+        let name = setting.label.to_lowercase();
+        let value = format!("{current} {unit}");
         let content = div()
             .flex()
             .items_center()
             .gap_2()
-            .child(self.button("smaller", "−", cx, set(current.saturating_sub(1))))
-            .child(
-                div()
-                    .w(px(44.))
-                    .text_center()
-                    .child(format!("{current} {unit}")),
-            )
-            .child(self.button("larger", "+", cx, set(current + 1)))
+            .child(self.button(
+                format!("{key}-smaller"),
+                "−",
+                format!("Decrease {name}, {value}"),
+                cx,
+                set(current.saturating_sub(1)),
+            ))
+            .child(div().w(px(44.)).text_center().child(value.clone()))
+            .child(self.button(
+                format!("{key}-larger"),
+                "+",
+                format!("Increase {name}, {value}"),
+                cx,
+                set(current + 1),
+            ))
             .when(current != default, |this| {
-                this.child(self.button("reset-size", "Reset", cx, set(default)))
+                this.child(self.button(
+                    format!("{key}-reset"),
+                    "Reset",
+                    format!("Reset {name} to {default} {unit}"),
+                    cx,
+                    set(default),
+                ))
             });
         self.labelled(setting.label, self.with_note(content, setting.note))
     }
@@ -205,28 +226,29 @@ impl SettingsWindow {
         let theme = self.theme;
         let key = setting.key;
         let open = self.font_menu == Some(key);
-        let button = div()
-            .id(key)
+        let shown = current.unwrap_or(default).to_owned();
+        let button = self
+            .control(
+                div().id(key),
+                Role::Button,
+                format!("{} font, {shown}", setting.label),
+            )
+            .aria_expanded(open)
             .flex()
             .items_center()
             .gap_2()
             .px_3()
             .py(px(3.))
             .rounded_md()
-            .cursor_pointer()
             .border_1()
             .border_color(theme.rule)
             .bg(theme.code_background)
             .hover(|style| style.bg(theme.rule))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _, _, cx| {
-                    this.font_menu = if open { None } else { Some(key) };
-                    cx.stop_propagation();
-                    cx.notify();
-                }),
-            )
-            .child(current.unwrap_or(default).to_owned())
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.font_menu = if open { None } else { Some(key) };
+                cx.notify();
+            }))
+            .child(shown)
             .child(div().text_color(theme.muted_text).child("▾"));
 
         let item = |id: SharedString,
@@ -234,27 +256,24 @@ impl SettingsWindow {
                     font: Option<String>,
                     cx: &mut Context<Self>| {
             let selected = font.as_deref() == current;
-            div()
-                .id(id)
+            self.control(div().id(id), Role::MenuItemRadio, label.clone())
+                .aria_toggled(toggled(selected))
                 .flex()
                 .gap_2()
                 .px_3()
                 .py(px(2.))
-                .cursor_pointer()
+                .border_1()
+                .border_color(gpui::transparent_black())
                 .hover(|style| style.bg(theme.rule))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |this, _, _, cx| {
-                        this.font_menu = None;
-                        let font = font.clone();
-                        cx.defer(move |cx| match font {
-                            Some(font) => app_settings::set_or_report(key, font, cx),
-                            None => app_settings::remove_or_report(key, cx),
-                        });
-                        cx.stop_propagation();
-                        cx.notify();
-                    }),
-                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.font_menu = None;
+                    let font = font.clone();
+                    cx.defer(move |cx| match font {
+                        Some(font) => app_settings::set_or_report(key, font, cx),
+                        None => app_settings::remove_or_report(key, cx),
+                    });
+                    cx.notify();
+                }))
                 .child(div().w(px(12.)).child(if selected { "✓" } else { "" }))
                 .child(label)
         };
@@ -282,6 +301,8 @@ impl SettingsWindow {
                 anchored().snap_to_window().child(
                     div()
                         .id(SharedString::from(format!("{key}-fonts")))
+                        .role(Role::Menu)
+                        .aria_label(format!("{} fonts", setting.label))
                         .occlude()
                         .mt_1()
                         .w(px(260.))
@@ -332,14 +353,19 @@ impl SettingsWindow {
     fn checkbox(&self, setting: &'static Setting, checked: bool) -> impl IntoElement {
         let theme = self.theme;
         let key = setting.key;
-        let checkbox = div()
-            .id(key)
+        let checkbox = self
+            .control(div().id(key), Role::CheckBox, setting.label)
+            .aria_toggled(toggled(checked))
+            .when_some(setting.note, |this, note| this.aria_description(note))
             .flex()
             .items_center()
             .gap_2()
-            .pt(px(3.))
-            .cursor_pointer()
-            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+            .mt(px(2.))
+            .px_1()
+            .rounded_md()
+            .border_1()
+            .border_color(gpui::transparent_black())
+            .on_click(move |_, _, cx| {
                 cx.defer(move |cx| app_settings::set_or_report(key, !checked, cx));
             })
             .child(
@@ -407,29 +433,45 @@ impl SettingsWindow {
             .child(text.into())
     }
 
-    /// A button that runs `action` when clicked.
+    /// `control` made into a control: reachable with Tab, with an
+    /// accessible `role` and `name`, and a ring when it has keyboard focus.
+    /// Its border shows the ring, so give it one.
+    fn control(
+        &self,
+        control: Stateful<Div>,
+        role: Role,
+        name: impl Into<SharedString>,
+    ) -> Stateful<Div> {
+        let theme = self.theme;
+        control
+            .focusable()
+            .tab_stop(true)
+            .role(role)
+            .aria_label(name)
+            .cursor_pointer()
+            .focus_visible(move |style| style.border_color(theme.caret))
+    }
+
+    /// A button showing `label` that runs `action` when clicked. `name` is
+    /// what it's called for VoiceOver.
     fn button(
         &self,
-        id: &'static str,
+        id: impl Into<SharedString>,
         label: &'static str,
+        name: impl Into<SharedString>,
         cx: &mut Context<Self>,
         action: impl Fn(&mut Self, &mut Context<Self>) + 'static,
     ) -> impl IntoElement {
         let theme = self.theme;
-        div()
-            .id(id)
+        self.control(div().id(id.into()), Role::Button, name)
             .px_3()
             .py(px(3.))
             .rounded_md()
-            .cursor_pointer()
             .border_1()
             .border_color(theme.rule)
             .bg(theme.code_background)
             .hover(|style| style.bg(theme.rule))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _, _, cx| action(this, cx)),
-            )
+            .on_click(cx.listener(move |this, _, _, cx| action(this, cx)))
             .child(label)
     }
 
@@ -444,39 +486,48 @@ impl SettingsWindow {
     ) -> impl IntoElement {
         let theme = self.theme;
         let key = setting.key;
-        let buttons = choices.into_iter().map(|choice| {
+        let count = choices.len();
+        let buttons = choices.into_iter().enumerate().map(|(index, choice)| {
             let Choice {
                 label,
                 value,
                 selected,
             } = choice;
-            div()
-                .id(SharedString::from(format!("{key}-{label}")))
-                .px_3()
-                .py(px(3.))
-                .rounded_md()
-                .cursor_pointer()
-                .when(selected, |this| {
-                    this.bg(theme.background)
-                        .text_color(theme.text)
-                        .border_1()
-                        .border_color(theme.rule)
-                })
-                .when(!selected, |this| {
-                    this.text_color(theme.muted_text)
-                        .border_1()
-                        .border_color(gpui::transparent_black())
-                        .hover(|style| style.text_color(theme.text))
-                })
-                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                    // Applying a setting updates this window, so wait until
-                    // this event is handled.
-                    let value = value.clone();
-                    cx.defer(move |cx| app_settings::set_or_report(key, value, cx));
-                })
-                .child(label)
+            self.control(
+                div().id(SharedString::from(format!("{key}-{label}"))),
+                Role::RadioButton,
+                label.clone(),
+            )
+            .aria_toggled(toggled(selected))
+            .aria_position_in_set(index + 1)
+            .aria_size_of_set(count)
+            .px_3()
+            .py(px(3.))
+            .rounded_md()
+            .when(selected, |this| {
+                this.bg(theme.background)
+                    .text_color(theme.text)
+                    .border_1()
+                    .border_color(theme.rule)
+            })
+            .when(!selected, |this| {
+                this.text_color(theme.muted_text)
+                    .border_1()
+                    .border_color(gpui::transparent_black())
+                    .hover(|style| style.text_color(theme.text))
+            })
+            .on_click(move |_, _, cx| {
+                // Applying a setting updates this window, so wait until
+                // this event is handled.
+                let value = value.clone();
+                cx.defer(move |cx| app_settings::set_or_report(key, value, cx));
+            })
+            .child(label)
         });
         let buttons = div()
+            .id(SharedString::from(format!("{key}-choices")))
+            .role(Role::RadioGroup)
+            .aria_label(setting.label)
             .flex()
             .gap_1()
             .p(px(2.))
@@ -601,19 +652,20 @@ impl Render for SettingsWindow {
         if let Some(index) = fonts_at {
             rows.insert(index, self.fonts(fonts).into_any_element());
         }
-        let done = div()
-            .id("done")
+        let done = self
+            .control(div().id("done"), Role::DefaultButton, "Done")
             .px_4()
             .py(px(4.))
             .rounded_md()
-            .cursor_pointer()
+            .border_1()
+            .border_color(self.theme.caret)
+            .focus_visible(|style| style.border_color(gpui::white()))
             .bg(self.theme.caret)
             .text_color(gpui::white())
-            .on_mouse_down(MouseButton::Left, |_, window, cx| {
-                window.dispatch_action(Box::new(CloseWindow), cx)
-            })
+            .on_click(|_, window, cx| window.dispatch_action(Box::new(CloseWindow), cx))
             .child("Done");
         div()
+            .id("settings")
             .track_focus(&self.focus_handle)
             // A click anywhere else closes the list of fonts.
             .on_mouse_down(
@@ -625,6 +677,10 @@ impl Render for SettingsWindow {
                 }),
             )
             .key_context(KEY_CONTEXT)
+            .role(Role::Dialog)
+            .aria_label("Settings")
+            .on_action(|_: &FocusNext, window, cx| window.focus_next(cx))
+            .on_action(|_: &FocusPrevious, window, cx| window.focus_prev(cx))
             // Esc closes the list of fonts, if it's open, then the window.
             .on_action(cx.listener(|this, _: &CloseWindow, window, cx| {
                 if this.font_menu.take().is_some() {
@@ -658,4 +714,8 @@ impl Render for SettingsWindow {
                     .child(done),
             )
     }
+}
+
+fn toggled(on: bool) -> Toggled {
+    if on { Toggled::True } else { Toggled::False }
 }
