@@ -11,6 +11,8 @@ use gpui::{
 use kami::settings::{Layout, Settings, TextWidth, ThemeSetting};
 
 use crate::app_settings::{self, AppSettings};
+#[cfg(target_os = "macos")]
+use crate::default_app;
 use crate::document_view::{CloseWindow, DocumentView};
 use crate::theme::Theme;
 
@@ -41,7 +43,7 @@ pub fn open(cx: &mut App) {
             .update(cx, |_, window, _| window.activate_window())
             .ok();
     }
-    let bounds = Bounds::centered(None, size(px(520.), px(290.)), cx);
+    let bounds = Bounds::centered(None, size(px(520.), px(360.)), cx);
     let window = cx
         .open_window(
             WindowOptions {
@@ -69,9 +71,18 @@ pub fn key_bindings() -> Vec<KeyBinding> {
 
 const KEY_CONTEXT: &str = "SettingsWindow";
 
+/// The width of the labels on the left of each row.
+const LABEL_WIDTH: f32 = 150.;
+
 pub struct SettingsWindow {
     focus_handle: FocusHandle,
     theme: Theme,
+    /// Who opens Markdown files, checked whenever the window is activated,
+    /// since it can change in Finder.
+    #[cfg(target_os = "macos")]
+    markdown_app: default_app::Status,
+    #[cfg(target_os = "macos")]
+    _activation_observer: Subscription,
     _settings_observer: Subscription,
     _appearance_observer: Subscription,
 }
@@ -83,6 +94,13 @@ impl SettingsWindow {
         Self {
             focus_handle,
             theme: Theme::current(window, cx),
+            #[cfg(target_os = "macos")]
+            markdown_app: default_app::status(),
+            #[cfg(target_os = "macos")]
+            _activation_observer: cx.observe_window_activation(window, |this, _, cx| {
+                this.markdown_app = default_app::status();
+                cx.notify();
+            }),
             _settings_observer: cx.observe_global_in::<AppSettings>(window, |this, window, cx| {
                 this.theme = Theme::current(window, cx);
                 cx.notify();
@@ -92,6 +110,77 @@ impl SettingsWindow {
                 cx.notify();
             }),
         }
+    }
+
+    /// The "Default Markdown app" row: a button to make Kami the default,
+    /// with the current default beneath it, or a checkmark if Kami is.
+    #[cfg(target_os = "macos")]
+    fn markdown_files(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = self.theme;
+        let note = |text: String| {
+            div()
+                .text_size(px(11.))
+                .text_color(theme.muted_text)
+                .child(text)
+        };
+        let button = div()
+            .id("make-default")
+            .px_3()
+            .py(px(3.))
+            .rounded_md()
+            .cursor_pointer()
+            .border_1()
+            .border_color(theme.rule)
+            .bg(theme.code_background)
+            .hover(|style| style.bg(theme.rule))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _, _, cx| {
+                    let result = default_app::make_default();
+                    cx.spawn(async move |this, cx| {
+                        // macOS asks the user first; refresh either way.
+                        result.await.ok();
+                        this.update(cx, |this, cx| {
+                            this.markdown_app = default_app::status();
+                            cx.notify();
+                        })
+                        .ok();
+                    })
+                    .detach();
+                }),
+            )
+            .child("Make Kami the Default");
+        let content = match &self.markdown_app {
+            default_app::Status::Kami => div().pt(px(4.)).child("✓ Kami"),
+            default_app::Status::Other(app) => div()
+                .flex()
+                .flex_col()
+                .items_start()
+                .gap_1()
+                .child(button)
+                .child(note(format!(
+                    "Currently: {}",
+                    app.as_deref().unwrap_or("none")
+                ))),
+            default_app::Status::NotInstalled => div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(div().pt(px(4.)).child("—"))
+                .child(note("Install Kami.app to change".to_owned())),
+        };
+        div()
+            .flex()
+            .gap_4()
+            .child(
+                div()
+                    .w(px(LABEL_WIDTH))
+                    .flex_none()
+                    .text_right()
+                    .pt(px(4.))
+                    .child("Default Markdown app"),
+            )
+            .child(content)
     }
 
     /// A row: a label, then buttons for the choices with the current one
@@ -137,7 +226,7 @@ impl SettingsWindow {
             .gap_4()
             .child(
                 div()
-                    .w(px(130.))
+                    .w(px(LABEL_WIDTH))
                     .flex_none()
                     .text_right()
                     .pt(px(4.))
@@ -176,6 +265,10 @@ impl Render for SettingsWindow {
             layout,
             text_width,
         } = app_settings::get(cx);
+        #[cfg(target_os = "macos")]
+        let markdown_files = Some(self.markdown_files(cx));
+        #[cfg(not(target_os = "macos"))]
+        let markdown_files: Option<gpui::Empty> = None;
         let done = div()
             .id("done")
             .px_4()
@@ -232,6 +325,7 @@ impl Render for SettingsWindow {
                 ],
                 Some("Takes effect the next time Kami starts."),
             ))
+            .children(markdown_files)
             .child(div().flex_1())
             .child(div().flex().justify_end().child(done))
     }

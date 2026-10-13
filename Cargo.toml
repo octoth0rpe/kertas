@@ -24,8 +24,9 @@ single_range_in_vec_init = "allow"
 [target.'cfg(target_os = "macos")'.dependencies]
 # Native window tabs (see src/native_tabs.rs). Same versions GPUI uses.
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder", "NSView", "NSWindow", "NSWindowTabGroup"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSData", "NSDistributedNotificationCenter", "NSNotification", "NSOperation", "NSString", "NSUserDefaults"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-uniform-type-identifiers", "NSApplication", "NSImage", "NSResponder", "NSView", "NSWindow", "NSWindowTabGroup", "NSWorkspace"] }
+objc2-uniform-type-identifiers = { version = "0.3", default-features = false, features = ["std", "UTType"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSBundle", "NSData", "NSDistributedNotificationCenter", "NSError", "NSNotification", "NSOperation", "NSString", "NSURL", "NSUserDefaults"] }
 block2 = "0.6"
 libc = "0.2"
 raw-window-handle = "0.6"
