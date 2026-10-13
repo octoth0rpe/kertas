@@ -67,3 +67,12 @@ Add ⇧ to any movement to select as you go.
 | ⌘X ⌘C ⌘V | Cut, copy and paste |
 | ⌘Z | Undo |
 | ⇧⌘Z | Redo |
+
+## Buttons and Settings
+
+| Shortcut | What it does |
+|---|---|
+| ⇥ ⇧⇥ | When no block is being edited, move between the document and the buttons in its bars. In Settings, move between the controls. |
+| Space | Press the button or control that has the focus |
+| ↩ | In Settings, Done |
+| Esc | In Settings, close it |

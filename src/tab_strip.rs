@@ -5,8 +5,8 @@
 //! draw their own. This is Kami's.
 
 use gpui::{
-    AnyElement, AnyWindowHandle, App, MouseButton, SystemWindowTabController, Window, div,
-    prelude::*, px,
+    AccessibleAction, AnyElement, AnyWindowHandle, App, MouseButton, Role, SharedString,
+    SystemWindowTabController, Window, div, prelude::*, px,
 };
 
 use crate::document_view::{CloseWindow, DocumentView};
@@ -30,6 +30,7 @@ pub fn render_tab_strip(
         return None;
     }
 
+    let count = tabs.len();
     let tabs = tabs.iter().enumerate().map(|(index, tab)| {
         let active = tab.id == id;
         let dirty = if active {
@@ -41,8 +42,23 @@ pub fn render_tab_strip(
                 .is_some_and(|view| view.is_dirty())
         };
         let handle = tab.handle;
+        let title = tab.title.clone();
+        let close_name = if dirty {
+            format!("Close {title}, which has unsaved changes")
+        } else {
+            format!("Close {title}")
+        };
         div()
             .id(("tab", index))
+            .role(Role::Tab)
+            .aria_label(title.clone())
+            .aria_selected(active)
+            .aria_position_in_set(index + 1)
+            .aria_size_of_set(count)
+            .when(dirty, |this| this.aria_description("Edited"))
+            .on_a11y_action(AccessibleAction::Click, move |_, _, cx| {
+                activate(handle, cx)
+            })
             .flex_1()
             .min_w(px(0.))
             .max_w(px(MAX_TAB_WIDTH))
@@ -67,16 +83,13 @@ pub fn render_tab_strip(
                     activate(handle, cx);
                 }
             })
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.))
-                    .truncate()
-                    .child(tab.title.clone()),
-            )
+            .child(div().flex_1().min_w(px(0.)).truncate().child(title))
             .child(
                 div()
                     .id(("close-tab", index))
+                    .role(Role::Button)
+                    .aria_label(SharedString::from(close_name))
+                    .on_a11y_action(AccessibleAction::Click, move |_, _, cx| close(handle, cx))
                     .flex_none()
                     .w(px(14.))
                     .text_center()
@@ -92,6 +105,9 @@ pub fn render_tab_strip(
 
     Some(
         div()
+            .id("tabs")
+            .role(Role::TabList)
+            .aria_label("Documents")
             .flex_none()
             .flex()
             .h(px(STRIP_HEIGHT))
