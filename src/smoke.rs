@@ -197,38 +197,54 @@ fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
             })
             .unwrap_or(0);
         println!("tabs in the tab strip: {strip_tabs}");
-        // ⌘1 from the last tab switches to the first, ⌘3 to the third, and
-        // ⌘0 (tab 10) does nothing.
+        // With automatic tabbing on, macOS adds "Show Tab Bar" to the View
+        // menu.
+        #[cfg(target_os = "macos")]
+        let automatic_tabbing_off = !cx.update(|_| crate::native_tabs::automatic_tabbing());
+        #[cfg(not(target_os = "macos"))]
+        let automatic_tabbing_off = true;
+        println!("automatic tabbing off: {automatic_tabbing_off}");
+        // ⌘1 switches to the first tab, ⌘3 to the third, and ⌘0 (tab 10)
+        // does nothing. The selected tab is read from macOS, which doesn't
+        // depend on Kami being the frontmost app.
         let mut tab_switching = true;
+        #[cfg(target_os = "macos")]
         for (action, expected) in [
             (Box::new(SelectTab1) as Box<dyn Action>, Some(0)),
             (Box::new(SelectTab3), Some(2)),
             (Box::new(SelectTab10), None),
         ] {
-            let active = cx.update(|cx| cx.active_window());
-            let Some(active) = active else {
-                tab_switching = false;
-                break;
+            let selected = |cx: &mut gpui::AsyncApp| {
+                window
+                    .update(cx, |_, window, _| {
+                        crate::native_tabs::NativeWindow::of(window)
+                            .and_then(|native| crate::native_tabs::selected_tab(&native))
+                    })
+                    .ok()
+                    .flatten()
             };
-            active
-                .update(cx, |_, window, cx| window.dispatch_action(action, cx))
-                .ok();
+            let before = selected(cx);
+            // Send the key to the selected tab, as the keyboard would.
+            let target = window
+                .update(cx, |_, window, cx| {
+                    let id = window.window_handle().window_id();
+                    cx.try_global::<gpui::SystemWindowTabController>()
+                        .and_then(|controller| controller.tabs(id))
+                        .and_then(|tabs| tabs.get(before?))
+                        .map(|tab| tab.handle)
+                })
+                .ok()
+                .flatten();
+            if let Some(target) = target {
+                target
+                    .update(cx, |_, window, cx| window.dispatch_action(action, cx))
+                    .ok();
+            }
             cx.background_executor().timer(STEP * 20).await;
-            let now = cx.update(|cx| {
-                let tabs = cx
-                    .try_global::<gpui::SystemWindowTabController>()?
-                    .tabs(active.window_id())?
-                    .clone();
-                let now = cx.active_window()?;
-                Some((tabs.iter().position(|tab| tab.id == now.window_id())?, now))
-            });
-            let switched = match (expected, now) {
-                (Some(index), Some((position, _))) => position == index,
-                (None, Some((_, now))) => now == active,
-                _ => false,
-            };
+            let after = selected(cx);
+            let switched = after.is_some() && after == expected.or(before);
             println!(
-                "tab switch to {expected:?}: {}",
+                "tab switch to {expected:?}: {} ({before:?} -> {after:?})",
                 if switched { "ok" } else { "FAILED" }
             );
             tab_switching &= switched;

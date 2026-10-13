@@ -3,7 +3,7 @@
 //! The View menu's choices are settings, so the menus are rebuilt whenever
 //! the settings change, to keep their checkmarks current.
 
-use gpui::{App, Menu, MenuItem, actions};
+use gpui::{App, Menu, MenuItem, NoAction, actions};
 use kami::settings::{Settings, TextWidth, ThemeSetting};
 
 use crate::app_settings::{self, AppSettings};
@@ -63,19 +63,20 @@ fn menus(settings: Settings) -> Vec<Menu> {
             MenuItem::action("Close", CloseWindow),
         ]),
         Menu::new("View").items([
-            MenuItem::submenu(
-                Menu::new("Appearance").items([
-                    MenuItem::action("Light", UseLightTheme).checked(theme(ThemeSetting::Light)),
-                    MenuItem::action("Dark", UseDarkTheme).checked(theme(ThemeSetting::Dark)),
-                    MenuItem::action("Match System", UseSystemTheme)
-                        .checked(theme(ThemeSetting::System)),
-                ]),
-            ),
-            MenuItem::submenu(Menu::new("Text Width").items([
-                MenuItem::action("Standard", UseStandardWidth).checked(width(TextWidth::Standard)),
-                MenuItem::action("Wide", UseWideWidth).checked(width(TextWidth::Wide)),
-                MenuItem::action("Full Width", UseFullWidth).checked(width(TextWidth::Full)),
-            ])),
+            section("Appearance"),
+            MenuItem::action("Light", UseLightTheme).checked(theme(ThemeSetting::Light)),
+            MenuItem::action("Dark", UseDarkTheme).checked(theme(ThemeSetting::Dark)),
+            MenuItem::action("Match System", UseSystemTheme).checked(theme(ThemeSetting::System)),
+            MenuItem::separator(),
+            section("Text Width"),
+            MenuItem::action("Standard", UseStandardWidth).checked(width(TextWidth::Standard)),
+            MenuItem::action("Wide", UseWideWidth).checked(width(TextWidth::Wide)),
+            MenuItem::action("Full Width", UseFullWidth).checked(width(TextWidth::Full)),
         ]),
     ]
+}
+
+/// A section title: an item that does nothing, so macOS shows it dimmed.
+fn section(title: &'static str) -> MenuItem {
+    MenuItem::action(title, NoAction).disabled(true)
 }
