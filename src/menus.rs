@@ -72,6 +72,9 @@ fn menus(settings: Settings) -> Vec<Menu> {
             MenuItem::action("Standard", UseStandardWidth).checked(width(TextWidth::Standard)),
             MenuItem::action("Wide", UseWideWidth).checked(width(TextWidth::Wide)),
             MenuItem::action("Full Width", UseFullWidth).checked(width(TextWidth::Full)),
+            // macOS adds Enter Full Screen, with an icon, at the end. In a
+            // section of its own, its icon doesn't indent the items above.
+            MenuItem::separator(),
         ]),
     ]
 }
