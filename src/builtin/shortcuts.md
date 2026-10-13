@@ -32,6 +32,7 @@
 | ⌥← ⌥→ | Previous or next word |
 | ⌘← ⌘→, Home End | Start or end of the line |
 | ⌘↑ ⌘↓ | Start or end of the document |
+| Page Up, Page Down | Scroll by a page |
 | ⌥↑ ⌥↓ | Previous or next block |
 | Esc | Finish editing |
 

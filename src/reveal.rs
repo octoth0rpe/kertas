@@ -115,7 +115,10 @@ fn fill_gaps(len: usize, mut content: Vec<SourceSpan>) -> Vec<SourceSpan> {
     content.sort_by_key(|span| span.range.start);
     let mut spans = Vec::with_capacity(content.len() * 2 + 1);
     let mut position = 0;
-    for span in content {
+    for mut span in content {
+        // Clip anything past the end: offsets inside nested blocks (e.g.
+        // code in a list item) can run past the source.
+        span.range.end = span.range.end.min(len);
         // Skip anything overlapping what's already covered.
         if span.range.start < position || span.range.is_empty() {
             continue;
