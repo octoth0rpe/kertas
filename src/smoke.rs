@@ -547,7 +547,10 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
         .join("config.toml");
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
-        // Settings apply when macOS reports the file changed.
+        // Settings apply when macOS reports the file changed, which can
+        // take a while on a busy machine, so checks wait for them to.
+        const APPLY: Duration = Duration::from_secs(5);
+        // A pause for things that shouldn't happen.
         let settle = async |cx: &mut AsyncApp| {
             cx.background_executor()
                 .timer(Duration::from_millis(1500))
@@ -560,22 +563,23 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
         checks.check("no file, no problems", problems(cx) == 0);
 
         std::fs::write(&path, "# Mine\ntheme = \"dark\"  # at night\n").ok();
-        settle(cx).await;
-        checks.check("edit applies live", theme(cx) == Some(Theme::dark()));
+        checks.check(
+            "edit applies live",
+            wait_for(cx, APPLY, |cx| theme(cx) == Some(Theme::dark())).await,
+        );
 
         // Editors often save by renaming a new file over the old one.
         let temp = path.with_extension("tmp");
         std::fs::write(&temp, "theme = \"light\"\n").ok();
         std::fs::rename(&temp, &path).ok();
-        settle(cx).await;
         checks.check(
             "replaced file applies live",
-            theme(cx) == Some(Theme::light()),
+            wait_for(cx, APPLY, |cx| theme(cx) == Some(Theme::light())).await,
         );
 
         std::fs::write(&path, "theme = \"blue\"\nfont = 1\n").ok();
-        settle(cx).await;
-        checks.check("bad file reports 2 problems", problems(cx) == 2);
+        let reported = wait_for(cx, APPLY, |cx| problems(cx) == 2).await;
+        checks.check("bad file reports 2 problems", reported);
         // With no block being edited, Tab reaches the bar's dismiss button
         // and Space presses it.
         let shown = |cx: &mut AsyncApp| {
@@ -589,11 +593,14 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
         pause(cx, 5).await;
         checks.check(
             "Tab and Space dismiss the problems bar",
-            shown_before && !shown(cx),
+            reported && shown_before && !shown(cx),
         );
 
         std::fs::write(&path, "# Mine\ntheme = \"dark\"  # at night\n").ok();
-        settle(cx).await;
+        wait_for(cx, APPLY, |cx| {
+            problems(cx) == 0 && theme(cx) == Some(Theme::dark())
+        })
+        .await;
         let set = cx.update(|cx| app_settings::set("theme", "light", cx));
         checks.check("setting is written", set.is_ok());
         let text = std::fs::read_to_string(&path).unwrap_or_default();
@@ -601,19 +608,21 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
             "comments are kept",
             text == "# Mine\ntheme = \"light\"  # at night\n",
         );
-        settle(cx).await;
-        checks.check("written setting applies", theme(cx) == Some(Theme::light()));
+        checks.check(
+            "written setting applies",
+            wait_for(cx, APPLY, |cx| theme(cx) == Some(Theme::light())).await,
+        );
 
         // The View menu's commands change settings.
         dispatch(window, cx, Box::new(crate::menus::UseDarkTheme));
         dispatch(window, cx, Box::new(crate::menus::UseFullWidth));
-        settle(cx).await;
+        let dark = wait_for(cx, APPLY, |cx| theme(cx) == Some(Theme::dark())).await;
         let text = std::fs::read_to_string(&path).unwrap_or_default();
         checks.check(
             "View menu writes settings",
             text == "# Mine\ntheme = \"dark\"  # at night\ntext_width = \"full\"\n",
         );
-        checks.check("View menu theme applies", theme(cx) == Some(Theme::dark()));
+        checks.check("View menu theme applies", dark);
         dispatch(window, cx, Box::new(crate::menus::UseStandardWidth));
         settle(cx).await;
 
@@ -651,35 +660,40 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
             at_limit == Some((10, false)),
         );
         cx.update(|cx| app_settings::set("font_size", 20, cx)).ok();
-        settle(cx).await;
         checks.check(
             "font_size setting sets the size",
-            cx.update(|cx| crate::zoom::size(cx)) == 20,
+            wait_for(cx, APPLY, |cx| cx.update(|cx| crate::zoom::size(cx)) == 20).await,
         );
 
         cx.update(|cx| app_settings::set("editing_hint", false, cx))
             .ok();
-        settle(cx).await;
         checks.check(
             "editing_hint setting applies",
-            !cx.update(|cx| app_settings::get(cx).editing_hint),
+            wait_for(cx, APPLY, |cx| {
+                !cx.update(|cx| app_settings::get(cx).editing_hint)
+            })
+            .await,
         );
 
         cx.update(|cx| app_settings::set("tab_width", 8, cx)).ok();
-        settle(cx).await;
         checks.check(
             "tab_width setting applies",
-            cx.update(|cx| app_settings::get(cx).tab_width) == 8,
+            wait_for(cx, APPLY, |cx| {
+                cx.update(|cx| app_settings::get(cx).tab_width) == 8
+            })
+            .await,
         );
 
         cx.update(|cx| app_settings::set("list_indent", "wide", cx))
             .ok();
-        settle(cx).await;
         checks.check(
             "list_indent setting applies to the document",
-            window
-                .read_with(cx, |view, _| view.list_indent())
-                .is_ok_and(|indent| indent == kami::settings::ListIndent::Wide),
+            wait_for(cx, APPLY, |cx| {
+                window
+                    .read_with(cx, |view, _| view.list_indent())
+                    .is_ok_and(|indent| indent == kami::settings::ListIndent::Wide)
+            })
+            .await,
         );
 
         // Changing the layout waits until Kami restarts: New still opens a
@@ -1263,8 +1277,18 @@ fn smoke_print(window: WindowHandle<DocumentView>, cx: &mut App) {
 
 /// Waits until `done` holds, for up to two seconds. Returns whether it
 /// did.
-async fn wait_until(cx: &mut AsyncApp, mut done: impl FnMut(&mut AsyncApp) -> bool) -> bool {
-    let deadline = Instant::now() + Duration::from_secs(2);
+async fn wait_until(cx: &mut AsyncApp, done: impl FnMut(&mut AsyncApp) -> bool) -> bool {
+    wait_for(cx, Duration::from_secs(2), done).await
+}
+
+/// Waits until `done` returns true, or `timeout` passes. Returns whether
+/// it did.
+async fn wait_for(
+    cx: &mut AsyncApp,
+    timeout: Duration,
+    mut done: impl FnMut(&mut AsyncApp) -> bool,
+) -> bool {
+    let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
         if done(cx) {
             return true;
