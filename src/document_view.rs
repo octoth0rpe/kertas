@@ -298,7 +298,10 @@ impl DocumentView {
         });
         // Autosave when the window or tab loses focus.
         let activation_observer = cx.observe_window_activation(window, |this, window, cx| {
-            if !window.is_window_active() {
+            if window.is_window_active() {
+                // The default Markdown app can change in Finder.
+                crate::menus::refresh(cx);
+            } else {
                 this.autosave(window, cx);
             }
         });

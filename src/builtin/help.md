@@ -37,7 +37,7 @@ Each document opens in its own tab. **⌘1** to **⌘9** go straight to a tab. T
 
 ## From the terminal
 
-**Kami → Settings…** can install the `kami` command. Then `kami notes.md` opens a file in Kami. A file that doesn't exist yet opens as a new document, and saving creates it.
+**Kami → Install Command Line Tool…** installs the `kami` command. Then `kami notes.md` opens a file in Kami. A file that doesn't exist yet opens as a new document, and saving creates it.
 
 ## Appearance
 
@@ -63,6 +63,10 @@ autosave = 5          # save 5 seconds after typing stops; "off" if not set
 ```
 
 If the file has a mistake, Kami uses the default for that setting and shows what's wrong at the bottom of the window.
+
+**Tab character width** only changes how tab characters in code look. It doesn't change what the Tab key inserts or how lists are indented. **List indent** only changes how far nested list items are drawn in; the Markdown keeps whatever indentation it has.
+
+To make Kami open Markdown files when you double-click them in Finder, choose **Kami → Make Kami the Default Markdown App**.
 
 ## Markdown guide
 

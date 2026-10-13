@@ -16,8 +16,6 @@ use kami::settings::{Kind, SETTINGS, Setting, Settings};
 use crate::app_settings::{self, AppSettings};
 use crate::document_view::{CloseWindow, DocumentView};
 use crate::theme::Theme;
-#[cfg(target_os = "macos")]
-use crate::{cli_tool, default_app};
 
 /// The settings window, if it's open.
 #[derive(Default)]
@@ -46,11 +44,9 @@ pub fn open(cx: &mut App) {
             .update(cx, |_, window, _| window.activate_window())
             .ok();
     }
-    // Tall enough for every row, but never taller than the screen; then
-    // the rows scroll.
-    let height = cx.primary_display().map_or(px(SHEET_HEIGHT), |display| {
-        px(SHEET_HEIGHT).min(display.bounds().size.height - px(80.))
-    });
+    // The sheet then fits itself to its rows (see `fit_to_rows`).
+    cx.set_global(RowsFit::default());
+    let height = px(INITIAL_HEIGHT).min(max_height(cx));
     let bounds = Bounds::centered(None, size(px(540.), height), cx);
     let window = cx
         .open_window(
@@ -90,16 +86,30 @@ struct Choice {
     selected: bool,
 }
 
-/// The settings sheet's height, enough for every row.
-const SHEET_HEIGHT: f32 = 880.;
+/// About how tall the settings sheet is, before it fits itself to its
+/// rows.
+const INITIAL_HEIGHT: f32 = 604.;
+
+/// The space between the last row and the Done button's row.
+const ROWS_GAP: f32 = 20.;
+
+/// The tallest the sheet gets: the screen's height, less some room. Taller
+/// rows scroll.
+fn max_height(cx: &App) -> gpui::Pixels {
+    cx.primary_display().map_or(px(INITIAL_HEIGHT), |display| {
+        display.bounds().size.height - px(80.)
+    })
+}
 
 /// Where the rows end and the Done button's row starts, when the settings
-/// sheet was last laid out, for the smoke test: the rows should fit
-/// without scrolling.
+/// sheet was last laid out. The sheet fits itself to its rows with these,
+/// and the smoke test checks they fit without scrolling.
 #[derive(Default)]
 pub struct RowsFit {
     pub rows_bottom: gpui::Pixels,
     pub footer_top: gpui::Pixels,
+    /// The sheet's height then.
+    pub height: gpui::Pixels,
 }
 
 impl gpui::Global for RowsFit {}
@@ -107,7 +117,11 @@ impl gpui::Global for RowsFit {}
 /// An empty element that records where it's laid out in [`RowsFit`].
 fn measure(record: fn(&mut RowsFit, gpui::Pixels)) -> impl IntoElement {
     gpui::canvas(
-        move |bounds, _, cx| record(cx.default_global::<RowsFit>(), bounds.top()),
+        move |bounds, window, cx| {
+            let fit = cx.default_global::<RowsFit>();
+            fit.height = window.viewport_size().height;
+            record(fit, bounds.top());
+        },
         |_, _, _, _| {},
     )
 }
@@ -115,17 +129,6 @@ fn measure(record: fn(&mut RowsFit, gpui::Pixels)) -> impl IntoElement {
 pub struct SettingsWindow {
     focus_handle: FocusHandle,
     theme: Theme,
-    /// Who opens Markdown files, checked whenever the window is activated,
-    /// since it can change in Finder.
-    #[cfg(target_os = "macos")]
-    markdown_app: default_app::Status,
-    #[cfg(target_os = "macos")]
-    cli_tool: cli_tool::Status,
-    /// Why installing or uninstalling the command failed.
-    #[cfg(target_os = "macos")]
-    cli_error: Option<String>,
-    #[cfg(target_os = "macos")]
-    _activation_observer: Subscription,
     _settings_observer: Subscription,
     _appearance_observer: Subscription,
     /// The font setting whose list of fonts is open.
@@ -139,15 +142,6 @@ impl SettingsWindow {
         Self {
             focus_handle,
             theme: Theme::current(window, cx),
-            #[cfg(target_os = "macos")]
-            markdown_app: default_app::status(),
-            #[cfg(target_os = "macos")]
-            cli_tool: cli_tool::status(),
-            #[cfg(target_os = "macos")]
-            cli_error: None,
-            #[cfg(target_os = "macos")]
-            _activation_observer: cx
-                .observe_window_activation(window, |this, _, cx| this.refresh(cx)),
             _settings_observer: cx.observe_global_in::<AppSettings>(window, |this, window, cx| {
                 this.theme = Theme::current(window, cx);
                 cx.notify();
@@ -199,7 +193,7 @@ impl SettingsWindow {
         self.labelled(setting.label, self.with_note(content, setting.note))
     }
 
-    /// A row for a font setting: a pop-up button showing the font, which
+    /// A font setting's pop-up button, labelled, showing the font. It
     /// opens a list of the installed fonts, with the default first.
     fn font(
         &self,
@@ -305,13 +299,32 @@ impl SettingsWindow {
             )
             .with_priority(1)
         });
-        let content = div()
+        let picker = div()
             .flex()
             .flex_col()
             .items_start()
             .child(button)
             .children(menu);
-        self.labelled(setting.label, self.with_note(content, setting.note))
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(setting.label)
+            .child(picker)
+    }
+
+    /// The fonts row: a pop-up button for each font setting, side by side.
+    fn fonts(&self, pickers: Vec<AnyElement>) -> impl IntoElement {
+        self.labelled(
+            "Fonts",
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap_x_4()
+                .gap_y_2()
+                .children(pickers),
+        )
     }
 
     /// A row for a `true`/`false` setting: a checkbox labelled with the
@@ -420,119 +433,6 @@ impl SettingsWindow {
             .child(label)
     }
 
-    /// A value (a checkmark, or "—") with a note beneath it.
-    fn status(&self, value: &'static str, note: Option<String>) -> gpui::Div {
-        div()
-            .flex()
-            .flex_col()
-            .items_start()
-            .gap_1()
-            .child(div().pt(px(4.)).child(value))
-            .children(note.map(|note| self.note(note)))
-    }
-
-    /// A button with a note beneath it.
-    fn offer(&self, button: impl IntoElement, note: impl Into<SharedString>) -> gpui::Div {
-        div()
-            .flex()
-            .flex_col()
-            .items_start()
-            .gap_1()
-            .child(button)
-            .child(self.note(note))
-    }
-
-    /// The "Default Markdown app" row: a button to make Kami the default,
-    /// with the current default beneath it, or a checkmark if Kami is.
-    #[cfg(target_os = "macos")]
-    fn markdown_files(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let content = match &self.markdown_app {
-            default_app::Status::Kami => self.status("✓ Kami", None),
-            default_app::Status::Other(app) => {
-                let button = self.button("make-default", "Make Kami the Default", cx, |_, cx| {
-                    let result = default_app::make_default();
-                    cx.spawn(async move |this, cx| {
-                        // macOS asks the user first; refresh either way.
-                        result.await.ok();
-                        this.update(cx, |this, cx| this.refresh(cx)).ok();
-                    })
-                    .detach();
-                });
-                self.offer(
-                    button,
-                    format!("Currently: {}", app.as_deref().unwrap_or("none")),
-                )
-            }
-            default_app::Status::NotInstalled => {
-                self.status("—", Some("Install Kami.app to change".to_owned()))
-            }
-        };
-        self.labelled("Default Markdown app", content)
-    }
-
-    /// The "Command line tool" row: install or uninstall `kami`.
-    #[cfg(target_os = "macos")]
-    fn command_line_tool(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let install = |this: &mut Self, cx: &mut Context<Self>| this.run_cli(cli_tool::install, cx);
-        let content = match self.cli_tool {
-            cli_tool::Status::Installed => div()
-                .flex()
-                .items_center()
-                .gap_3()
-                .child("✓ kami")
-                .child(self.button("uninstall-cli", "Uninstall", cx, |this, cx| {
-                    this.run_cli(cli_tool::uninstall, cx)
-                })),
-            cli_tool::Status::NotInstalled => self.offer(
-                self.button("install-cli", "Install the kami Command", cx, install),
-                format!("Adds {}", cli_tool::LINK),
-            ),
-            cli_tool::Status::OtherKami => self.offer(
-                self.button("install-cli", "Update the kami Command", cx, install),
-                "It opens another copy of Kami.app",
-            ),
-            cli_tool::Status::Taken => self.status(
-                "—",
-                Some(format!("{} belongs to another program", cli_tool::LINK)),
-            ),
-            cli_tool::Status::NotInstalledApp => {
-                self.status("—", Some("Install Kami.app to change".to_owned()))
-            }
-        };
-        let content = content.children(
-            self.cli_error
-                .clone()
-                .map(|error| self.note(format!("Couldn't change it: {error}"))),
-        );
-        self.labelled("Command line tool", content)
-    }
-
-    /// Installs or uninstalls the command off the main thread, since macOS
-    /// may ask for a password, then refreshes.
-    #[cfg(target_os = "macos")]
-    fn run_cli(&mut self, change: fn() -> Result<(), String>, cx: &mut Context<Self>) {
-        self.cli_error = None;
-        let task = cx.background_spawn(async move { change() });
-        cx.spawn(async move |this, cx| {
-            let result = task.await;
-            this.update(cx, |this, cx| {
-                // Cancelling the password prompt isn't an error.
-                this.cli_error = result.err().filter(|error| !error.contains("(-128)"));
-                this.refresh(cx);
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    /// Re-checks what can change outside Kami.
-    #[cfg(target_os = "macos")]
-    fn refresh(&mut self, cx: &mut Context<Self>) {
-        self.markdown_app = default_app::status();
-        self.cli_tool = cli_tool::status();
-        cx.notify();
-    }
-
     /// A row: a label, then buttons for the choices with the current one
     /// selected. Choosing one sets the setting in the settings file.
     /// `note` is shown beneath them, if any.
@@ -586,7 +486,8 @@ impl SettingsWindow {
         self.labelled(setting.label, self.with_note(buttons, note))
     }
 
-    /// The row for `setting`, showing its value in `settings`.
+    /// The row for `setting`, showing its value in `settings`. For a font,
+    /// just its pop-up button, for the fonts row.
     fn row(
         &self,
         setting: &'static Setting,
@@ -650,35 +551,56 @@ impl SettingsWindow {
                         selected: current.is_some(),
                     },
                 ];
-                let note = match current {
-                    Some(seconds) => format!(
-                        "Saves {seconds} {} after you stop typing, and when you switch \
-                         away or quit.",
-                        if seconds == 1 { "second" } else { "seconds" }
-                    ),
-                    None => "Documents are saved only when you save them.".to_owned(),
-                };
-                self.choices(setting, choices, Some(note.into()))
-                    .into_any_element()
+                let note = current.map(|seconds| {
+                    let unit = if seconds == 1 { "second" } else { "seconds" };
+                    format!("Saves {seconds} {unit} after you stop typing.").into()
+                });
+                self.choices(setting, choices, note).into_any_element()
             }
         }
     }
 }
 
+/// Resizes the sheet so the Done button's row is [`ROWS_GAP`] below the
+/// last row, as last laid out: no more, so there's no empty space, and no
+/// less, so nothing scrolls (unless the screen is too short).
+fn fit_to_rows(window: &mut Window, cx: &mut App) {
+    let Some(fit) = cx.try_global::<RowsFit>() else {
+        return;
+    };
+    if fit.rows_bottom <= px(0.) {
+        return;
+    }
+    // Below the footer's top is the same whatever the height.
+    let footer = fit.height - fit.footer_top;
+    let height = (fit.rows_bottom + px(ROWS_GAP) + footer).min(max_height(cx));
+    let current = window.viewport_size();
+    if (height - current.height).abs() > px(1.) {
+        window.resize(size(current.width, height));
+    }
+}
+
 impl Render for SettingsWindow {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Once this frame is laid out, so the rows are measured.
+        window.on_next_frame(fit_to_rows);
         let settings = app_settings::get(cx);
-        let rows: Vec<AnyElement> = SETTINGS
-            .iter()
-            .map(|setting| self.row(setting, &settings, cx))
-            .collect();
-        #[cfg(target_os = "macos")]
-        let system_rows = [
-            self.markdown_files(cx).into_any_element(),
-            self.command_line_tool(cx).into_any_element(),
-        ];
-        #[cfg(not(target_os = "macos"))]
-        let system_rows: [gpui::AnyElement; 0] = [];
+        // The font settings share one row, where the first of them is.
+        let mut rows = Vec::new();
+        let mut fonts = Vec::new();
+        let mut fonts_at = None;
+        for setting in SETTINGS {
+            let row = self.row(setting, &settings, cx);
+            if matches!(setting.kind, Kind::Font { .. }) {
+                fonts_at.get_or_insert(rows.len());
+                fonts.push(row);
+            } else {
+                rows.push(row);
+            }
+        }
+        if let Some(index) = fonts_at {
+            rows.insert(index, self.fonts(fonts).into_any_element());
+        }
         let done = div()
             .id("done")
             .px_4()
@@ -725,15 +647,8 @@ impl Render for SettingsWindow {
                     .flex_1()
                     .min_h(px(0.))
                     .overflow_y_scroll()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_4()
-                            .children(rows)
-                            .children(system_rows)
-                            .child(measure(|fit, top| fit.rows_bottom = top)),
-                    ),
+                    .child(div().flex().flex_col().gap_5().children(rows))
+                    .child(measure(|fit, top| fit.rows_bottom = top)),
             )
             .child(
                 div()
