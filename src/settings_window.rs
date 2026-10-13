@@ -119,7 +119,8 @@ impl SettingsWindow {
         }
     }
 
-    /// The "Text size" row: the size documents start at, with − and +.
+    /// The "Default text size" row: the size documents start at, with −
+    /// and +.
     fn text_size(&self, size: u32, cx: &mut Context<Self>) -> impl IntoElement {
         let set = |size: u32| {
             move |_: &mut Self, cx: &mut Context<Self>| {
@@ -146,7 +147,7 @@ impl SettingsWindow {
                     }),
             )
             .child(self.note("Documents start at this size."));
-        self.labelled("Text size", content)
+        self.labelled("Default text size", content)
     }
 
     /// A label on the left, and `content` on the right.

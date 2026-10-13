@@ -31,7 +31,7 @@ Each document opens in its own tab. **⌘1** to **⌘9** go straight to a tab. T
 
 **View → Appearance** chooses Light, Dark or Match System. **View → Text Width** chooses how wide the text is: Standard, Wide, or the whole window.
 
-**⌘+** and **⌘-** make the text bigger or smaller in every document, and **⌘0** returns to your usual size. Zooming lasts until you quit. To change the size documents start at, use **Text size** in **Kami → Settings…**.
+**⌘+** and **⌘-** make the text bigger or smaller in every document, and **⌘0** returns to your usual size. Zooming lasts until you quit. To change the size documents start at, use **Default text size** in **Kami → Settings…**.
 
 ## Settings
 
