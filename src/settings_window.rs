@@ -71,6 +71,9 @@ pub fn key_bindings() -> Vec<KeyBinding> {
 
 const KEY_CONTEXT: &str = "SettingsWindow";
 
+/// The width of the labels on the left of each row.
+const LABEL_WIDTH: f32 = 150.;
+
 pub struct SettingsWindow {
     focus_handle: FocusHandle,
     theme: Theme,
@@ -109,19 +112,16 @@ impl SettingsWindow {
         }
     }
 
-    /// The "Markdown files" row: whether Kami opens them, with a button to
-    /// make it the default if it doesn't.
+    /// The "Default Markdown app" row: a button to make Kami the default,
+    /// with the current default beneath it, or a checkmark if Kami is.
     #[cfg(target_os = "macos")]
     fn markdown_files(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.theme;
-        let (message, offer) = match &self.markdown_app {
-            default_app::Status::Kami => ("Kami opens Markdown files.".to_owned(), false),
-            default_app::Status::Other(Some(app)) => (format!("They open in {app}."), true),
-            default_app::Status::Other(None) => ("Kami doesn't open them.".to_owned(), true),
-            default_app::Status::NotInstalled => (
-                "Kami can open them by default once it's installed as Kami.app.".to_owned(),
-                false,
-            ),
+        let note = |text: String| {
+            div()
+                .text_size(px(11.))
+                .text_color(theme.muted_text)
+                .child(text)
         };
         let button = div()
             .id("make-default")
@@ -150,26 +150,37 @@ impl SettingsWindow {
                 }),
             )
             .child("Make Kami the Default");
+        let content = match &self.markdown_app {
+            default_app::Status::Kami => div().pt(px(4.)).child("✓ Kami"),
+            default_app::Status::Other(app) => div()
+                .flex()
+                .flex_col()
+                .items_start()
+                .gap_1()
+                .child(button)
+                .child(note(format!(
+                    "Currently: {}",
+                    app.as_deref().unwrap_or("none")
+                ))),
+            default_app::Status::NotInstalled => div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(div().pt(px(4.)).child("—"))
+                .child(note("Install Kami.app to change".to_owned())),
+        };
         div()
             .flex()
             .gap_4()
             .child(
                 div()
-                    .w(px(130.))
+                    .w(px(LABEL_WIDTH))
                     .flex_none()
                     .text_right()
                     .pt(px(4.))
-                    .child("Markdown files"),
+                    .child("Default Markdown app"),
             )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_start()
-                    .gap_1()
-                    .child(div().pt(px(4.)).child(message))
-                    .children(offer.then_some(button)),
-            )
+            .child(content)
     }
 
     /// A row: a label, then buttons for the choices with the current one
@@ -215,7 +226,7 @@ impl SettingsWindow {
             .gap_4()
             .child(
                 div()
-                    .w(px(130.))
+                    .w(px(LABEL_WIDTH))
                     .flex_none()
                     .text_right()
                     .pt(px(4.))
