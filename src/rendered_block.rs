@@ -25,6 +25,7 @@ struct TextStyle {
     color: Hsla,
     theme: Theme,
     tab_width: u32,
+    code_font: SharedString,
     click: ClickTarget,
 }
 
@@ -92,6 +93,7 @@ pub fn rendered_content(block: &RenderedBlock, look: &Look, click: ClickTarget) 
         color: look.theme.text,
         theme: look.theme,
         tab_width: look.tab_width,
+        code_font: look.code_font.clone(),
         click,
     };
     render_content(block, &style, 0)
@@ -170,7 +172,7 @@ fn render_content(block: &RenderedBlock, style: &TextStyle, depth: usize) -> Any
                 .child(render_children(children, &quote_style, depth))
                 .into_any_element()
         }
-        RenderedBlock::CodeBlock { code, .. } => code_text(div())
+        RenderedBlock::CodeBlock { code, .. } => code_text(div(), &style.code_font)
             .bg(style.theme.code_background)
             .rounded_md()
             .px_4()
@@ -183,10 +185,12 @@ fn render_content(block: &RenderedBlock, style: &TextStyle, depth: usize) -> Any
             })
             .into_any_element(),
         RenderedBlock::Table(table) => render_table(table, style),
-        RenderedBlock::Html(source) | RenderedBlock::Raw(source) => code_text(div())
-            .text_color(style.theme.muted_text)
-            .child(clickable_source(source, style, |index| index))
-            .into_any_element(),
+        RenderedBlock::Html(source) | RenderedBlock::Raw(source) => {
+            code_text(div(), &style.code_font)
+                .text_color(style.theme.muted_text)
+                .child(clickable_source(source, style, |index| index))
+                .into_any_element()
+        }
     }
 }
 
@@ -358,6 +362,7 @@ fn styled_text(text: &InlineText, style: &TextStyle) -> StyledText {
                 &style.font,
                 style.color,
                 style.theme,
+                &style.code_font,
             )
         })
         .collect();

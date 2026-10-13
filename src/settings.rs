@@ -11,6 +11,7 @@ use std::ops::RangeInclusive;
 
 use toml_edit::{DocumentMut, Item, Value};
 
+use crate::rendered::CODE_FONT;
 use crate::tabs::{DEFAULT_TAB_WIDTH, TAB_WIDTHS};
 
 /// The color scheme (A2).
@@ -50,7 +51,7 @@ pub const FONT_SIZES: RangeInclusive<u32> = 10..=32;
 pub const DEFAULT_FONT_SIZE: u32 = 16;
 
 /// All settings, with defaults for any the file doesn't set.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
     pub theme: ThemeSetting,
     pub layout: Layout,
@@ -59,6 +60,10 @@ pub struct Settings {
     pub font_size: u32,
     /// How many spaces a tab is shown as.
     pub tab_width: u32,
+    /// The font family for text, or `None` for the system font.
+    pub body_font: Option<String>,
+    /// The font family for code, or `None` for [`CODE_FONT`].
+    pub code_font: Option<String>,
     /// Whether the block being edited shows its keyboard hints.
     pub editing_hint: bool,
 }
@@ -71,8 +76,17 @@ impl Default for Settings {
             text_width: TextWidth::default(),
             font_size: DEFAULT_FONT_SIZE,
             tab_width: DEFAULT_TAB_WIDTH,
+            body_font: None,
+            code_font: None,
             editing_hint: true,
         }
+    }
+}
+
+impl Settings {
+    /// The font family for code.
+    pub fn code_font(&self) -> &str {
+        self.code_font.as_deref().unwrap_or(CODE_FONT)
     }
 }
 
@@ -128,6 +142,13 @@ pub enum Kind {
         choices: &'static [u32],
         get: fn(&Settings) -> u32,
         apply: fn(&mut Settings, u32),
+    },
+    /// A font family name, or the default when not set.
+    Font {
+        /// The default's name in the settings sheet.
+        default: &'static str,
+        get: fn(&Settings) -> Option<&str>,
+        apply: fn(&mut Settings, Option<String>),
     },
     /// `true` or `false`.
     Bool {
@@ -189,6 +210,26 @@ pub const SETTINGS: &[Setting] = &[
         },
     },
     Setting {
+        key: "body_font",
+        label: "Text font",
+        note: None,
+        kind: Kind::Font {
+            default: "System",
+            get: |settings| settings.body_font.as_deref(),
+            apply: |settings, font| settings.body_font = font,
+        },
+    },
+    Setting {
+        key: "code_font",
+        label: "Code font",
+        note: None,
+        kind: Kind::Font {
+            default: "Menlo (default)",
+            get: |settings| settings.code_font.as_deref(),
+            apply: |settings, font| settings.code_font = font,
+        },
+    },
+    Setting {
         key: "tab_width",
         label: "Tab character width",
         note: Some(
@@ -241,42 +282,45 @@ fn find(key: &str) -> Option<&'static Setting> {
 }
 
 impl Kind {
-    /// Reads `value` into `settings`, if it's allowed.
-    fn read(&self, value: &Value, settings: &mut Settings) -> bool {
+    /// Reads `value` into `settings`, or says what's wrong with it, as in
+    /// "`key` …". `installed` gives a font family's name as installed, or
+    /// `None` if it isn't.
+    fn read(
+        &self,
+        value: &Value,
+        settings: &mut Settings,
+        installed: &FontCheck,
+    ) -> Result<(), String> {
+        let invalid = || Err(format!("must be {}", self.allowed()));
+        let number = value.as_integer().and_then(|n| u32::try_from(n).ok());
         match self {
             Self::Choice { choices, apply, .. } => match value.as_str() {
                 Some(value) if choices.iter().any(|&(choice, _)| choice == value) => {
-                    apply(settings, value);
-                    true
+                    apply(settings, value)
                 }
-                _ => false,
+                _ => return invalid(),
             },
-            Self::Integer { range, apply, .. } => {
-                match value.as_integer().and_then(|n| u32::try_from(n).ok()) {
-                    Some(n) if range.contains(&n) => {
-                        apply(settings, n);
-                        true
-                    }
-                    _ => false,
-                }
-            }
-            Self::Numbers { choices, apply, .. } => {
-                match value.as_integer().and_then(|n| u32::try_from(n).ok()) {
-                    Some(n) if choices.contains(&n) => {
-                        apply(settings, n);
-                        true
-                    }
-                    _ => false,
-                }
-            }
+            Self::Integer { range, apply, .. } => match number {
+                Some(n) if range.contains(&n) => apply(settings, n),
+                _ => return invalid(),
+            },
+            Self::Numbers { choices, apply, .. } => match number {
+                Some(n) if choices.contains(&n) => apply(settings, n),
+                _ => return invalid(),
+            },
+            Self::Font { apply, .. } => match value.as_str() {
+                Some(name) => match installed(name) {
+                    Some(name) => apply(settings, Some(name)),
+                    None => return Err(format!("names \"{name}\", which isn't installed")),
+                },
+                None => return invalid(),
+            },
             Self::Bool { apply, .. } => match value.as_bool() {
-                Some(value) => {
-                    apply(settings, value);
-                    true
-                }
-                None => false,
+                Some(value) => apply(settings, value),
+                None => return invalid(),
             },
         }
+        Ok(())
     }
 
     /// What the setting must be, as in "`key` must be …".
@@ -293,6 +337,7 @@ impl Kind {
                 let values: Vec<String> = choices.iter().map(u32::to_string).collect();
                 one_of(&values.iter().map(String::as_str).collect::<Vec<_>>())
             }
+            Self::Font { .. } => "a font name, e.g. \"Charter\"".to_owned(),
             Self::Bool { .. } => one_of(&["true", "false"]),
         }
     }
@@ -330,9 +375,20 @@ impl Layout {
     }
 }
 
-/// Reads settings from the file's `text`. Anything wrong is reported, and
-/// the affected settings keep their defaults.
+/// Checks a font family name: its name as installed, or `None` if it
+/// isn't.
+pub type FontCheck<'a> = dyn Fn(&str) -> Option<String> + 'a;
+
+/// Reads settings from the file's `text`, taking any font as installed.
+/// Anything wrong is reported, and the affected settings keep their
+/// defaults.
 pub fn parse(text: &str) -> (Settings, Vec<Problem>) {
+    parse_checking_fonts(text, &|name| Some(name.to_owned()))
+}
+
+/// Reads settings like [`parse`], reporting fonts that `installed` says
+/// aren't installed.
+pub fn parse_checking_fonts(text: &str, installed: &FontCheck) -> (Settings, Vec<Problem>) {
     let mut settings = Settings::default();
     let mut problems = Vec::new();
     let line_of = |offset: usize| text[..offset.min(text.len())].matches('\n').count() + 1;
@@ -359,16 +415,14 @@ pub fn parse(text: &str) -> (Settings, Vec<Problem>) {
             });
             continue;
         };
-        let read = item
-            .as_value()
-            .is_some_and(|value| setting.kind.read(value, &mut settings));
-        if !read {
+        let read = match item.as_value() {
+            Some(value) => setting.kind.read(value, &mut settings, installed),
+            None => Err(format!("must be {}", setting.kind.allowed())),
+        };
+        if let Err(problem) = read {
             problems.push(Problem {
                 line,
-                message: format!(
-                    "`{key}` must be {}; using the default",
-                    setting.kind.allowed()
-                ),
+                message: format!("`{key}` {problem}; using the default"),
             });
         }
     }
@@ -380,24 +434,21 @@ pub fn parse(text: &str) -> (Settings, Vec<Problem>) {
 /// overwritten, or if `value` isn't allowed for `key`.
 pub fn set(text: &str, key: &str, value: impl Into<Value>) -> Result<String, Problem> {
     let value = value.into();
-    let allowed = find(key).map(|setting| {
-        let mut scratch = Settings::default();
-        (setting.kind.read(&value, &mut scratch), setting)
-    });
-    match allowed {
-        None => {
-            return Err(Problem {
-                line: None,
-                message: format!("unknown setting `{key}`"),
-            });
-        }
-        Some((false, setting)) => {
-            return Err(Problem {
-                line: None,
-                message: format!("`{key}` must be {}", setting.kind.allowed()),
-            });
-        }
-        Some((true, _)) => {}
+    let Some(setting) = find(key) else {
+        return Err(Problem {
+            line: None,
+            message: format!("unknown setting `{key}`"),
+        });
+    };
+    let any_font = |name: &str| Some(name.to_owned());
+    if let Err(problem) = setting
+        .kind
+        .read(&value, &mut Settings::default(), &any_font)
+    {
+        return Err(Problem {
+            line: None,
+            message: format!("`{key}` {problem}"),
+        });
     }
     let mut document: DocumentMut = text.parse().map_err(|err: toml_edit::TomlError| Problem {
         line: None,
@@ -427,6 +478,22 @@ pub fn set(text: &str, key: &str, value: impl Into<Value>) -> Result<String, Pro
             return Ok(text);
         }
         _ => document[key] = Item::Value(value),
+    }
+    Ok(document.to_string())
+}
+
+/// The file's `text` without `key`, so the setting takes its default,
+/// keeping everything else. Fails if the file can't be parsed.
+pub fn remove(text: &str, key: &str) -> Result<String, Problem> {
+    let mut document: DocumentMut = text.parse().map_err(|err: toml_edit::TomlError| Problem {
+        line: None,
+        message: format!(
+            "couldn't change `{key}` because the settings file has a problem: {}",
+            err.message().trim_end()
+        ),
+    })?;
+    if document.remove(key).is_none() {
+        return Ok(text.to_owned());
     }
     Ok(document.to_string())
 }
@@ -464,6 +531,8 @@ mod tests {
                 text_width: TextWidth::Wide,
                 font_size: DEFAULT_FONT_SIZE,
                 tab_width: DEFAULT_TAB_WIDTH,
+                body_font: None,
+                code_font: None,
                 editing_hint: true,
             }
         );
@@ -557,6 +626,49 @@ mod tests {
     }
 
     #[test]
+    fn fonts() {
+        let defaults = Settings::default();
+        assert_eq!(
+            (defaults.body_font.as_deref(), defaults.code_font()),
+            (None, "Menlo")
+        );
+        let text = "body_font = \"charter\"\ncode_font = \"Nope Mono\"\n";
+        let installed = |name: &str| {
+            ["Charter", "Fira Code"]
+                .into_iter()
+                .find(|font| font.eq_ignore_ascii_case(name))
+                .map(str::to_owned)
+        };
+        let (settings, problems) = parse_checking_fonts(text, &installed);
+        assert_eq!(
+            settings.body_font.as_deref(),
+            Some("Charter"),
+            "named as installed"
+        );
+        assert_eq!(settings.code_font, None);
+        assert_eq!(
+            problems[0].to_string(),
+            "line 2: `code_font` names \"Nope Mono\", which isn't installed; using the default"
+        );
+        let (_, problems) = parse("body_font = 12\n");
+        assert_eq!(
+            problems[0].to_string(),
+            "line 1: `body_font` must be a font name, e.g. \"Charter\"; using the default"
+        );
+    }
+
+    #[test]
+    fn remove_restores_the_default() {
+        let text = "# Mine\ntheme = \"dark\" # night\nbody_font = \"Charter\"\n";
+        assert_eq!(
+            remove(text, "body_font").unwrap(),
+            "# Mine\ntheme = \"dark\" # night\n"
+        );
+        assert_eq!(remove(text, "code_font").unwrap(), text);
+        assert!(remove("x = = ", "theme").is_err());
+    }
+
+    #[test]
     fn tab_width() {
         assert_eq!(Settings::default().tab_width, 4);
         assert_eq!(parse("tab_width = 8\n").0.tab_width, 8);
@@ -644,6 +756,12 @@ mod tests {
                         let text = set("", setting.key, i64::from(n)).unwrap();
                         assert_eq!(get(&parse(&text).0), n, "{}", setting.key);
                     }
+                }
+                Kind::Font { get, .. } => {
+                    let text = set("", setting.key, "Charter").unwrap();
+                    assert_eq!(get(&parse(&text).0), Some("Charter"), "{}", setting.key);
+                    let text = remove(&text, setting.key).unwrap();
+                    assert_eq!(get(&parse(&text).0), None, "{}", setting.key);
                 }
                 Kind::Bool { get, .. } => {
                     for b in [true, false] {

@@ -42,12 +42,14 @@ Each document opens in its own tab. **⌘1** to **⌘9** go straight to a tab. T
 Settings are kept in `~/Library/Application Support/kami/config.toml`. **Kami → Settings…** (⌘,) and the View menu change them for you, and you can also edit the file. Changes apply straight away, except `layout`, which applies the next time Kami starts.
 
 ```toml
-theme = "dark"       # "light", "dark" or "system"
-layout = "windows"   # "tabs" or "windows", from the next start
-text_width = "wide"  # "standard", "wide" or "full"
-font_size = 18       # 10 to 32
-tab_width = 2        # how wide tab characters in code look: 2, 4 or 8 spaces
-editing_hint = false # hide keyboard hints on the block being edited
+theme = "dark"        # "light", "dark" or "system"
+layout = "windows"    # "tabs" or "windows", from the next start
+text_width = "wide"   # "standard", "wide" or "full"
+font_size = 18        # 10 to 32
+body_font = "Charter" # any installed font; the system font if not set
+code_font = "SF Mono" # Menlo if not set
+tab_width = 2         # how wide tab characters in code look: 2, 4 or 8 spaces
+editing_hint = false  # hide keyboard hints on the block being edited
 ```
 
 If the file has a mistake, Kami uses the default for that setting and shows what's wrong at the bottom of the window.

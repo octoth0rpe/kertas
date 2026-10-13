@@ -98,12 +98,8 @@ impl DocumentView {
         let revealed = open.revealed.clone();
         let layout_slot = open.revealed_layout.clone();
         let caret_visible = self.caret_visible;
-        let column_width = column_width(self.text_width);
-        let look = Look {
-            font: window.text_style().font(),
-            theme: self.theme,
-            tab_width: self.tab_width,
-        };
+        let column_width = column_width(self.text_settings.text_width);
+        let look = Look::new(window.text_style().font(), self.theme, &self.text_settings);
         let view = cx.entity();
         let focus_handle = self.focus_handle.clone();
         let hint = app_settings::get(cx).editing_hint;
@@ -397,6 +393,10 @@ impl Render for DocumentView {
                 div()
                     .flex_1()
                     .min_h(px(0.))
+                    // List markers and the like follow the body font too.
+                    .when_some(self.text_settings.body_font.clone(), |this, font| {
+                        this.font_family(font)
+                    })
                     // Clicks below the last block finish editing.
                     .on_mouse_down(
                         gpui::MouseButton::Left,
