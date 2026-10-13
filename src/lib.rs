@@ -1,4 +1,4 @@
-//! Core of the kami Markdown editor.
+//! Core of the Kami Markdown editor.
 
 pub mod blocks;
 pub mod buffer;

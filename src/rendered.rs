@@ -235,7 +235,7 @@ impl TreeBuilder {
             },
             Tag::TableCell => Frame::Cell(InlineBuilder::default()),
             // Table heads and rows are tracked in the table frame; other tags
-            // are inline (handled above) or extensions kami doesn't enable.
+            // are inline (handled above) or extensions Kami doesn't enable.
             _ => return,
         };
         // A nested block in a tight list item ends the item's leading text.

@@ -15,7 +15,8 @@ app="target/release/Kami.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 sed "s/@VERSION@/$version/g" macos/Info.plist > "$app/Contents/Info.plist"
-cp target/release/kami "$app/Contents/MacOS/kami"
+# Named Kami, as Activity Monitor and Force Quit show it.
+cp target/release/kami "$app/Contents/MacOS/Kami"
 cp macos/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 plutil -lint "$app/Contents/Info.plist" >/dev/null
 

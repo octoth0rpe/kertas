@@ -13,7 +13,7 @@
 //! Blank lines between blocks belong to no block.
 //!
 //! Front matter is detected here rather than by pulldown-cmark, which
-//! accepts metadata blocks anywhere in a document. kami only treats it as
+//! accepts metadata blocks anywhere in a document. Kami only treats it as
 //! front matter at the very start of the file, after an optional byte-order
 //! mark. Elsewhere, `---` lines are thematic breaks or setext underlines.
 
@@ -54,7 +54,7 @@ pub struct Block {
     pub range: Range<usize>,
 }
 
-/// The parser options kami uses everywhere: CommonMark plus the GFM
+/// The parser options Kami uses everywhere: CommonMark plus the GFM
 /// extensions in M2. Front matter is handled separately; see the module docs.
 pub fn parser_options() -> Options {
     Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS
@@ -242,7 +242,7 @@ fn block_kind(tag: &Tag) -> Option<BlockKind> {
         },
         Tag::Table(_) => BlockKind::Table,
         Tag::HtmlBlock => BlockKind::HtmlBlock,
-        // Other tags are inline, nested-only, or belong to extensions kami
+        // Other tags are inline, nested-only, or belong to extensions Kami
         // doesn't enable.
         _ => return None,
     })
