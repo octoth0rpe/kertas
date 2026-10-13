@@ -653,7 +653,7 @@ impl SettingsWindow {
                 let note = match current {
                     Some(seconds) => format!(
                         "Saves {seconds} {} after you stop typing, and when you switch \
-                         away or quit. The number of seconds is set in the settings file.",
+                         away or quit.",
                         if seconds == 1 { "second" } else { "seconds" }
                     ),
                     None => "Documents are saved only when you save them.".to_owned(),
