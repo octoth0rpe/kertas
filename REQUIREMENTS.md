@@ -97,7 +97,7 @@ A selection that spans several blocks reveals all of them.
 | T5 | High performance is a primary goal: GPU-rendered, smooth scrolling, no perceptible input latency (see N1 and N2). | MUST |
 | T6 | **No GPL code.** No dependency may be GPL, LGPL or AGPL, and no code may be copied or ported from GPL sources. This specifically excludes Zed's `editor`, `markdown`, `markdown_preview`, `language`, `rope` and `text` crates. Reading them for design ideas is fine. | MUST |
 | T7 | Dependencies must use licenses compatible with an Apache-2.0 project. **Allowed:** Apache-2.0, MIT, BSD-2/3-Clause, ISC, Zlib, BlueOak-1.0.0, Unicode-3.0, and similar permissive licenses; MPL-2.0 (file-level copyleft, so changes to MPL-licensed files must be shared under MPL, but our own code is unaffected); and dual licenses that include an allowed one (e.g. `MIT OR Apache-2.0`). **Not allowed:** GPL, LGPL, AGPL (T6). Anything else needs review before it is added. | MUST |
-| T8 | License policy is enforced in CI with `cargo-deny`, using an explicit allow-list. | SHOULD |
+| T8 | License policy is enforced with `cargo-deny`, using an explicit allow-list (`deny.toml`). `scripts/check.sh` runs it with the other checks, and release builds require it. CI may run the same script later. | SHOULD |
 
 ## 8. Configuration
 
