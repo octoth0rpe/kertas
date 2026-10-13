@@ -32,6 +32,7 @@ pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
         Ok("tabs") => return smoke_tabs(window, cx),
         Ok("quit") => return smoke_quit(window, cx),
         Ok("settings") => return smoke_settings(window, cx),
+        Ok("help") => return smoke_help(window, cx),
         Ok(_) => {}
     }
     let mut steps: Vec<Step> = Vec::new();
@@ -321,7 +322,10 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
         std::fs::write(&temp, "theme = \"light\"\n").ok();
         std::fs::rename(&temp, &path).ok();
         wait().await;
-        check("replaced file applies live", theme(cx) == Some(Theme::light()));
+        check(
+            "replaced file applies live",
+            theme(cx) == Some(Theme::light()),
+        );
 
         std::fs::write(&path, "theme = \"blue\"\nfont = 1\n").ok();
         wait().await;
@@ -386,6 +390,106 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
             "windows layout opens a window",
             windows == 2 && grouped == 1,
         );
+
+        println!("SMOKE {}", if ok { "OK" } else { "FAILED" });
+        cx.update(|cx| cx.quit());
+    })
+    .detach();
+}
+
+/// `KAMI_SMOKE=help`: the Help menu opens built-in documents once each,
+/// and they can't be edited.
+fn smoke_help(window: WindowHandle<DocumentView>, cx: &mut App) {
+    use crate::builtin::Builtin;
+    use crate::menus::{OpenHelp, OpenKeyboardShortcuts};
+
+    cx.spawn(async move |cx| {
+        let executor = cx.background_executor().clone();
+        let wait = || executor.timer(STEP * 20);
+        let mut ok = true;
+        let mut check = |name: &str, passed: bool| {
+            println!("{name}: {}", if passed { "ok" } else { "FAILED" });
+            ok &= passed;
+        };
+        let dispatch = |cx: &mut gpui::AsyncApp, action: Box<dyn Action>| {
+            window
+                .update(cx, |_, window, cx| window.dispatch_action(action, cx))
+                .ok();
+        };
+        let help_window = |cx: &mut gpui::AsyncApp| {
+            cx.update(|cx| {
+                cx.windows()
+                    .into_iter()
+                    .filter_map(|window| window.downcast::<DocumentView>())
+                    .find(|window| {
+                        window
+                            .read(cx)
+                            .is_ok_and(|view| view.builtin() == Some(Builtin::Help))
+                    })
+            })
+        };
+
+        dispatch(cx, Box::new(OpenHelp));
+        wait().await;
+        let help = help_window(cx);
+        check("Kami Help opens", help.is_some());
+        let Some(help) = help else {
+            println!("SMOKE FAILED");
+            cx.update(|cx| cx.quit());
+            return;
+        };
+        let text = |cx: &mut gpui::AsyncApp| {
+            help.read_with(cx, |view, _| view.text())
+                .unwrap_or_default()
+        };
+        let before = text(cx);
+        check("it shows the help text", before == Builtin::Help.text());
+
+        // Try to edit it every way there is.
+        help.update(cx, |view, window, cx| {
+            view.click(10, false, window, cx);
+            for action in [
+                Box::new(MoveDown) as Box<dyn Action>,
+                Box::new(Newline),
+                Box::new(Backspace),
+                Box::new(IndentTab),
+                Box::new(SelectAll),
+                Box::new(Undo),
+            ] {
+                window.dispatch_action(action, cx);
+            }
+            view.replace_text_in_range(None, "typed", window, cx);
+            view.replace_text_in_range(Some(0..5), "typed", window, cx);
+        })
+        .ok();
+        wait().await;
+        check("it can't be edited", text(cx) == before);
+        let state = help
+            .read_with(cx, |view, _| (view.has_caret(), view.is_dirty()))
+            .unwrap_or((true, true));
+        check("no caret, nothing to save", state == (false, false));
+
+        dispatch(cx, Box::new(OpenHelp));
+        wait().await;
+        let count = cx.update(|cx| cx.windows().len());
+        check("opening it again switches to it", count == 2);
+        dispatch(cx, Box::new(OpenKeyboardShortcuts));
+        wait().await;
+        let count = cx.update(|cx| cx.windows().len());
+        check("Keyboard Shortcuts opens", count == 3);
+
+        // Closing them doesn't ask about saving.
+        let windows = cx.update(|cx| cx.windows());
+        for other in windows.into_iter().filter(|other| *other != *window) {
+            other
+                .update(cx, |_, window, cx| {
+                    window.dispatch_action(Box::new(CloseWindow), cx)
+                })
+                .ok();
+            wait().await;
+        }
+        let count = cx.update(|cx| cx.windows().len());
+        check("they close without asking", count == 1);
 
         println!("SMOKE {}", if ok { "OK" } else { "FAILED" });
         cx.update(|cx| cx.quit());

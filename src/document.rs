@@ -29,6 +29,17 @@ impl Document {
         }
     }
 
+    /// A document holding `text`, with no file and no unsaved changes.
+    pub fn from_text(text: &str) -> Self {
+        let mut buffer = Buffer::default();
+        buffer.replace(0..0, text);
+        Self {
+            path: None,
+            buffer,
+            saved: text.to_owned(),
+        }
+    }
+
     /// Opens the file at `path`.
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, OpenError> {
         let path = path.into();
@@ -208,6 +219,14 @@ mod tests {
             display_name(Path::new("relative.markdown")),
             "relative.markdown"
         );
+    }
+
+    #[test]
+    fn document_from_text_is_unchanged() {
+        let document = Document::from_text("# Help\n");
+        assert_eq!(document.buffer().slice(0..7), "# Help\n");
+        assert!(!document.is_dirty());
+        assert!(document.path().is_none());
     }
 
     #[test]
