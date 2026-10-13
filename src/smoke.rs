@@ -11,8 +11,8 @@
 //! - `write`: only the writing steps (Enter, lists, quotes, code), then
 //!   saves, so the text can be checked.
 //! - `bench`: times 500 inserts in the middle of the document.
-//! - `tabs`, `settings`, `settings-window`, `help`, `reveal`, `print`,
-//!   `disk`, `autosave`, `quit`: see each function.
+//! - `tabs`, `settings`, `settings-window`, `help`, `reveal`, `links`,
+//!   `print`, `disk`, `autosave`, `quit`: see each function.
 
 use std::cell::Cell;
 use std::path::Path;
@@ -42,6 +42,7 @@ pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
         "help" => smoke_help(window, cx),
         "settings-window" => smoke_settings_window(window, cx),
         "reveal" => smoke_reveal(window, cx),
+        "links" => smoke_links(window, cx),
         "print" => smoke_print(window, cx),
         "disk" => smoke_disk(window, cx),
         "autosave" => smoke_autosave(window, cx),
@@ -88,6 +89,53 @@ fn dispatch(window: impl Into<gpui::AnyWindowHandle>, cx: &mut AsyncApp, action:
         .into()
         .update(cx, |_, window, cx| window.dispatch_action(action, cx))
         .ok();
+}
+
+/// Clicks in `window` at `position`, as the mouse would: it moves there,
+/// then the button goes down and, a few frames later, up.
+async fn mouse_click(
+    window: WindowHandle<DocumentView>,
+    cx: &mut AsyncApp,
+    position: gpui::Point<gpui::Pixels>,
+) {
+    use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
+
+    let send = |cx: &mut AsyncApp, event: gpui::PlatformInput| {
+        gpui::AnyWindowHandle::from(window)
+            .update(cx, |_, window, cx| {
+                window.dispatch_event(event, cx);
+            })
+            .ok();
+    };
+    send(
+        cx,
+        gpui::PlatformInput::MouseMove(MouseMoveEvent {
+            position,
+            pressed_button: None,
+            modifiers: Modifiers::default(),
+        }),
+    );
+    pause(cx, 3).await;
+    send(
+        cx,
+        gpui::PlatformInput::MouseDown(MouseDownEvent {
+            button: MouseButton::Left,
+            position,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+            first_mouse: false,
+        }),
+    );
+    pause(cx, 3).await;
+    send(
+        cx,
+        gpui::PlatformInput::MouseUp(MouseUpEvent {
+            button: MouseButton::Left,
+            position,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+        }),
+    );
 }
 
 fn window_count(cx: &mut AsyncApp) -> usize {
@@ -833,6 +881,86 @@ fn smoke_reveal(window: WindowHandle<DocumentView>, cx: &mut App) {
             revealed == 3 && selection.is_some_and(|selection| Some(selection.head) == target),
         );
         window.update(cx, |view, _, _| view.end_drag()).ok();
+        checks.finish(cx);
+    })
+    .detach();
+}
+
+/// `KAMI_SMOKE=links`, on `links.md`: clicking a link to a Markdown file
+/// opens it in a tab and leaves the link's block rendered; clicking plain
+/// text still reveals its block.
+fn smoke_links(window: WindowHandle<DocumentView>, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        let mut checks = Checks::default();
+        pause(cx, 10).await;
+        let Some(path) = window
+            .read_with(cx, |view, _| view.document_path().map(Path::to_owned))
+            .ok()
+            .flatten()
+        else {
+            checks.check("the document has a file", false);
+            return checks.finish(cx);
+        };
+        let other = path.with_file_name("other.md");
+        std::fs::write(&other, "# Other\n").ok();
+        let origin = |cx: &mut AsyncApp, index: usize| {
+            window
+                .update(cx, |view, window, _| view.text_origin(index, window))
+                .ok()
+                .flatten()
+        };
+        let text_position =
+            |origin: gpui::Point<gpui::Pixels>| origin + gpui::point(gpui::px(12.), gpui::px(10.));
+
+        // The first block starts with a link to other.md.
+        let Some(first) = origin(cx, 0) else {
+            checks.check("the first block is laid out", false);
+            return checks.finish(cx);
+        };
+        mouse_click(window, cx, text_position(first)).await;
+        let opened = wait_until(cx, |cx| {
+            cx.update(|cx| {
+                cx.windows().into_iter().any(|handle| {
+                    handle
+                        .downcast::<DocumentView>()
+                        .and_then(|handle| handle.read(cx).ok())
+                        .and_then(|view| view.document_path())
+                        .is_some_and(|open| open.file_name() == other.file_name())
+                })
+            })
+        })
+        .await;
+        checks.check("clicking a Markdown link opens the file", opened);
+        let (revealed, selection) = window
+            .read_with(cx, |view, _| view.reveal_state())
+            .unwrap_or_default();
+        checks.check(
+            &format!("the link's block stays rendered ({revealed} revealed, {selection:?})"),
+            revealed == 0 && selection.is_none(),
+        );
+
+        // Plain text in the second block reveals it.
+        window
+            .update(cx, |_, window, _| window.activate_window())
+            .ok();
+        pause(cx, 10).await;
+        let start = window
+            .read_with(cx, |view, _| view.item_start(1))
+            .ok()
+            .flatten();
+        if let Some(second) = origin(cx, 1) {
+            mouse_click(window, cx, text_position(second)).await;
+        }
+        pause(cx, 5).await;
+        let (revealed, selection) = window
+            .read_with(cx, |view, _| view.reveal_state())
+            .unwrap_or_default();
+        checks.check(
+            &format!("clicking plain text reveals its block ({selection:?})"),
+            revealed == 1
+                && start
+                    .is_some_and(|start| selection.is_some_and(|selection| selection.head > start)),
+        );
         checks.finish(cx);
     })
     .detach();

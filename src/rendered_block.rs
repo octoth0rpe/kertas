@@ -4,8 +4,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, Font, FontWeight, Hsla, MouseButton, Rems, SharedString, StyledText,
-    WeakEntity, Window, div, prelude::*, px, rems,
+    AnyElement, App, ElementId, Font, FontWeight, Hsla, InteractiveText, MouseButton, Rems,
+    SharedString, StyledText, WeakEntity, Window, div, prelude::*, px, rems,
 };
 use kami::inline::InlineText;
 use kami::rendered::{ColumnAlignment, ListItem, RenderedBlock, Table};
@@ -65,6 +65,13 @@ impl ClickTarget {
         let offset = self.block_start + offset;
         self.view
             .update(cx, |view, cx| view.drag_to(offset, cx))
+            .ok();
+    }
+
+    /// Follows a clicked link to `destination`.
+    pub fn follow_link(&self, destination: &str, window: &mut Window, cx: &mut App) {
+        self.view
+            .update(cx, |view, cx| view.follow_link(destination, window, cx))
             .ok();
     }
 
@@ -330,22 +337,53 @@ fn heading_top_space(level: u8) -> f32 {
 }
 
 /// Inline text that places the caret at the matching source position
-/// when clicked.
+/// when clicked. A plain click on a link follows it instead, and the
+/// pointer is a hand over links.
 fn clickable_text(text: &InlineText, style: &TextStyle) -> AnyElement {
     let styled = styled_text(text, style);
     let layout = styled.layout().clone();
     let inline = text.clone();
     let click = style.click.clone();
     let (drag_layout, drag_inline, drag) = (layout.clone(), inline.clone(), click.clone());
+    let content = if text.links.is_empty() {
+        styled.into_any_element()
+    } else {
+        // Links follow when the button goes up over the link it went down
+        // on, like links elsewhere.
+        let ranges = text.links.iter().map(|link| link.display.clone()).collect();
+        let (links, follow) = (text.links.clone(), click.clone());
+        let first = text
+            .segments
+            .first()
+            .map_or(0, |segment| segment.source.start);
+        InteractiveText::new(
+            ElementId::named_usize("links", click.block_start + first),
+            styled,
+        )
+        .on_click(ranges, move |index, window, cx| {
+            if window.modifiers().modified() {
+                return;
+            }
+            if let Some(link) = links.get(index) {
+                follow.follow_link(&link.destination, window, cx);
+            }
+        })
+        .into_any_element()
+    };
     div()
         .on_mouse_down(MouseButton::Left, move |event, window, cx| {
-            let (Ok(index) | Err(index)) = layout.index_for_position(event.position);
-            click.report(
-                inline.source_offset(index),
-                event.modifiers.shift,
-                window,
-                cx,
-            );
+            let index = layout.index_for_position(event.position);
+            // A plain click on a link leaves the block rendered.
+            let on_link = matches!(index, Ok(index) if inline.link_at(index).is_some());
+            if !(on_link && !event.modifiers.modified()) {
+                let (Ok(index) | Err(index)) = index;
+                click.report(
+                    inline.source_offset(index),
+                    event.modifiers.shift,
+                    window,
+                    cx,
+                );
+            }
             cx.stop_propagation();
         })
         .on_mouse_move(move |event, _, cx| {
@@ -354,7 +392,7 @@ fn clickable_text(text: &InlineText, style: &TextStyle) -> AnyElement {
                 drag.drag(drag_inline.source_offset(index), cx);
             }
         })
-        .child(styled)
+        .child(content)
         .into_any_element()
 }
 

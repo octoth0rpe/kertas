@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use gpui::{Context, PromptLevel, Task, Window};
 use kami::document::{Document, OpenError, SaveError};
+use kami::links::{self, LinkTarget};
 
 use super::{CloseWindow, DocumentView, Print, Save, SaveAs};
 use crate::builtin::Builtin;
@@ -247,6 +248,49 @@ impl DocumentView {
             Err(err) => show_open_error(&err, window, cx),
         }
     }
+
+    /// Follows a clicked link: Markdown files open in Kami, as File > Open
+    /// does, and anything else opens in its own app. Shows an alert if the
+    /// link can't be followed.
+    pub fn follow_link(&mut self, destination: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let (message, detail) = match links::resolve(destination, self.document_path()) {
+            LinkTarget::Markdown(path) => {
+                cx.defer(move |cx| crate::windows::open_path(path, cx));
+                return;
+            }
+            LinkTarget::File(path) => {
+                cx.open_with_system(&path);
+                return;
+            }
+            LinkTarget::Url(url) => {
+                cx.open_url(&url);
+                return;
+            }
+            LinkTarget::SameDocument => return,
+            LinkTarget::Missing(path) => (
+                format!("Couldn't find “{}”", display_name(&path)),
+                format!(
+                    "The link points to {}, which doesn't exist.",
+                    path.display()
+                ),
+            ),
+            LinkTarget::NoFolder(path) => (
+                format!("Couldn't follow the link to “{path}”"),
+                "The link is relative to the document's folder. Save the document first."
+                    .to_owned(),
+            ),
+        };
+        let answer = window.prompt(PromptLevel::Warning, &message, Some(&detail), &["OK"], cx);
+        cx.spawn(async move |_, _| answer.await.ok()).detach();
+    }
+}
+
+/// A path's file name, for alerts.
+fn display_name(path: &Path) -> String {
+    path.file_name()
+        .unwrap_or(path.as_os_str())
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn show_open_error(err: &OpenError, window: &mut Window, cx: &mut Context<DocumentView>) {

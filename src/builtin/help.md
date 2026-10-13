@@ -10,6 +10,8 @@ Click any block, such as a paragraph, heading, list or table, to edit it. That b
 - **⌥↓** and **⌥↑** move to the next or previous block.
 - Clicking in the margins also finishes editing.
 
+Clicking a link follows it. Links to Markdown files open in Kami, and other links open in their own apps: web pages in your browser, for example. To edit a link, click elsewhere in its block, or move to it with **⌥↓** and **⌥↑**.
+
 ## Writing
 
 - **↩** starts a new line. A single line break inside a paragraph shows as a space, as in all Markdown, so press **↩** twice to start a new paragraph.

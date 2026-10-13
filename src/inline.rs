@@ -6,7 +6,7 @@
 
 use std::ops::Range;
 
-use pulldown_cmark::{Event, Tag, TagEnd};
+use pulldown_cmark::{Event, LinkType, Tag, TagEnd};
 
 #[cfg(test)]
 use crate::definitions::Definitions;
@@ -31,15 +31,31 @@ pub struct Segment {
     pub style: InlineStyle,
 }
 
+/// A link in display text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Link {
+    /// Byte range in [`InlineText::text`].
+    pub display: Range<usize>,
+    /// Where the link points, as written (reference links resolved).
+    pub destination: String,
+}
+
 /// A block's text as displayed: Markdown syntax removed, formatting kept as
 /// styled segments that cover the whole text in order.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct InlineText {
     pub text: String,
     pub segments: Vec<Segment>,
+    /// The links in the text, in order.
+    pub links: Vec<Link>,
 }
 
 impl InlineText {
+    /// The link whose text includes byte `index` of [`Self::text`].
+    pub fn link_at(&self, index: usize) -> Option<&Link> {
+        self.links.iter().find(|link| link.display.contains(&index))
+    }
+
     /// Maps a byte index in [`Self::text`] to a byte offset in the source.
     ///
     /// Inside a segment whose display text matches its source byte for byte,
@@ -91,7 +107,9 @@ pub(crate) struct InlineBuilder {
     strong: usize,
     emphasis: usize,
     strikethrough: usize,
-    link: usize,
+    /// The links being built: where each one's text starts, and its
+    /// destination.
+    links: Vec<(usize, String)>,
 }
 
 impl InlineBuilder {
@@ -109,8 +127,30 @@ impl InlineBuilder {
             Event::End(TagEnd::Strong) => self.strong -= 1,
             Event::Start(Tag::Strikethrough) => self.strikethrough += 1,
             Event::End(TagEnd::Strikethrough) => self.strikethrough -= 1,
-            Event::Start(Tag::Link { .. }) => self.link += 1,
-            Event::End(TagEnd::Link) => self.link -= 1,
+            Event::Start(Tag::Link {
+                link_type,
+                dest_url,
+                ..
+            }) => {
+                // Email autolinks (`<me@example.com>`) arrive without
+                // their scheme.
+                let destination = match link_type {
+                    LinkType::Email => format!("mailto:{dest_url}"),
+                    _ => dest_url.to_string(),
+                };
+                self.links.push((self.output.text.len(), destination));
+            }
+            Event::End(TagEnd::Link) => {
+                if let Some((start, destination)) = self.links.pop() {
+                    let end = self.output.text.len();
+                    if start < end {
+                        self.output.links.push(Link {
+                            display: start..end,
+                            destination,
+                        });
+                    }
+                }
+            }
             // Image alt text arrives as text events and is shown as plain
             // text until images are supported.
             Event::Start(Tag::Image { .. }) | Event::End(TagEnd::Image) => {}
@@ -131,7 +171,7 @@ impl InlineBuilder {
             strong: self.strong > 0,
             emphasis: self.emphasis > 0,
             strikethrough: self.strikethrough > 0,
-            link: self.link > 0,
+            link: !self.links.is_empty(),
             code,
         };
         let start = self.output.text.len();
@@ -328,6 +368,55 @@ mod tests {
                 (".", PLAIN),
             ]
         );
+    }
+
+    #[test]
+    fn links_record_their_destinations() {
+        let inline = render_inline(
+            "See [the guide](docs/guide.md#setup), <https://example.com> and \
+             <me@example.com>.",
+            &Definitions::default(),
+        );
+        let links: Vec<(&str, &str)> = inline
+            .links
+            .iter()
+            .map(|link| {
+                (
+                    &inline.text[link.display.clone()],
+                    link.destination.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            links,
+            [
+                ("the guide", "docs/guide.md#setup"),
+                ("https://example.com", "https://example.com"),
+                ("me@example.com", "mailto:me@example.com"),
+            ]
+        );
+        assert_eq!(
+            inline.link_at(4).map(|link| link.display.clone()),
+            Some(4..13)
+        );
+        assert!(inline.link_at(3).is_none());
+        assert!(inline.link_at(13).is_none());
+    }
+
+    #[test]
+    fn reference_links_record_resolved_destinations() {
+        let inline = render_inline(
+            "[kami][k] and [**bold**][k]",
+            &Definitions::from_text("[k]: other.md"),
+        );
+        assert_eq!(inline.links.len(), 2);
+        assert!(
+            inline
+                .links
+                .iter()
+                .all(|link| link.destination == "other.md")
+        );
+        assert_eq!(&inline.text[inline.links[1].display.clone()], "bold");
     }
 
     #[test]
