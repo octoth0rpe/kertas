@@ -11,10 +11,10 @@ use gpui::{
 use kami::settings::{Layout, Settings, TextWidth, ThemeSetting};
 
 use crate::app_settings::{self, AppSettings};
-#[cfg(target_os = "macos")]
-use crate::default_app;
 use crate::document_view::{CloseWindow, DocumentView};
 use crate::theme::Theme;
+#[cfg(target_os = "macos")]
+use crate::{cli_tool, default_app};
 
 /// The settings window, if it's open.
 #[derive(Default)]
@@ -43,7 +43,7 @@ pub fn open(cx: &mut App) {
             .update(cx, |_, window, _| window.activate_window())
             .ok();
     }
-    let bounds = Bounds::centered(None, size(px(520.), px(360.)), cx);
+    let bounds = Bounds::centered(None, size(px(540.), px(430.)), cx);
     let window = cx
         .open_window(
             WindowOptions {
@@ -82,6 +82,11 @@ pub struct SettingsWindow {
     #[cfg(target_os = "macos")]
     markdown_app: default_app::Status,
     #[cfg(target_os = "macos")]
+    cli_tool: cli_tool::Status,
+    /// Why installing or uninstalling the command failed.
+    #[cfg(target_os = "macos")]
+    cli_error: Option<String>,
+    #[cfg(target_os = "macos")]
     _activation_observer: Subscription,
     _settings_observer: Subscription,
     _appearance_observer: Subscription,
@@ -97,10 +102,12 @@ impl SettingsWindow {
             #[cfg(target_os = "macos")]
             markdown_app: default_app::status(),
             #[cfg(target_os = "macos")]
-            _activation_observer: cx.observe_window_activation(window, |this, _, cx| {
-                this.markdown_app = default_app::status();
-                cx.notify();
-            }),
+            cli_tool: cli_tool::status(),
+            #[cfg(target_os = "macos")]
+            cli_error: None,
+            #[cfg(target_os = "macos")]
+            _activation_observer: cx
+                .observe_window_activation(window, |this, _, cx| this.refresh(cx)),
             _settings_observer: cx.observe_global_in::<AppSettings>(window, |this, window, cx| {
                 this.theme = Theme::current(window, cx);
                 cx.notify();
@@ -112,19 +119,41 @@ impl SettingsWindow {
         }
     }
 
-    /// The "Default Markdown app" row: a button to make Kami the default,
-    /// with the current default beneath it, or a checkmark if Kami is.
-    #[cfg(target_os = "macos")]
-    fn markdown_files(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// A label on the left, and `content` on the right.
+    fn labelled(&self, label: &'static str, content: impl IntoElement) -> impl IntoElement {
+        div()
+            .flex()
+            .gap_4()
+            .child(
+                div()
+                    .w(px(LABEL_WIDTH))
+                    .flex_none()
+                    .text_right()
+                    .pt(px(4.))
+                    .child(label),
+            )
+            .child(content)
+    }
+
+    /// Small explanatory text.
+    fn note(&self, text: impl Into<SharedString>) -> impl IntoElement {
+        div()
+            .text_size(px(11.))
+            .text_color(self.theme.muted_text)
+            .child(text.into())
+    }
+
+    /// A button that runs `action` when clicked.
+    fn button(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        cx: &mut Context<Self>,
+        action: impl Fn(&mut Self, &mut Context<Self>) + 'static,
+    ) -> impl IntoElement {
         let theme = self.theme;
-        let note = |text: String| {
-            div()
-                .text_size(px(11.))
-                .text_color(theme.muted_text)
-                .child(text)
-        };
-        let button = div()
-            .id("make-default")
+        div()
+            .id(id)
             .px_3()
             .py(px(3.))
             .rounded_md()
@@ -135,52 +164,122 @@ impl SettingsWindow {
             .hover(|style| style.bg(theme.rule))
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(|_, _, _, cx| {
+                cx.listener(move |this, _, _, cx| action(this, cx)),
+            )
+            .child(label)
+    }
+
+    /// A value (a checkmark, or "—") with a note beneath it.
+    fn status(&self, value: &'static str, note: Option<String>) -> gpui::Div {
+        div()
+            .flex()
+            .flex_col()
+            .items_start()
+            .gap_1()
+            .child(div().pt(px(4.)).child(value))
+            .children(note.map(|note| self.note(note)))
+    }
+
+    /// A button with a note beneath it.
+    fn offer(&self, button: impl IntoElement, note: impl Into<SharedString>) -> gpui::Div {
+        div()
+            .flex()
+            .flex_col()
+            .items_start()
+            .gap_1()
+            .child(button)
+            .child(self.note(note))
+    }
+
+    /// The "Default Markdown app" row: a button to make Kami the default,
+    /// with the current default beneath it, or a checkmark if Kami is.
+    #[cfg(target_os = "macos")]
+    fn markdown_files(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let content = match &self.markdown_app {
+            default_app::Status::Kami => self.status("✓ Kami", None),
+            default_app::Status::Other(app) => {
+                let button = self.button("make-default", "Make Kami the Default", cx, |_, cx| {
                     let result = default_app::make_default();
                     cx.spawn(async move |this, cx| {
                         // macOS asks the user first; refresh either way.
                         result.await.ok();
-                        this.update(cx, |this, cx| {
-                            this.markdown_app = default_app::status();
-                            cx.notify();
-                        })
-                        .ok();
+                        this.update(cx, |this, cx| this.refresh(cx)).ok();
                     })
                     .detach();
-                }),
-            )
-            .child("Make Kami the Default");
-        let content = match &self.markdown_app {
-            default_app::Status::Kami => div().pt(px(4.)).child("✓ Kami"),
-            default_app::Status::Other(app) => div()
-                .flex()
-                .flex_col()
-                .items_start()
-                .gap_1()
-                .child(button)
-                .child(note(format!(
-                    "Currently: {}",
-                    app.as_deref().unwrap_or("none")
-                ))),
-            default_app::Status::NotInstalled => div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(div().pt(px(4.)).child("—"))
-                .child(note("Install Kami.app to change".to_owned())),
+                });
+                self.offer(
+                    button,
+                    format!("Currently: {}", app.as_deref().unwrap_or("none")),
+                )
+            }
+            default_app::Status::NotInstalled => {
+                self.status("—", Some("Install Kami.app to change".to_owned()))
+            }
         };
-        div()
-            .flex()
-            .gap_4()
-            .child(
-                div()
-                    .w(px(LABEL_WIDTH))
-                    .flex_none()
-                    .text_right()
-                    .pt(px(4.))
-                    .child("Default Markdown app"),
-            )
-            .child(content)
+        self.labelled("Default Markdown app", content)
+    }
+
+    /// The "Command line tool" row: install or uninstall `kami`.
+    #[cfg(target_os = "macos")]
+    fn command_line_tool(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let install = |this: &mut Self, cx: &mut Context<Self>| this.run_cli(cli_tool::install, cx);
+        let content = match self.cli_tool {
+            cli_tool::Status::Installed => div()
+                .flex()
+                .items_center()
+                .gap_3()
+                .child("✓ kami")
+                .child(self.button("uninstall-cli", "Uninstall", cx, |this, cx| {
+                    this.run_cli(cli_tool::uninstall, cx)
+                })),
+            cli_tool::Status::NotInstalled => self.offer(
+                self.button("install-cli", "Install the kami Command", cx, install),
+                format!("Adds {}", cli_tool::LINK),
+            ),
+            cli_tool::Status::OtherKami => self.offer(
+                self.button("install-cli", "Update the kami Command", cx, install),
+                "It opens another copy of Kami.app",
+            ),
+            cli_tool::Status::Taken => self.status(
+                "—",
+                Some(format!("{} belongs to another program", cli_tool::LINK)),
+            ),
+            cli_tool::Status::NotInstalledApp => {
+                self.status("—", Some("Install Kami.app to change".to_owned()))
+            }
+        };
+        let content = content.children(
+            self.cli_error
+                .clone()
+                .map(|error| self.note(format!("Couldn't change it: {error}"))),
+        );
+        self.labelled("Command line tool", content)
+    }
+
+    /// Installs or uninstalls the command off the main thread, since macOS
+    /// may ask for a password, then refreshes.
+    #[cfg(target_os = "macos")]
+    fn run_cli(&mut self, change: fn() -> Result<(), String>, cx: &mut Context<Self>) {
+        self.cli_error = None;
+        let task = cx.background_spawn(async move { change() });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                // Cancelling the password prompt isn't an error.
+                this.cli_error = result.err().filter(|error| !error.contains("(-128)"));
+                this.refresh(cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Re-checks what can change outside Kami.
+    #[cfg(target_os = "macos")]
+    fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.markdown_app = default_app::status();
+        self.cli_tool = cli_tool::status();
+        cx.notify();
     }
 
     /// A row: a label, then buttons for the choices with the current one
@@ -266,9 +365,12 @@ impl Render for SettingsWindow {
             text_width,
         } = app_settings::get(cx);
         #[cfg(target_os = "macos")]
-        let markdown_files = Some(self.markdown_files(cx));
+        let system_rows = [
+            self.markdown_files(cx).into_any_element(),
+            self.command_line_tool(cx).into_any_element(),
+        ];
         #[cfg(not(target_os = "macos"))]
-        let markdown_files: Option<gpui::Empty> = None;
+        let system_rows: [gpui::AnyElement; 0] = [];
         let done = div()
             .id("done")
             .px_4()
@@ -325,7 +427,7 @@ impl Render for SettingsWindow {
                 ],
                 Some("Takes effect the next time Kami starts."),
             ))
-            .children(markdown_files)
+            .children(system_rows)
             .child(div().flex_1())
             .child(div().flex().justify_end().child(done))
     }

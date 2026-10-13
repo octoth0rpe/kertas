@@ -126,3 +126,15 @@ fn failed_save_reports_the_file() {
         "path unchanged after a failed save"
     );
 }
+
+#[test]
+fn new_document_at_a_path_creates_it_on_save() {
+    let path = test_dir("new-at").join("new idea.md");
+    let mut document = Document::new_at(&path);
+    assert_eq!(document.display_name(), "new idea.md");
+    assert!(!document.is_dirty());
+    assert!(!path.exists(), "not created until saved");
+    document.buffer_mut().replace(0..0, "# Idea\n");
+    document.save().unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), "# Idea\n");
+}

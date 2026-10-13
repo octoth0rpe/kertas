@@ -29,6 +29,15 @@ impl Document {
         }
     }
 
+    /// A new, empty document that saves to `path`, which doesn't exist yet.
+    /// Saving creates it.
+    pub fn new_at(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: Some(path.into()),
+            ..Self::untitled()
+        }
+    }
+
     /// A document holding `text`, with no file and no unsaved changes.
     pub fn from_text(text: &str) -> Self {
         let mut buffer = Buffer::default();

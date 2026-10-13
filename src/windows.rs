@@ -211,17 +211,48 @@ fn same_file(a: &Path, b: &Path) -> bool {
     }
 }
 
-/// The path of a `file://` URL, as sent when files are opened from Finder or
-/// the Dock. Other URLs are ignored.
-pub fn path_from_file_url(url: &str) -> Option<PathBuf> {
+/// What a URL sent to Kami asks for: from Finder and the Dock (`file://`),
+/// or from the `kami` command (`kami://`).
+#[derive(Debug, PartialEq, Eq)]
+pub enum UrlRequest {
+    /// Open this file, or start a new document saved there if it doesn't
+    /// exist yet.
+    Open(PathBuf),
+    /// Just bring Kami to the front.
+    Activate,
+}
+
+pub fn parse_url(url: &str) -> Option<UrlRequest> {
+    if url == "kami://activate" {
+        return Some(UrlRequest::Activate);
+    }
+    let path = url
+        .strip_prefix("kami://open?path=")
+        .or_else(|| url.strip_prefix("file://localhost"))
+        .or_else(|| url.strip_prefix("file://"))?;
+    path.starts_with('/')
+        .then(|| UrlRequest::Open(percent_decode(path)))
+}
+
+/// Handles a URL sent to Kami.
+pub fn handle_url(url: &str, cx: &mut App) {
+    match parse_url(url) {
+        Some(UrlRequest::Open(path)) => open_path(path, cx),
+        Some(UrlRequest::Activate) => {
+            cx.activate(true);
+            if cx.windows().is_empty() {
+                open_window(cx, |view, window, cx| view.start_untitled(window, cx));
+            }
+        }
+        None => {}
+    }
+}
+
+/// Percent-decodes a URL path to bytes, since paths aren't necessarily
+/// UTF-8.
+fn percent_decode(path: &str) -> PathBuf {
     use std::os::unix::ffi::OsStringExt;
 
-    let path = url.strip_prefix("file://")?;
-    let path = path.strip_prefix("localhost").unwrap_or(path);
-    if !path.starts_with('/') {
-        return None;
-    }
-    // Percent-decode to bytes: paths aren't necessarily UTF-8.
     let bytes = path.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
     let mut index = 0;
@@ -241,27 +272,36 @@ pub fn path_from_file_url(url: &str) -> Option<PathBuf> {
             }
         }
     }
-    Some(PathBuf::from(std::ffi::OsString::from_vec(decoded)))
+    PathBuf::from(std::ffi::OsString::from_vec(decoded))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn open(path: &str) -> Option<UrlRequest> {
+        Some(UrlRequest::Open(PathBuf::from(path)))
+    }
+
     #[test]
     fn file_urls_become_paths() {
         assert_eq!(
-            path_from_file_url("file:///Users/me/My%20Notes/caf%C3%A9.md"),
-            Some(PathBuf::from("/Users/me/My Notes/café.md"))
+            parse_url("file:///Users/me/My%20Notes/caf%C3%A9.md"),
+            open("/Users/me/My Notes/café.md")
         );
+        assert_eq!(parse_url("file://localhost/tmp/a.md"), open("/tmp/a.md"));
+        assert_eq!(parse_url("file:///tmp/100%"), open("/tmp/100%"));
+        assert_eq!(parse_url("https://example.com/a.md"), None);
+    }
+
+    #[test]
+    fn kami_urls_from_the_command_line() {
         assert_eq!(
-            path_from_file_url("file://localhost/tmp/a.md"),
-            Some(PathBuf::from("/tmp/a.md"))
+            parse_url("kami://open?path=/tmp/My%20Notes/new.md"),
+            open("/tmp/My Notes/new.md")
         );
-        assert_eq!(
-            path_from_file_url("file:///tmp/100%"),
-            Some(PathBuf::from("/tmp/100%"))
-        );
-        assert_eq!(path_from_file_url("https://example.com/a.md"), None);
+        assert_eq!(parse_url("kami://activate"), Some(UrlRequest::Activate));
+        assert_eq!(parse_url("kami://open?path=relative.md"), None);
+        assert_eq!(parse_url("kami://other"), None);
     }
 }

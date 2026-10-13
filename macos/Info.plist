@@ -29,6 +29,18 @@
     <true/>
     <key>NSSupportsAutomaticGraphicsSwitching</key>
     <true/>
+    <!-- kami:// links, sent by the kami command line tool. -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>Kami command line</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>kami</string>
+            </array>
+        </dict>
+    </array>
     <!-- Kami opens and edits Markdown files. -->
     <key>CFBundleDocumentTypes</key>
     <array>

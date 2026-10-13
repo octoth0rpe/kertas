@@ -1,6 +1,8 @@
 mod app_settings;
 mod builtin;
 #[cfg(target_os = "macos")]
+mod cli_tool;
+#[cfg(target_os = "macos")]
 mod default_app;
 #[cfg(target_os = "macos")]
 mod dock_icon;
@@ -29,8 +31,9 @@ use gpui_platform::application;
 fn main() {
     let path = std::env::args_os().nth(1).map(PathBuf::from);
 
-    // Files opened from Finder or the Dock arrive as URLs, outside of any
-    // app context, so pass them to a task that opens them.
+    // Files opened from Finder, the Dock or the `kami` command arrive as
+    // URLs, outside of any app context, so pass them to a task that opens
+    // them.
     let (opened_urls, mut urls_to_open) = mpsc::unbounded::<Vec<String>>();
     let app = application();
     app.on_open_urls(move |urls| {
@@ -57,11 +60,8 @@ fn main() {
         cx.spawn(async move |cx| {
             while let Some(urls) = urls_to_open.next().await {
                 cx.update(|cx| {
-                    for path in urls
-                        .iter()
-                        .filter_map(|url| windows::path_from_file_url(url))
-                    {
-                        windows::open_path(path, cx);
+                    for url in &urls {
+                        windows::handle_url(url, cx);
                     }
                 });
             }
