@@ -454,6 +454,12 @@ impl DocumentView {
             .is_some_and(|open| open.editor.selection().is_some())
     }
 
+    /// The list indent the document is laid out with, for the smoke test.
+    #[cfg(debug_assertions)]
+    pub fn list_indent(&self) -> kami::settings::ListIndent {
+        self.text_settings.list_indent
+    }
+
     /// The theme the view is drawn with, for the smoke test.
     #[cfg(debug_assertions)]
     pub fn theme(&self) -> Theme {

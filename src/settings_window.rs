@@ -91,7 +91,7 @@ struct Choice {
 }
 
 /// The settings sheet's height, enough for every row.
-const SHEET_HEIGHT: f32 = 840.;
+const SHEET_HEIGHT: f32 = 880.;
 
 /// Where the rows end and the Done button's row starts, when the settings
 /// sheet was last laid out, for the smoke test: the rows should fit
@@ -729,7 +729,7 @@ impl Render for SettingsWindow {
                         div()
                             .flex()
                             .flex_col()
-                            .gap_5()
+                            .gap_4()
                             .children(rows)
                             .children(system_rows)
                             .child(measure(|fit, top| fit.rows_bottom = top)),

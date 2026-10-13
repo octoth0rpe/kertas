@@ -562,6 +562,16 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
             cx.update(|cx| app_settings::get(cx).tab_width) == 8,
         );
 
+        cx.update(|cx| app_settings::set("list_indent", "wide", cx))
+            .ok();
+        settle(cx).await;
+        checks.check(
+            "list_indent setting applies to the document",
+            window
+                .read_with(cx, |view, _| view.list_indent())
+                .is_ok_and(|indent| indent == kami::settings::ListIndent::Wide),
+        );
+
         // Changing the layout waits until Kami restarts: New still opens a
         // tab.
         cx.update(|cx| app_settings::set("layout", "windows", cx))
@@ -674,10 +684,11 @@ fn smoke_settings_window(window: WindowHandle<DocumentView>, cx: &mut App) {
             cx.try_global::<crate::settings_window::RowsFit>()
                 .map(|fit| fit.footer_top - fit.rows_bottom)
         });
-        // The rows end a gap above the Done button when they all fit.
+        // The rows end 20 px above the Done button when they all fit.
+        // Allow for autosave's note, which is a line longer when it's on.
         checks.check(
             &format!("every row fits in the settings window ({spare:?} below them)"),
-            spare.is_some_and(|spare| spare >= gpui::px(20.)),
+            spare.is_some_and(|spare| spare >= gpui::px(38.)),
         );
 
         let settings = cx.update(|cx| {

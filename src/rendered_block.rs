@@ -5,10 +5,11 @@ use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, Font, FontWeight, Hsla, MouseButton, Rems, SharedString, StyledText,
-    WeakEntity, Window, div, prelude::*, px,
+    WeakEntity, Window, div, prelude::*, px, rems,
 };
 use kami::inline::InlineText;
 use kami::rendered::{ColumnAlignment, ListItem, RenderedBlock, Table};
+use kami::settings::ListIndent;
 use kami::tabs::ExpandedTabs;
 
 use crate::document_view::DocumentView;
@@ -18,6 +19,13 @@ use crate::theme::Theme;
 /// Space between blocks inside lists and blockquotes.
 const NESTED_GAP: f32 = 8.;
 
+/// The width of a list's marker column with the standard `list_indent`,
+/// in rems (28 px at the default size): how far its items are indented.
+const MARKER_COLUMN: f32 = 1.75;
+
+/// Space between a list marker and its item, in rems.
+const MARKER_GAP: f32 = 0.5;
+
 /// Text styling inherited by nested blocks.
 #[derive(Clone)]
 struct TextStyle {
@@ -25,6 +33,7 @@ struct TextStyle {
     color: Hsla,
     theme: Theme,
     tab_width: u32,
+    list_indent: ListIndent,
     code_font: SharedString,
     click: ClickTarget,
 }
@@ -93,6 +102,7 @@ pub fn rendered_content(block: &RenderedBlock, look: &Look, click: ClickTarget) 
         color: look.theme.text,
         theme: look.theme,
         tab_width: look.tab_width,
+        list_indent: look.list_indent,
         code_font: look.code_font.clone(),
         click,
     };
@@ -215,24 +225,29 @@ fn render_list(
     depth: usize,
 ) -> AnyElement {
     let bullet = ["•", "◦", "▪"][depth % 3];
+    let markers: Vec<String> = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| match (item.task, start) {
+            (Some(true), _) => "☑".to_owned(),
+            (Some(false), _) => "☐".to_owned(),
+            (None, Some(start)) => format!("{}.", start + index as u64),
+            (None, None) => bullet.to_owned(),
+        })
+        .collect();
+    let column = marker_column(style.list_indent, &markers);
     div()
         .flex()
         .flex_col()
         .gap(px(4.))
-        .children(items.iter().enumerate().map(|(index, item)| {
-            let marker = match (item.task, start) {
-                (Some(true), _) => "☑".to_owned(),
-                (Some(false), _) => "☐".to_owned(),
-                (None, Some(start)) => format!("{}.", start + index as u64),
-                (None, None) => bullet.to_owned(),
-            };
+        .children(items.iter().zip(markers).map(|(item, marker)| {
             div()
                 .flex()
                 .child(
                     div()
                         .flex_none()
-                        .w(px(28.))
-                        .pr(px(8.))
+                        .w(rems(column))
+                        .pr(rems(MARKER_GAP))
                         .text_right()
                         .text_color(style.color)
                         .child(marker),
@@ -244,6 +259,28 @@ fn render_list(
                 )))
         }))
         .into_any_element()
+}
+
+/// The width of a list's marker column, in rems: the `list_indent`, or
+/// wider if a marker (such as "100.") needs more room.
+fn marker_column(list_indent: ListIndent, markers: &[String]) -> f32 {
+    let widest = markers
+        .iter()
+        .map(|marker| marker_width(marker))
+        .fold(0., f32::max);
+    (MARKER_COLUMN * list_indent.scale()).max(widest + MARKER_GAP)
+}
+
+/// About how wide `marker` is, in ems, erring on the wide side.
+fn marker_width(marker: &str) -> f32 {
+    marker
+        .chars()
+        .map(|c| match c {
+            '.' => 0.3,
+            '☐' | '☑' => 1.,
+            _ => 0.6,
+        })
+        .sum()
 }
 
 fn render_table(table: &Table, style: &TextStyle) -> AnyElement {
@@ -367,4 +404,30 @@ fn styled_text(text: &InlineText, style: &TextStyle) -> StyledText {
         })
         .collect();
     StyledText::new(SharedString::from(text.text.clone())).with_runs(runs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn markers(markers: &[&str]) -> Vec<String> {
+        markers.iter().map(|&marker| marker.to_owned()).collect()
+    }
+
+    #[test]
+    fn marker_column_follows_the_list_indent() {
+        let bullets = markers(&["•", "•"]);
+        assert_eq!(marker_column(ListIndent::Standard, &bullets), 1.75);
+        assert_eq!(marker_column(ListIndent::Compact, &bullets), 1.3125);
+        assert_eq!(marker_column(ListIndent::Wide, &bullets), 2.625);
+    }
+
+    #[test]
+    fn marker_column_widens_for_long_markers() {
+        let short = markers(&["8.", "9."]);
+        assert_eq!(marker_column(ListIndent::Standard, &short), 1.75);
+        let long = markers(&["99.", "100."]);
+        assert!(marker_column(ListIndent::Standard, &long) > 2.5);
+        assert!(marker_column(ListIndent::Compact, &markers(&["☐"])) >= 1.5);
+    }
 }
