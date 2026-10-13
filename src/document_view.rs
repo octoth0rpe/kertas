@@ -15,14 +15,16 @@ use gpui::{
     ListState, Pixels, Point, PromptLevel, Subscription, SystemWindowTabController, Task,
     TextLayout, UTF16Selection, Window, actions, div, list, point, prelude::*, px, relative, size,
 };
+use kami::blocks::BlockKind;
 use kami::document::{Document, OpenError, SaveError};
+use kami::editing;
 use kami::history::{EditKind, History};
-use kami::model::Model;
+use kami::model::{Gap, Model};
 use kami::movement::{self, Selection};
 use kami::reveal::{StyledSource, styled_source};
 
 use crate::rendered_block::{ClickTarget, render_block};
-use crate::revealed_block::{RevealedBlock, TextInput, render_revealed};
+use crate::revealed_block::{RevealedBlock, TextInput, render_gap, render_revealed};
 use crate::tab_strip::render_tab_strip;
 use crate::theme::Theme;
 
@@ -65,6 +67,11 @@ actions!(
         DeleteWordRight,
         DeleteToLineStart,
         Newline,
+        LineBreak,
+        MoveBlockUp,
+        MoveBlockDown,
+        SelectBlockUp,
+        SelectBlockDown,
         Cut,
         Copy,
         Paste,
@@ -119,7 +126,11 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("alt-delete", DeleteWordRight, None),
         KeyBinding::new("cmd-backspace", DeleteToLineStart, None),
         KeyBinding::new("enter", Newline, None),
-        KeyBinding::new("shift-enter", Newline, None),
+        KeyBinding::new("shift-enter", LineBreak, None),
+        KeyBinding::new("alt-up", MoveBlockUp, None),
+        KeyBinding::new("alt-down", MoveBlockDown, None),
+        KeyBinding::new("alt-shift-up", SelectBlockUp, None),
+        KeyBinding::new("alt-shift-down", SelectBlockDown, None),
         KeyBinding::new("cmd-x", Cut, None),
         KeyBinding::new("cmd-c", Copy, None),
         KeyBinding::new("cmd-v", Paste, None),
@@ -153,9 +164,13 @@ struct OpenDocument {
     revealed_layout: Rc<RefCell<Option<TextLayout>>>,
 }
 
-/// The item shown as source.
+/// The item shown as source, or with the caret in the gap next to it.
 struct Revealed {
     index: usize,
+    /// The source shown: the item's source, or an empty range at the caret
+    /// in a gap.
+    range: Range<usize>,
+    gap: Option<Gap>,
     styled: Rc<StyledSource>,
 }
 
@@ -470,7 +485,7 @@ impl DocumentView {
         };
         open.selection = Some(selection);
         let index = open.model.item_at(selection.head);
-        reveal(open, Some(index));
+        reveal(open, Some(selection.head));
         open.list_state.scroll_to_reveal_item(index);
         self.restart_blink(cx);
         cx.notify();
@@ -506,6 +521,11 @@ impl DocumentView {
     }
 
     fn unreveal(&mut self, _: &Unreveal, _: &mut Window, cx: &mut Context<Self>) {
+        self.finish_editing(cx);
+    }
+
+    /// Hides the caret and shows every block rendered.
+    pub fn finish_editing(&mut self, cx: &mut Context<Self>) {
         let Some(open) = &mut self.open else {
             return;
         };
@@ -558,7 +578,7 @@ impl DocumentView {
         open.selection?;
         let revealed = open.revealed.as_ref()?;
         let layout = open.revealed_layout.borrow().clone()?;
-        Some((layout, open.model.items[revealed.index].range.start))
+        Some((layout, revealed.range.start))
     }
 
     /// Moves the caret up or down a visual line, into the neighbor item at
@@ -598,15 +618,27 @@ impl DocumentView {
             return;
         }
 
-        // Past the item's edge: reveal the neighbor, then place the caret on
-        // its first or last line once it's laid out.
+        // Past the edge of what's revealed: reveal the neighbor, then place
+        // the caret on its first or last line once it's laid out. The
+        // neighbor may be the gap next to the block, or the block next to
+        // the gap.
         let index = open.model.item_at(caret);
-        let neighbor = if down {
-            open.model.items.get(index + 1).map(|item| item.range.start)
-        } else {
-            index
+        let item = &open.model.items[index];
+        let source = open.model.source_range(index);
+        let gap = open.revealed.as_ref().and_then(|revealed| revealed.gap);
+        let neighbor = match (gap, down) {
+            (Some(Gap::Above), true) => Some(source.start),
+            (Some(Gap::Below), false) => Some(source.end),
+            (None, true) if source.end < item.range.end => {
+                Some(movement::next_grapheme(&open.model.text, source.end))
+            }
+            (None, false) if source.start > item.range.start => {
+                Some(movement::prev_grapheme(&open.model.text, source.start))
+            }
+            (_, true) => open.model.items.get(index + 1).map(|item| item.range.start),
+            (_, false) => index
                 .checked_sub(1)
-                .map(|index| open.model.items[index].range.end)
+                .map(|index| open.model.items[index].range.end),
         };
         let Some(neighbor) = neighbor else {
             let edge = if down { open.model.text.len() } else { 0 };
@@ -760,12 +792,54 @@ impl DocumentView {
         });
     }
 
-    fn newline(&mut self, _: &Newline, _: &mut Window, cx: &mut Context<Self>) {
+    /// Enter, or Shift-Enter if `shift`: a line break that continues lists
+    /// and quotes. See [`editing::enter`].
+    fn newline(&mut self, shift: bool, cx: &mut Context<Self>) {
         let (Some(range), Some(open)) = (self.selected_range(), &self.open) else {
             return;
         };
-        let line_ending = line_ending(&open.model.text);
-        self.replace(range, line_ending, EditKind::Other, cx);
+        let model = &open.model;
+        let index = model.item_at(range.start);
+        // In a gap, Enter just adds blank lines.
+        let kind = match model.gap_at(index, range.start) {
+            Some(_) => BlockKind::Paragraph,
+            None => model.items[index].kind,
+        };
+        let line_ending = line_ending(&model.text);
+        let (range, text) = editing::enter(&model.text, kind, range, shift, line_ending);
+        self.replace(range, &text, EditKind::Other, cx);
+    }
+
+    /// Moves the caret to the start of the next or previous block's text.
+    /// With no caret, starts at the first block on screen.
+    fn move_to_block(&mut self, down: bool, extend: bool, cx: &mut Context<Self>) {
+        let Some(open) = &self.open else {
+            return;
+        };
+        let model = &open.model;
+        let target = match open.selection {
+            None => Some(open.list_state.logical_scroll_top().item_ix),
+            Some(selection) => {
+                let index = model.item_at(selection.head);
+                match (model.gap_at(index, selection.head), down) {
+                    (Some(Gap::Above), true) | (Some(Gap::Below), false) => Some(index),
+                    (_, true) => Some(index + 1).filter(|&next| next < model.items.len()),
+                    (_, false) => index.checked_sub(1),
+                }
+            }
+        };
+        let Some(item) = target.and_then(|index| model.items.get(index)) else {
+            return;
+        };
+        let offset = if item.block.is_empty() {
+            item.range.start
+        } else {
+            editing::content_start(&model.text, item.block.clone(), item.kind)
+        };
+        if let Some(open) = &mut self.open {
+            open.goal_x = None;
+        }
+        self.move_caret(offset, extend, cx);
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
@@ -848,21 +922,42 @@ impl DocumentView {
     }
 }
 
-/// Reveals item `index` (or none), re-measuring the items that change.
-fn reveal(open: &mut OpenDocument, index: Option<usize>) {
-    if open.revealed.as_ref().map(|revealed| revealed.index) == index {
+/// Reveals the item containing `caret` (or none), re-measuring the items
+/// that change. In a gap next to a block, the block stays rendered and the
+/// caret gets an empty line of its own.
+fn reveal(open: &mut OpenDocument, caret: Option<usize>) {
+    let target = caret.map(|caret| {
+        let index = open.model.item_at(caret);
+        let gap = open.model.gap_at(index, caret);
+        let range = match gap {
+            Some(_) => caret..caret,
+            None => open.model.source_range(index),
+        };
+        (index, range, gap)
+    });
+    let current = open
+        .revealed
+        .as_ref()
+        .map(|revealed| (revealed.index, revealed.range.clone(), revealed.gap));
+    if current == target {
         return;
     }
     if let Some(old) = open.revealed.take() {
         open.list_state.splice(old.index..old.index + 1, 1);
     }
     *open.revealed_layout.borrow_mut() = None;
-    if let Some(index) = index {
+    if let Some((index, range, gap)) = target {
         let item = &open.model.items[index];
-        let source = &open.model.text[item.range.clone()];
-        let styled = styled_source(source, item.kind, &open.model.definitions);
+        let kind = match gap {
+            Some(_) => BlockKind::Paragraph,
+            None => item.kind,
+        };
+        let source = &open.model.text[range.clone()];
+        let styled = styled_source(source, kind, &open.model.definitions);
         open.revealed = Some(Revealed {
             index,
+            range,
+            gap,
             styled: Rc::new(styled),
         });
         open.list_state.splice(index..index + 1, 1);
@@ -1061,10 +1156,14 @@ impl Render for DocumentView {
                 let model = open.model.clone();
                 let selection = open.selection;
                 let marked = open.marked.clone();
-                let revealed = open
-                    .revealed
-                    .as_ref()
-                    .map(|revealed| (revealed.index, revealed.styled.clone()));
+                let revealed = open.revealed.as_ref().map(|revealed| {
+                    (
+                        revealed.index,
+                        revealed.range.clone(),
+                        revealed.gap,
+                        revealed.styled.clone(),
+                    )
+                });
                 let layout_slot = open.revealed_layout.clone();
                 let caret_visible = self.caret_visible;
                 let base_font = window.text_style().font();
@@ -1074,8 +1173,8 @@ impl Render for DocumentView {
                 list(open.list_state.clone(), move |index, _, _| {
                     let item = &model.items[index];
                     match &revealed {
-                        Some((revealed_index, styled)) if *revealed_index == index => {
-                            let range = item.range.clone();
+                        Some((revealed_index, range, gap, styled)) if *revealed_index == index => {
+                            let range = range.clone();
                             let selection = selection.unwrap_or_default();
                             let local =
                                 |offset: usize| offset.clamp(range.start, range.end) - range.start;
@@ -1087,27 +1186,44 @@ impl Render for DocumentView {
                             let marked = marked
                                 .as_ref()
                                 .map(|marked| local(marked.start)..local(marked.end));
-                            render_revealed(
-                                RevealedBlock {
-                                    source: &model.text[range.clone()],
-                                    styled,
-                                    selection: local(selected.start)..local(selected.end),
-                                    caret,
-                                    marked,
-                                    first: index == 0,
-                                },
-                                &base_font,
-                                theme,
-                                ClickTarget {
-                                    view: view.downgrade(),
-                                    block_start: range.start,
-                                },
-                                layout_slot.clone(),
-                                TextInput {
-                                    focus_handle: focus_handle.clone(),
-                                    view: view.clone(),
-                                },
-                            )
+                            let block = RevealedBlock {
+                                source: &model.text[range.clone()],
+                                styled,
+                                selection: local(selected.start)..local(selected.end),
+                                caret,
+                                marked,
+                                first: index == 0,
+                            };
+                            let input = TextInput {
+                                focus_handle: focus_handle.clone(),
+                                view: view.clone(),
+                                layout_slot: layout_slot.clone(),
+                            };
+                            match gap {
+                                Some(gap) => render_gap(
+                                    &item.rendered,
+                                    *gap,
+                                    block,
+                                    &base_font,
+                                    theme,
+                                    // Clicks on the block place the caret in it.
+                                    ClickTarget {
+                                        view: view.downgrade(),
+                                        block_start: item.block.start,
+                                    },
+                                    input,
+                                ),
+                                None => render_revealed(
+                                    block,
+                                    &base_font,
+                                    theme,
+                                    ClickTarget {
+                                        view: view.downgrade(),
+                                        block_start: range.start,
+                                    },
+                                    input,
+                                ),
+                            }
                         }
                         _ => render_block(
                             &item.rendered,
@@ -1225,7 +1341,20 @@ impl Render for DocumentView {
                 this.delete(cx, movement::next_word_end)
             }))
             .on_action(cx.listener(Self::delete_to_line_start))
-            .on_action(cx.listener(Self::newline))
+            .on_action(cx.listener(|this, _: &Newline, _, cx| this.newline(false, cx)))
+            .on_action(cx.listener(|this, _: &LineBreak, _, cx| this.newline(true, cx)))
+            .on_action(
+                cx.listener(|this, _: &MoveBlockUp, _, cx| this.move_to_block(false, false, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &MoveBlockDown, _, cx| this.move_to_block(true, false, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &SelectBlockUp, _, cx| this.move_to_block(false, true, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &SelectBlockDown, _, cx| this.move_to_block(true, true, cx)),
+            )
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(Self::copy))
             .on_action(cx.listener(Self::paste))
@@ -1239,7 +1368,17 @@ impl Render for DocumentView {
             .flex()
             .flex_col()
             .children(tab_strip)
-            .child(div().flex_1().min_h(px(0.)).child(content))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h(px(0.))
+                    // Clicks below the last block finish editing.
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(|this, _, _, cx| this.finish_editing(cx)),
+                    )
+                    .child(content),
+            )
     }
 }
 

@@ -41,6 +41,13 @@ impl ClickTarget {
             .update(cx, |view, cx| view.click(offset, extend, window, cx))
             .ok();
     }
+
+    /// Finishes editing, as Escape does.
+    pub fn finish_editing(&self, cx: &mut App) {
+        self.view
+            .update(cx, |view, cx| view.finish_editing(cx))
+            .ok();
+    }
 }
 
 /// Renders one block in rendered mode as a list item.
@@ -51,22 +58,38 @@ pub fn render_block(
     theme: Theme,
     click: ClickTarget,
 ) -> AnyElement {
-    let heading = match block {
+    let content = rendered_content(block, base_font, theme, click.clone());
+    block_frame(content, rendered_heading(block), first, click)
+}
+
+/// The heading level of a rendered block, if it's a heading.
+pub fn rendered_heading(block: &RenderedBlock) -> Option<u8> {
+    match block {
         RenderedBlock::Heading { level, .. } => Some(*level),
         _ => None,
-    };
+    }
+}
+
+/// A block's rendered content, without the list item's spacing.
+pub fn rendered_content(
+    block: &RenderedBlock,
+    base_font: &Font,
+    theme: Theme,
+    click: ClickTarget,
+) -> AnyElement {
     let style = TextStyle {
         font: base_font.clone(),
         color: theme.text,
         theme,
-        click: click.clone(),
+        click,
     };
-    block_frame(render_content(block, &style, 0), heading, first, click)
+    render_content(block, &style, 0)
 }
 
 /// Wraps a block's content as a list item: centered in the text column,
-/// with spacing around it. Clicks that miss the block's text place the
-/// caret at the block's start.
+/// with spacing around it. Clicks in the column that miss the block's text
+/// place the caret at the block's start; clicks outside the column finish
+/// editing.
 pub fn block_frame(
     content: AnyElement,
     heading: Option<u8>,
@@ -77,13 +100,15 @@ pub fn block_frame(
         Some(level) if !first => heading_top_space(level),
         _ => 0.,
     };
+    let outside = click.clone();
     div()
         .w_full()
         .px_8()
         .when(first, |this| this.pt(px(32.)))
         .pb(px(16.))
-        .on_mouse_down(MouseButton::Left, move |event, window, cx| {
-            click.report(0, event.modifiers.shift, window, cx);
+        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+            outside.finish_editing(cx);
+            cx.stop_propagation();
         })
         .child(
             div()
@@ -91,6 +116,10 @@ pub fn block_frame(
                 .max_w(px(MAX_TEXT_WIDTH))
                 .mx_auto()
                 .pt(px(top))
+                .on_mouse_down(MouseButton::Left, move |event, window, cx| {
+                    click.report(0, event.modifiers.shift, window, cx);
+                    cx.stop_propagation();
+                })
                 .child(content),
         )
         .into_any_element()
