@@ -43,6 +43,7 @@ Settings live in `~/Library/Application Support/kami/config.toml`. The file is o
 theme = "dark"       # "light", "dark" or "system" (the default)
 layout = "windows"   # "tabs" (the default) or "windows", from the next start
 text_width = "wide"  # "standard" (the default), "wide" or "full"
+font_size = 18       # 10 to 32; the default is 16
 ```
 
 The View menu changes `theme` and `text_width` too.

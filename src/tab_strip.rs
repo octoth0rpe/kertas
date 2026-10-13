@@ -126,7 +126,7 @@ fn close(handle: AnyWindowHandle, cx: &mut App) {
 }
 
 /// Switches to the tab at `index` (0-based) in `window`'s tab group, for
-/// ⌘1 to ⌘9 and ⌘0. Does nothing if there's no such tab (as in the
+/// ⌘1 to ⌘9. Does nothing if there's no such tab (as in the
 /// windows layout, where each window is on its own).
 pub fn select_tab(index: usize, window: &Window, cx: &mut App) {
     let id = window.window_handle().window_id();

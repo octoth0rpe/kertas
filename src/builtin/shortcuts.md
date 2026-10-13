@@ -14,7 +14,14 @@
 | ⇧⌘] or ⌃⇥ | Next tab |
 | ⇧⌘[ or ⌃⇧⇥ | Previous tab |
 | ⌘1 … ⌘9 | Go to tab 1 to 9 |
-| ⌘0 | Go to tab 10 |
+
+## Text size
+
+| Shortcut | What it does |
+|---|---|
+| ⌘+ or ⌘= | Zoom in |
+| ⌘- | Zoom out |
+| ⌘0 | Reset zoom |
 
 ## Moving around
 

@@ -20,6 +20,7 @@ mod smoke;
 mod tab_strip;
 mod theme;
 mod windows;
+mod zoom;
 
 use std::path::PathBuf;
 
@@ -42,6 +43,7 @@ fn main() {
 
     app.run(move |cx: &mut App| {
         app_settings::init(cx);
+        zoom::init(cx);
         #[cfg(target_os = "macos")]
         dock_icon::init();
         windows::register(cx);

@@ -2,14 +2,14 @@
 //! source offsets.
 
 use gpui::{
-    AnyElement, App, Font, FontStyle, FontWeight, Hsla, MouseButton, Pixels, SharedString,
+    AnyElement, App, Font, FontStyle, FontWeight, Hsla, MouseButton, Rems, SharedString,
     StrikethroughStyle, StyledText, TextRun, UnderlineStyle, WeakEntity, Window, div, prelude::*,
-    px, relative,
+    px, relative, rems,
 };
 use kami::inline::InlineText;
 use kami::rendered::{ColumnAlignment, ListItem, RenderedBlock, Table};
 
-use crate::document_view::{BODY_TEXT_SIZE, CODE_FONT, DocumentView};
+use crate::document_view::{CODE_FONT, CODE_TEXT_SIZE, DocumentView};
 use crate::theme::Theme;
 
 /// Space between blocks inside lists and blockquotes.
@@ -32,7 +32,7 @@ pub struct ClickTarget {
     /// The block's start offset in the document.
     pub block_start: usize,
     /// The text column's maximum width, or `None` for the full window.
-    pub column_width: Option<Pixels>,
+    pub column_width: Option<Rems>,
 }
 
 impl ClickTarget {
@@ -154,7 +154,7 @@ fn render_content(block: &RenderedBlock, style: &TextStyle, depth: usize) -> Any
                 heading_style.color = style.theme.muted_text;
             }
             div()
-                .text_size(px(BODY_TEXT_SIZE * size))
+                .text_size(rems(size))
                 .line_height(relative(1.25))
                 .child(clickable_text(text, &heading_style))
                 .into_any_element()
@@ -183,7 +183,7 @@ fn render_content(block: &RenderedBlock, style: &TextStyle, depth: usize) -> Any
             .px_4()
             .py_3()
             .font_family(CODE_FONT)
-            .text_size(px(13.))
+            .text_size(rems(CODE_TEXT_SIZE))
             .line_height(relative(1.5))
             .text_color(style.theme.text)
             .child({
@@ -195,7 +195,7 @@ fn render_content(block: &RenderedBlock, style: &TextStyle, depth: usize) -> Any
         RenderedBlock::Table(table) => render_table(table, style),
         RenderedBlock::Html(source) | RenderedBlock::Raw(source) => div()
             .font_family(CODE_FONT)
-            .text_size(px(13.))
+            .text_size(rems(CODE_TEXT_SIZE))
             .line_height(relative(1.5))
             .text_color(style.theme.muted_text)
             .child(clickable_source(source, style, |index| index))

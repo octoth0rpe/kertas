@@ -15,7 +15,7 @@ use crate::document_view::{
     Backspace, CloseWindow, Delete, DeleteWordLeft, DocumentView, IndentLines, IndentTab,
     InsertTab, LineBreak, MoveBlockDown, MoveBlockUp, MoveDocumentEnd, MoveDocumentStart, MoveDown,
     MoveLeft, MoveRight, MoveUp, New, Newline, OutdentTab, Quit, Redo, Save, SelectAll,
-    SelectBlockDown, SelectDown, SelectTab1, SelectTab3, SelectTab10, SelectUp, Undo, Unreveal,
+    SelectBlockDown, SelectDown, SelectTab1, SelectTab3, SelectTab9, SelectUp, Undo, Unreveal,
 };
 
 const STEP: Duration = Duration::from_millis(16);
@@ -206,15 +206,15 @@ fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
         #[cfg(not(target_os = "macos"))]
         let automatic_tabbing_off = true;
         println!("automatic tabbing off: {automatic_tabbing_off}");
-        // ⌘1 switches to the first tab, ⌘3 to the third, and ⌘0 (tab 10)
-        // does nothing. The selected tab is read from macOS, which doesn't
+        // ⌘1 switches to the first tab, ⌘3 to the third, and ⌘9 does
+        // nothing with four tabs. The selected tab is read from macOS, which doesn't
         // depend on Kami being the frontmost app.
         let mut tab_switching = true;
         #[cfg(target_os = "macos")]
         for (action, expected) in [
             (Box::new(SelectTab1) as Box<dyn Action>, Some(0)),
             (Box::new(SelectTab3), Some(2)),
-            (Box::new(SelectTab10), None),
+            (Box::new(SelectTab9), None),
         ] {
             let selected = |cx: &mut gpui::AsyncApp| {
                 window
@@ -368,6 +368,49 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
             })
             .ok();
         wait().await;
+
+        // Zoom steps through sizes, stops at the limits, and Reset Zoom
+        // returns to the font_size setting, which also resets it.
+        // Each step waits for a frame: zoom commands are only available
+        // when the last frame allowed them.
+        async fn zoom(
+            window: WindowHandle<DocumentView>,
+            cx: &mut gpui::AsyncApp,
+            action: Box<dyn Action>,
+        ) -> u32 {
+            window
+                .update(cx, |_, window, cx| window.dispatch_action(action, cx))
+                .ok();
+            cx.background_executor().timer(STEP * 3).await;
+            cx.update(|cx| crate::zoom::size(cx))
+        }
+        use crate::document_view::{ResetZoom, ZoomIn, ZoomOut};
+        check("zoom in", zoom(window, cx, Box::new(ZoomIn)).await == 17);
+        check(
+            "reset zoom",
+            zoom(window, cx, Box::new(ResetZoom)).await == 16,
+        );
+        for _ in 0..20 {
+            zoom(window, cx, Box::new(ZoomOut)).await;
+        }
+        let at_limit = window
+            .update(cx, |_, window, cx| {
+                (
+                    crate::zoom::size(cx),
+                    window.is_action_available(&ZoomOut, cx),
+                )
+            })
+            .ok();
+        check(
+            "zoom out stops at 10, disabled",
+            at_limit == Some((10, false)),
+        );
+        cx.update(|cx| app_settings::set("font_size", 20, cx)).ok();
+        wait().await;
+        check(
+            "font_size setting sets the size",
+            cx.update(|cx| crate::zoom::size(cx)) == 20,
+        );
 
         // Changing the layout waits until Kami restarts: New still opens a
         // tab.
