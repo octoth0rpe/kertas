@@ -1,4 +1,4 @@
-# kami — Requirements
+# Kami — Requirements
 
 Working spec. Items are tagged **MUST** (v1), **SHOULD** (v1 if feasible), or **LATER** (post-v1). Open questions are collected at the end.
 
@@ -106,9 +106,9 @@ A selection that spans several blocks reveals all of them.
 | ID | Requirement | Priority |
 |----|-------------|----------|
 | G1 | Settings are stored in a TOML file in the platform's standard config folder (e.g. `~/.config/kami/config.toml` on Linux, the Application Support folder on macOS, `%APPDATA%` on Windows). | MUST |
-| G2 | The file is optional. Every setting has a default, so kami runs with no config file at all. | MUST |
+| G2 | The file is optional. Every setting has a default, so Kami runs with no config file at all. | MUST |
 | G3 | Changes to the config file apply live, without restarting. | MUST |
-| G4 | Invalid or unknown settings don't stop kami from starting. It falls back to defaults and reports the problem in a visible but unobtrusive way. | MUST |
+| G4 | Invalid or unknown settings don't stop Kami from starting. It falls back to defaults and reports the problem in a visible but unobtrusive way. | MUST |
 | G5 | A settings screen inside the app. | LATER |
 
 ### 8.2 Settings
@@ -127,7 +127,7 @@ A selection that spans several blocks reveals all of them.
 | Autosave | `off` or an interval | `off` | LATER |
 
 Deliberately **not** settings:
-- **Indentation and line-ending style.** Fidelity (F2) means kami keeps whatever each file already uses.
+- **Indentation and line-ending style.** Fidelity (F2) means Kami keeps whatever each file already uses.
 - **How much of a list or quote to reveal (Q7).** Choose a good default rather than offering an option.
 
 ## Open questions
@@ -137,5 +137,5 @@ Deliberately **not** settings:
 - ~~**Q3 — Stack:**~~ **Decided:** Rust + GPUI (T1–T3). Built on plain GPUI pinned to a Zed commit, not gpui-component ([spike #3](docs/planning/spike-3-text-input.md)). Markdown parser: `pulldown-cmark`.
 - ~~**Q4 — Scope of files:**~~ **Decided:** individual files only, with no folder sidebar. A sidebar may come in a possible future "pro" version.
 - ~~**Q5 — Tabs / multiple windows**~~ **Decided:** both are supported, chosen by a setting (§8.2). The default is tabs.
-- **Q6 — kami's own license.** Not yet decided; leaning Apache-2.0. Decide before publishing or accepting outside contributions. Also consider the possible pro version. As the copyright holder, you can build a closed pro version under any license. The license decides whether others can do the same (a permissive license allows it, GPL does not), and on what terms outside contributions can go into the pro version (a contributor agreement may be needed). Dependencies are constrained by T6–T7 regardless.
+- **Q6 — Kami's own license.** Not yet decided; leaning Apache-2.0. Decide before publishing or accepting outside contributions. Also consider the possible pro version. As the copyright holder, you can build a closed pro version under any license. The license decides whether others can do the same (a permissive license allows it, GPL does not), and on what terms outside contributions can go into the pro version (a contributor agreement may be needed). Dependencies are constrained by T6–T7 regardless.
 - ~~**Q7 — How big is a block for lists and blockquotes?**~~ **Decided (for now):** the whole list or blockquote is revealed. Revisit if large lists turn out to be disruptive in practice.

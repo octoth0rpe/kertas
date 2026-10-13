@@ -1,8 +1,8 @@
-//! kami's settings (REQUIREMENTS §8): what they are, and reading and
+//! Kami's settings (REQUIREMENTS §8): what they are, and reading and
 //! writing them in the TOML settings file.
 //!
 //! The file is optional and every setting has a default (G2). Problems in
-//! it never stop kami: a bad value or an unknown setting falls back to the
+//! it never stop Kami: a bad value or an unknown setting falls back to the
 //! default and is reported with its line (G4). Changing a setting edits
 //! the file in place, keeping comments and formatting.
 
