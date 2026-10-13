@@ -19,6 +19,15 @@ pub struct Item {
     pub rendered: Rc<RenderedBlock>,
 }
 
+/// Where the caret is relative to an item's block when it's on a blank
+/// line that isn't part of the block's source (see [`Model::source_range`]).
+/// Typing there starts a new block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gap {
+    Above,
+    Below,
+}
+
 /// A parsed, rendered document.
 #[derive(Debug, Clone)]
 pub struct Model {
@@ -52,6 +61,53 @@ impl Model {
         self.items
             .partition_point(|item| item.range.start <= offset)
             .saturating_sub(1)
+    }
+
+    /// The source shown when item `index` is revealed: its block, plus the
+    /// line right after it. Typing on that line still continues the block.
+    /// The blank lines beyond it, and any before the first block, are gaps.
+    pub fn source_range(&self, index: usize) -> Range<usize> {
+        let item = &self.items[index];
+        if item.block.is_empty() {
+            // A document with no blocks: all of it is source.
+            return item.range.clone();
+        }
+        let next_line = self.text[item.block.end..item.range.end]
+            .find('\n')
+            .map(|newline| item.block.end + newline + 1);
+        let end = match next_line {
+            Some(start) => {
+                let end = self.text[start..item.range.end]
+                    .find('\n')
+                    .map_or(item.range.end, |newline| start + newline);
+                if end > start && self.text.as_bytes()[end - 1] == b'\r' {
+                    end - 1
+                } else {
+                    end
+                }
+            }
+            None => item.range.end,
+        };
+        // The block's first line, which may start before the block (after
+        // a byte-order mark, say).
+        let start = self.text[..item.block.start]
+            .rfind('\n')
+            .map_or(0, |newline| newline + 1)
+            .max(item.range.start);
+        start..end
+    }
+
+    /// Whether `offset`, in item `index`, is in a gap before or after the
+    /// item's source.
+    pub fn gap_at(&self, index: usize, offset: usize) -> Option<Gap> {
+        let source = self.source_range(index);
+        if offset < source.start {
+            Some(Gap::Above)
+        } else if offset > source.end {
+            Some(Gap::Below)
+        } else {
+            None
+        }
     }
 
     fn build(text: &str, old: Option<&Model>) -> (Self, Splice) {
@@ -265,6 +321,55 @@ mod tests {
         let model = Model::new("A\n\nB");
         assert_eq!(model.item_at(2), 0);
         assert_eq!(model.item_at(3), 1);
+    }
+
+    #[test]
+    fn gaps_after_a_blank_line() {
+        let model = Model::new("Para\n");
+        assert_eq!(model.source_range(0), 0..5);
+        assert_eq!(
+            model.gap_at(0, 5),
+            None,
+            "typing here continues the paragraph"
+        );
+
+        let model = Model::new("Para\n\n");
+        assert_eq!(model.source_range(0), 0..5);
+        assert_eq!(model.gap_at(0, 6), Some(Gap::Below));
+
+        let model = Model::new("A\n\nB");
+        assert_eq!(model.source_range(0), 0..2);
+        assert_eq!(model.gap_at(0, 2), None, "the separating blank line");
+
+        let model = Model::new("A\n\n\n\nB");
+        assert_eq!(model.source_range(0), 0..2);
+        assert_eq!(model.gap_at(0, 3), Some(Gap::Below));
+        assert_eq!(model.gap_at(0, 4), Some(Gap::Below));
+
+        let model = Model::new("A\r\n\r\n");
+        assert_eq!(model.source_range(0), 0..3);
+        assert_eq!(model.gap_at(0, 5), Some(Gap::Below));
+    }
+
+    #[test]
+    fn gap_above_the_first_block() {
+        let model = Model::new("\n\nA");
+        assert_eq!(model.source_range(0), 2..3);
+        assert_eq!(model.gap_at(0, 0), Some(Gap::Above));
+        assert_eq!(model.gap_at(0, 2), None);
+    }
+
+    #[test]
+    fn byte_order_mark_is_not_a_gap() {
+        let model = Model::new("\u{FEFF}A");
+        assert_eq!(model.gap_at(0, 0), None);
+    }
+
+    #[test]
+    fn no_gaps_without_blocks() {
+        let model = Model::new("\n\n\n");
+        assert_eq!(model.source_range(0), 0..3);
+        assert_eq!(model.gap_at(0, 3), None);
     }
 
     #[test]

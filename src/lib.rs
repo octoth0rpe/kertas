@@ -3,6 +3,7 @@
 pub mod blocks;
 pub mod buffer;
 pub mod document;
+pub mod editing;
 pub mod history;
 pub mod inline;
 pub mod model;

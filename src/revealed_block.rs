@@ -10,16 +10,28 @@ use gpui::{
     MouseButton, SharedString, StrikethroughStyle, StyledText, TextLayout, TextRun, UnderlineStyle,
     canvas, div, fill, prelude::*, px, relative, size,
 };
+use kami::model::Gap;
 use kami::reveal::{RevealFont, SpanStyle, StyledSource};
 
 use crate::document_view::{BODY_TEXT_SIZE, CODE_FONT, DocumentView};
-use crate::rendered_block::{ClickTarget, block_frame, heading_scale};
+use kami::rendered::RenderedBlock;
+
+use crate::rendered_block::{
+    ClickTarget, block_frame, heading_scale, rendered_content, rendered_heading,
+};
 use crate::theme::Theme;
 
 const CARET_WIDTH: f32 = 2.;
 
 /// How far the revealed block's highlight extends outside its text.
 const HIGHLIGHT_INSET: f32 = 8.;
+
+/// Shown on the revealed block's border.
+const EDITING_HINT: &str = "esc to finish · ⌥↓ next block";
+const HINT_HEIGHT: f32 = 14.;
+
+/// Space between a block and the caret's line in the gap next to it.
+const GAP_SPACE: f32 = 16.;
 
 /// What to draw for the revealed block.
 pub struct RevealedBlock<'a> {
@@ -35,26 +47,73 @@ pub struct RevealedBlock<'a> {
     pub first: bool,
 }
 
-/// Where typed text and IME input go while the block is revealed.
+/// Where typed text and IME input go while the block is revealed, and
+/// where its text layout is stored once painted, for the view's
+/// layout-dependent movement.
 pub struct TextInput {
     pub focus_handle: FocusHandle,
     pub view: Entity<DocumentView>,
+    pub layout_slot: Rc<RefCell<Option<TextLayout>>>,
 }
 
-/// Renders the revealed block as a list item. Once painted, its text layout
-/// is stored in `layout_slot` for the view's layout-dependent movement.
+/// Renders the revealed block as a list item.
 pub fn render_revealed(
     block: RevealedBlock,
     base_font: &Font,
     theme: Theme,
     click: ClickTarget,
-    layout_slot: Rc<RefCell<Option<TextLayout>>>,
     input: TextInput,
 ) -> AnyElement {
-    let (heading, monospace) = match block.styled.font {
-        RevealFont::Prose { heading } => (heading, false),
-        RevealFont::Monospace => (None, true),
+    let heading = revealed_heading(block.styled);
+    let first = block.first;
+    let content = revealed_content(block, base_font, theme, click.clone(), input);
+    block_frame(content, heading, first, click)
+}
+
+/// Renders a block in rendered mode with the caret on an empty line in the
+/// gap before or after it, where typing starts a new block.
+pub fn render_gap(
+    block: &RenderedBlock,
+    gap: Gap,
+    caret: RevealedBlock,
+    base_font: &Font,
+    theme: Theme,
+    click: ClickTarget,
+    input: TextInput,
+) -> AnyElement {
+    let first = caret.first;
+    let heading = rendered_heading(block);
+    let rendered = rendered_content(block, base_font, theme, click.clone());
+    let line = revealed_content(caret, base_font, theme, click.clone(), input);
+    let content = match gap {
+        Gap::Above => div()
+            .child(div().mb(px(GAP_SPACE)).child(line))
+            .child(rendered),
+        Gap::Below => div()
+            .child(rendered)
+            .child(div().mt(px(GAP_SPACE)).child(line)),
     };
+    block_frame(content.into_any_element(), heading, first, click)
+}
+
+fn revealed_heading(styled: &StyledSource) -> Option<u8> {
+    match styled.font {
+        RevealFont::Prose { heading } => heading,
+        RevealFont::Monospace => None,
+    }
+}
+
+/// The revealed block's highlighted, editable source, without the list
+/// item's spacing.
+fn revealed_content(
+    block: RevealedBlock,
+    base_font: &Font,
+    theme: Theme,
+    click: ClickTarget,
+    input: TextInput,
+) -> AnyElement {
+    let heading = revealed_heading(block.styled);
+    let monospace = block.styled.font == RevealFont::Monospace;
 
     // Tabs are shown as single spaces so offsets stay identical to the
     // source.
@@ -71,7 +130,7 @@ pub fn render_revealed(
             // Publish the layout only now that it's been painted: its
             // position queries panic before prepaint, and the list can
             // build an item just to measure it without painting it.
-            *layout_slot.borrow_mut() = Some(caret_layout.clone());
+            *input.layout_slot.borrow_mut() = Some(caret_layout.clone());
             window.handle_input(
                 &input.focus_handle,
                 ElementInputHandler::new(bounds, input.view),
@@ -125,8 +184,21 @@ pub fn render_revealed(
     };
 
     // Highlight the revealed block. The highlight extends outside the text
-    // column by its padding plus border, so the text doesn't shift.
-    let highlight = div()
+    // column by its padding plus border, so the text doesn't shift. Clicks
+    // on its padding count as clicks in the column.
+    let hint = div()
+        .absolute()
+        .right(px(12.))
+        .bottom(px(-HINT_HEIGHT / 2.))
+        .h(px(HINT_HEIGHT))
+        .px(px(6.))
+        .bg(theme.background)
+        .text_size(px(11.))
+        .line_height(px(HINT_HEIGHT))
+        .text_color(theme.muted_text)
+        .child(EDITING_HINT);
+    div()
+        .relative()
         .mx(px(-HIGHLIGHT_INSET))
         .my(px(-HIGHLIGHT_INSET))
         .p(px(HIGHLIGHT_INSET - 1.))
@@ -134,9 +206,13 @@ pub fn render_revealed(
         .border_color(theme.revealed_border)
         .rounded_md()
         .bg(theme.revealed_background)
-        .child(content);
-
-    block_frame(highlight.into_any_element(), heading, block.first, click)
+        .on_mouse_down(MouseButton::Left, move |event, window, cx| {
+            click.report(0, event.modifiers.shift, window, cx);
+            cx.stop_propagation();
+        })
+        .child(content)
+        .child(hint)
+        .into_any_element()
 }
 
 /// Text runs for the styled source, with the selection as a background.

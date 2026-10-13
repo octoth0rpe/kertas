@@ -4,17 +4,17 @@
 //! itself a long sequence of movement and editing steps one frame apart,
 //! then prints `SMOKE OK` and quits. A panic along the way fails it. This
 //! exercises the real view, list and text layout, which unit tests can't.
-//! It doesn't save unless `KAMI_SMOKE=save`, and it doesn't touch the
-//! clipboard.
+//! It doesn't save unless `KAMI_SMOKE=save` (or `write`, which runs only the
+//! writing steps), and it doesn't touch the clipboard.
 
 use std::time::Duration;
 
 use gpui::{Action, App, EntityInputHandler, WindowHandle};
 
 use crate::document_view::{
-    Backspace, CloseWindow, Delete, DeleteWordLeft, DocumentView, MoveDocumentEnd,
-    MoveDocumentStart, MoveDown, MoveLeft, MoveRight, MoveUp, New, Newline, Quit, Redo, Save,
-    SelectAll, SelectDown, SelectUp, Undo,
+    Backspace, CloseWindow, Delete, DeleteWordLeft, DocumentView, LineBreak, MoveBlockDown,
+    MoveBlockUp, MoveDocumentEnd, MoveDocumentStart, MoveDown, MoveLeft, MoveRight, MoveUp, New,
+    Newline, Quit, Redo, Save, SelectAll, SelectBlockDown, SelectDown, SelectUp, Undo, Unreveal,
 };
 
 const STEP: Duration = Duration::from_millis(16);
@@ -34,9 +34,6 @@ pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
     }
     let mut steps: Vec<Step> = Vec::new();
     let steps_ref = &mut steps;
-    let repeat = |steps: &mut Vec<Step>, action: &dyn Action, count: usize| {
-        steps.extend((0..count).map(|_| Step::Action(action.boxed_clone())));
-    };
     // Movement.
     repeat(steps_ref, &MoveDocumentStart, 1);
     repeat(steps_ref, &MoveDown, 200);
@@ -46,7 +43,51 @@ pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
     repeat(steps_ref, &MoveDocumentEnd, 1);
     repeat(steps_ref, &SelectUp, 30);
     repeat(steps_ref, &SelectDown, 30);
+    repeat(steps_ref, &Unreveal, 1);
+    repeat(steps_ref, &MoveBlockDown, 150);
+    repeat(steps_ref, &MoveBlockUp, 150);
+    repeat(steps_ref, &SelectBlockDown, 5);
 
+    // Writing at the end: paragraphs through the gap, a list and a quote.
+    // `KAMI_SMOKE=write` runs only this and saves, to check the text.
+    let write_only = std::env::var("KAMI_SMOKE").as_deref() == Ok("write");
+    if write_only {
+        steps_ref.clear();
+    }
+    // The first key press only places the caret.
+    repeat(steps_ref, &MoveDocumentEnd, 2);
+    repeat(steps_ref, &Newline, 2);
+    repeat(steps_ref, &MoveUp, 3);
+    repeat(steps_ref, &MoveDown, 3);
+    repeat(steps_ref, &Newline, 1);
+    steps_ref.push(Step::Type("New paragraph"));
+    repeat(steps_ref, &LineBreak, 1);
+    steps_ref.push(Step::Type("second line"));
+    repeat(steps_ref, &Newline, 2);
+    steps_ref.push(Step::Type("- item"));
+    repeat(steps_ref, &Newline, 1);
+    steps_ref.push(Step::Type("[ ] task"));
+    repeat(steps_ref, &Newline, 2);
+    steps_ref.push(Step::Type("> quote"));
+    repeat(steps_ref, &LineBreak, 1);
+    repeat(steps_ref, &Newline, 3);
+    repeat(steps_ref, &MoveBlockUp, 4);
+    repeat(steps_ref, &MoveBlockDown, 4);
+    if write_only {
+        steps_ref.push(Step::Action(Box::new(Save)));
+    } else {
+        edit_steps(steps_ref);
+    }
+
+    run(window, steps, cx);
+}
+
+fn repeat(steps: &mut Vec<Step>, action: &dyn Action, count: usize) {
+    steps.extend((0..count).map(|_| Step::Action(action.boxed_clone())));
+}
+
+/// Edits all over the document, undo and redo, and replacing everything.
+fn edit_steps(steps_ref: &mut Vec<Step>) {
     // Editing at the start: a new heading and paragraph, then undo/redo.
     repeat(steps_ref, &MoveDocumentStart, 1);
     steps_ref.push(Step::Type("# Smoke"));
@@ -79,10 +120,12 @@ pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
 
     // `KAMI_SMOKE=save` ends by saving, to check the file on disk.
     if std::env::var("KAMI_SMOKE").as_deref() == Ok("save") {
-        steps.push(Step::Type("Saved by smoke test.\n"));
-        steps.push(Step::Action(Box::new(Save)));
+        steps_ref.push(Step::Type("Saved by smoke test.\n"));
+        steps_ref.push(Step::Action(Box::new(Save)));
     }
+}
 
+fn run(window: WindowHandle<DocumentView>, steps: Vec<Step>, cx: &mut App) {
     cx.spawn(async move |cx| {
         let total = steps.len();
         for step in steps {
