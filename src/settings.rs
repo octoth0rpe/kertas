@@ -190,8 +190,11 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "tab_width",
-        label: "Tab width",
-        note: Some("Spaces shown for each tab."),
+        label: "Tab character width",
+        note: Some(
+            "How many spaces wide tab characters look, in code that contains them. \
+             It doesn't change what the Tab key inserts or how lists are indented.",
+        ),
         kind: Kind::Numbers {
             choices: TAB_WIDTHS,
             get: |settings| settings.tab_width,
