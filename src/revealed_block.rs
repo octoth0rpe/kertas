@@ -16,7 +16,7 @@ use kami::reveal::{RevealFont, SpanStyle, StyledSource};
 use kami::tabs::ExpandedTabs;
 
 use crate::document_view::DocumentView;
-use crate::text_style::{CODE_FONT, Look, code_text, heading_text, inline_run, underline};
+use crate::text_style::{Look, code_text, heading_text, inline_run, underline};
 use kami::rendered::RenderedBlock;
 
 use crate::rendered_block::{ClickTarget, block_frame, rendered_content, rendered_heading};
@@ -241,7 +241,7 @@ fn revealed_content(
         .child(caret_overlay);
 
     let content = if monospace {
-        code_text(div())
+        code_text(div(), &look.code_font)
             .bg(theme.code_background)
             .rounded_md()
             .px_4()
@@ -290,7 +290,7 @@ fn text_runs(block: &RevealedBlock, look: &Look, heading: Option<u8>) -> Vec<Tex
     let theme = look.theme;
     let mut block_font = look.font.clone();
     if matches!(block.styled.font, RevealFont::Monospace) {
-        block_font.family = CODE_FONT.into();
+        block_font.family = look.code_font.clone();
     }
     if heading.is_some() {
         block_font.weight = FontWeight::SEMIBOLD;
@@ -310,11 +310,12 @@ fn text_runs(block: &RevealedBlock, look: &Look, heading: Option<u8>) -> Vec<Tex
                 &block_font,
                 theme.muted_text,
                 theme,
+                &look.code_font,
             ),
             SpanStyle::Content(mut inline) => {
                 // A code block is already in the code font, unhighlighted.
                 inline.code &= block.styled.font != RevealFont::Monospace;
-                inline_run(inline, 0, &block_font, base_color, theme)
+                inline_run(inline, 0, &block_font, base_color, theme, &look.code_font)
             }
         };
 
@@ -385,6 +386,7 @@ mod tests {
     fn text_runs_cover_the_text() {
         let look = Look {
             font: gpui::font("Helvetica"),
+            code_font: "Menlo".into(),
             theme: Theme::light(),
             tab_width: 4,
         };

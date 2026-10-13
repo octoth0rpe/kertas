@@ -47,15 +47,29 @@ pub fn launch_layout(cx: &App) -> Layout {
 /// The current settings.
 pub fn get(cx: &App) -> Settings {
     cx.try_global::<AppSettings>()
-        .map(|state| state.settings)
+        .map(|state| state.settings.clone())
         .unwrap_or_default()
+}
+
+/// The installed font families, sorted, for the font settings.
+struct InstalledFonts(Vec<String>);
+
+impl Global for InstalledFonts {}
+
+/// The installed font families, sorted, without the system's hidden ones.
+pub fn installed_fonts(cx: &App) -> &[String] {
+    cx.try_global::<InstalledFonts>()
+        .map_or(&[], |fonts| fonts.0.as_slice())
 }
 
 /// Loads the settings and starts watching the file for changes.
 pub fn init(cx: &mut App) {
+    let mut fonts = cx.text_system().all_font_names();
+    fonts.retain(|name| !name.starts_with('.'));
+    cx.set_global(InstalledFonts(fonts));
     let path = settings_path();
-    let state = load(path.clone());
-    apply_appearance(state.settings, cx);
+    let state = load(path.clone(), cx);
+    apply_appearance(&state.settings, cx);
     cx.set_global(LaunchLayout(state.settings.layout));
     cx.set_global(state);
 
@@ -87,17 +101,34 @@ pub fn set_or_report(key: &str, value: impl Into<toml_edit::Value>, cx: &mut App
     }
 }
 
+/// Removes setting `key` from the settings file, so it takes its default,
+/// reporting any problem in the bar that shows settings file problems.
+pub fn remove_or_report(key: &str, cx: &mut App) {
+    if let Err(problem) = edit(|text| settings::remove(text, key), cx) {
+        cx.update_global::<AppSettings, _>(|state, _| state.problems.insert(0, problem));
+    }
+}
+
 /// Changes setting `key` to `value` in the settings file, creating it if
 /// needed, and applies it.
 pub fn set(key: &str, value: impl Into<toml_edit::Value>, cx: &mut App) -> Result<(), Problem> {
+    let value = value.into();
+    edit(|text| settings::set(text, key, value), cx)
+}
+
+/// Rewrites the settings file with `change`, creating it if needed, and
+/// applies it.
+fn edit(change: impl FnOnce(&str) -> Result<String, Problem>, cx: &mut App) -> Result<(), Problem> {
     let path = cx.global::<AppSettings>().path.clone();
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
         Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
         Err(err) => return Err(file_problem(&path, &err)),
     };
-    let text = settings::set(&text, key, value)?;
-    write_atomically(&path, &text).map_err(|err| file_problem(&path, &err))?;
+    let changed = change(&text)?;
+    if changed != text {
+        write_atomically(&path, &changed).map_err(|err| file_problem(&path, &err))?;
+    }
     reload(cx);
     Ok(())
 }
@@ -105,13 +136,13 @@ pub fn set(key: &str, value: impl Into<toml_edit::Value>, cx: &mut App) -> Resul
 /// Re-reads the settings file and applies it.
 fn reload(cx: &mut App) {
     let path = cx.global::<AppSettings>().path.clone();
-    let state = load(path);
-    apply_appearance(state.settings, cx);
+    let state = load(path, cx);
+    apply_appearance(&state.settings, cx);
     cx.set_global(state);
 }
 
 /// Makes the window chrome, dialogs and theme follow the theme setting.
-fn apply_appearance(settings: Settings, cx: &mut App) {
+fn apply_appearance(settings: &Settings, cx: &mut App) {
     cx.set_window_appearance(match settings.theme {
         ThemeSetting::Light => Some(WindowAppearance::Light),
         ThemeSetting::Dark => Some(WindowAppearance::Dark),
@@ -129,10 +160,17 @@ fn settings_path() -> PathBuf {
     directory.join("config.toml")
 }
 
-fn load(path: PathBuf) -> AppSettings {
+fn load(path: PathBuf, cx: &App) -> AppSettings {
     let stamp = stamp(&path);
+    let fonts = installed_fonts(cx);
+    let installed = |name: &str| {
+        fonts
+            .iter()
+            .find(|font| font.eq_ignore_ascii_case(name))
+            .cloned()
+    };
     let (settings, problems) = match fs::read_to_string(&path) {
-        Ok(text) => settings::parse(&text),
+        Ok(text) => settings::parse_checking_fonts(&text, &installed),
         // No file means all defaults (G2).
         Err(err) if err.kind() == io::ErrorKind::NotFound => (Settings::default(), vec![]),
         Err(err) => (Settings::default(), vec![file_problem(&path, &err)]),

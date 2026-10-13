@@ -8,8 +8,8 @@ use std::ops::RangeInclusive;
 
 use gpui::{
     AnyElement, App, Bounds, Context, FocusHandle, Global, KeyBinding, MouseButton, SharedString,
-    Subscription, Window, WindowBounds, WindowHandle, WindowKind, WindowOptions, div, prelude::*,
-    px, size,
+    Subscription, Window, WindowBounds, WindowHandle, WindowKind, WindowOptions, anchored,
+    deferred, div, prelude::*, px, size,
 };
 use kami::settings::{Kind, SETTINGS, Setting, Settings};
 
@@ -46,7 +46,7 @@ pub fn open(cx: &mut App) {
             .update(cx, |_, window, _| window.activate_window())
             .ok();
     }
-    let bounds = Bounds::centered(None, size(px(540.), px(580.)), cx);
+    let bounds = Bounds::centered(None, size(px(540.), px(700.)), cx);
     let window = cx
         .open_window(
             WindowOptions {
@@ -101,6 +101,8 @@ pub struct SettingsWindow {
     _activation_observer: Subscription,
     _settings_observer: Subscription,
     _appearance_observer: Subscription,
+    /// The font setting whose list of fonts is open.
+    font_menu: Option<&'static str>,
 }
 
 impl SettingsWindow {
@@ -123,6 +125,7 @@ impl SettingsWindow {
                 this.theme = Theme::current(window, cx);
                 cx.notify();
             }),
+            font_menu: None,
             _appearance_observer: cx.observe_window_appearance(window, |this, window, cx| {
                 this.theme = Theme::current(window, cx);
                 cx.notify();
@@ -166,6 +169,121 @@ impl SettingsWindow {
             .when(current != default, |this| {
                 this.child(self.button("reset-size", "Reset", cx, set(default)))
             });
+        self.labelled(setting.label, self.with_note(content, setting.note))
+    }
+
+    /// A row for a font setting: a pop-up button showing the font, which
+    /// opens a list of the installed fonts, with the default first.
+    fn font(
+        &self,
+        setting: &'static Setting,
+        default: &'static str,
+        current: Option<&str>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let theme = self.theme;
+        let key = setting.key;
+        let open = self.font_menu == Some(key);
+        let button = div()
+            .id(key)
+            .flex()
+            .items_center()
+            .gap_2()
+            .px_3()
+            .py(px(3.))
+            .rounded_md()
+            .cursor_pointer()
+            .border_1()
+            .border_color(theme.rule)
+            .bg(theme.code_background)
+            .hover(|style| style.bg(theme.rule))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
+                    this.font_menu = if open { None } else { Some(key) };
+                    cx.stop_propagation();
+                    cx.notify();
+                }),
+            )
+            .child(current.unwrap_or(default).to_owned())
+            .child(div().text_color(theme.muted_text).child("▾"));
+
+        let item = |id: SharedString,
+                    label: SharedString,
+                    font: Option<String>,
+                    cx: &mut Context<Self>| {
+            let selected = font.as_deref() == current;
+            div()
+                .id(id)
+                .flex()
+                .gap_2()
+                .px_3()
+                .py(px(2.))
+                .cursor_pointer()
+                .hover(|style| style.bg(theme.rule))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _, _, cx| {
+                        this.font_menu = None;
+                        let font = font.clone();
+                        cx.defer(move |cx| match font {
+                            Some(font) => app_settings::set_or_report(key, font, cx),
+                            None => app_settings::remove_or_report(key, cx),
+                        });
+                        cx.stop_propagation();
+                        cx.notify();
+                    }),
+                )
+                .child(div().w(px(12.)).child(if selected { "✓" } else { "" }))
+                .child(label)
+        };
+        let menu = open.then(|| {
+            let mut items = vec![item(
+                format!("{key}-default").into(),
+                default.into(),
+                None,
+                cx,
+            )];
+            items.extend(
+                app_settings::installed_fonts(cx)
+                    .to_vec()
+                    .into_iter()
+                    .map(|font| {
+                        item(
+                            format!("{key}-{font}").into(),
+                            font.clone().into(),
+                            Some(font),
+                            cx,
+                        )
+                    }),
+            );
+            deferred(
+                anchored().snap_to_window().child(
+                    div()
+                        .id(SharedString::from(format!("{key}-fonts")))
+                        .occlude()
+                        .mt_1()
+                        .w(px(260.))
+                        .max_h(px(280.))
+                        .overflow_y_scroll()
+                        .py_1()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(theme.rule)
+                        .bg(theme.background)
+                        .shadow_md()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .children(items),
+                ),
+            )
+            .with_priority(1)
+        });
+        let content = div()
+            .flex()
+            .flex_col()
+            .items_start()
+            .child(button)
+            .children(menu);
         self.labelled(setting.label, self.with_note(content, setting.note))
     }
 
@@ -475,6 +593,9 @@ impl SettingsWindow {
                     cx,
                 )
                 .into_any_element(),
+            Kind::Font { default, get, .. } => self
+                .font(setting, default, get(settings), cx)
+                .into_any_element(),
             Kind::Bool { get, .. } => self.checkbox(setting, get(settings)).into_any_element(),
         }
     }
@@ -508,8 +629,24 @@ impl Render for SettingsWindow {
             .child("Done");
         div()
             .track_focus(&self.focus_handle)
+            // A click anywhere else closes the list of fonts.
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    if this.font_menu.take().is_some() {
+                        cx.notify();
+                    }
+                }),
+            )
             .key_context(KEY_CONTEXT)
-            .on_action(|_: &CloseWindow, window, _| window.remove_window())
+            // Esc closes the list of fonts, if it's open, then the window.
+            .on_action(cx.listener(|this, _: &CloseWindow, window, cx| {
+                if this.font_menu.take().is_some() {
+                    cx.notify();
+                } else {
+                    window.remove_window();
+                }
+            }))
             .size_full()
             .flex()
             .flex_col()

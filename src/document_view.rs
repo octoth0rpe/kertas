@@ -24,12 +24,12 @@ use gpui::{
 use kami::document::Document;
 use kami::editor::{Editor, RevealTarget};
 use kami::reveal::StyledSource;
-use kami::settings::TextWidth;
 
 use crate::app_settings::{self, AppSettings};
 use crate::builtin::Builtin;
 use crate::menus::OpenSettings;
 use crate::revealed_block::RevealedLayout;
+use crate::text_style::TextSettings;
 use crate::theme::Theme;
 use crate::zoom::Zoom;
 
@@ -230,9 +230,9 @@ pub struct DocumentView {
     /// view-only.
     builtin: Option<Builtin>,
     theme: Theme,
-    text_width: TextWidth,
-    /// The `tab_width` setting, to notice when it changes.
-    tab_width: u32,
+    /// The settings the document was last laid out with: the text width,
+    /// tab width and fonts.
+    text_settings: TextSettings,
     /// Whether the blinking caret is currently drawn.
     caret_visible: bool,
     /// Bumped to stop the current blink loop.
@@ -270,10 +270,9 @@ impl DocumentView {
         let settings_observer = cx.observe_global_in::<AppSettings>(window, |this, window, cx| {
             this.theme = Theme::current(window, cx);
             this.settings_problems_dismissed = false;
-            let settings = app_settings::get(cx);
-            if (settings.text_width, settings.tab_width) != (this.text_width, this.tab_width) {
-                this.text_width = settings.text_width;
-                this.tab_width = settings.tab_width;
+            let text_settings = TextSettings::from(&app_settings::get(cx));
+            if text_settings != this.text_settings {
+                this.text_settings = text_settings;
                 this.layout_changed();
             }
             cx.notify();
@@ -290,8 +289,7 @@ impl DocumentView {
             open: None,
             builtin: None,
             theme: Theme::current(window, cx),
-            text_width: app_settings::get(cx).text_width,
-            tab_width: app_settings::get(cx).tab_width,
+            text_settings: TextSettings::from(&app_settings::get(cx)),
             caret_visible: true,
             dragging: false,
             blink_epoch: 0,

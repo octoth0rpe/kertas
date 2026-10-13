@@ -11,7 +11,7 @@ use std::ops::Range;
 
 use kami::model::Model;
 use kami::print_layout::{Alignment, Frame, PrintLayout};
-use kami::rendered::{CODE_FONT, heading_scale};
+use kami::rendered::heading_scale;
 use kami::settings::Settings;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
@@ -105,7 +105,7 @@ fn operation(
     // TextKit 1, so tables and code boxes print.
     let view = NSTextView::initUsingTextLayoutManager(mtm.alloc(), false);
     view.setFrameSize(CGSize::new(paper.width - 2. * MARGIN, paper.height));
-    let text = attributed(&PrintLayout::new(model, settings.tab_width), mtm);
+    let text = attributed(&PrintLayout::new(model, settings.tab_width), settings, mtm);
     // SAFETY: the view was just created with a text storage.
     unsafe {
         view.textStorage()
@@ -118,8 +118,13 @@ fn operation(
     NSPrintOperation::printOperationWithView_printInfo(&view, &info)
 }
 
-/// The layout as an attributed string, in black on white.
-fn attributed(layout: &PrintLayout, mtm: MainThreadMarker) -> Retained<NSMutableAttributedString> {
+/// The layout as an attributed string, in black on white, in the fonts
+/// `settings` choose.
+fn attributed(
+    layout: &PrintLayout,
+    settings: &Settings,
+    mtm: MainThreadMarker,
+) -> Retained<NSMutableAttributedString> {
     let text = &layout.text;
     // Attributed string ranges are in UTF-16 code units. Map every byte
     // offset in one pass; converting each range from scratch would be
@@ -159,12 +164,22 @@ fn attributed(layout: &PrintLayout, mtm: MainThreadMarker) -> Retained<NSMutable
             None if style.code => CODE,
             None => BODY,
         };
-        let mut font = if style.code {
-            NSFont::fontWithName_size(&NSString::from_str(CODE_FONT), size)
-                .unwrap_or_else(|| NSFont::systemFontOfSize(size))
+        let family = if style.code {
+            Some(settings.code_font())
         } else {
-            NSFont::systemFontOfSize(size)
+            settings.body_font.as_deref()
         };
+        let mut font = family
+            .and_then(|family| {
+                // A regular (weight 5) font with no traits.
+                fonts.fontWithFamily_traits_weight_size(
+                    &NSString::from_str(family),
+                    NSFontTraitMask::empty(),
+                    5,
+                    size,
+                )
+            })
+            .unwrap_or_else(|| NSFont::systemFontOfSize(size));
         if style.bold {
             font = fonts.convertFont_toHaveTrait(&font, NSFontTraitMask::BoldFontMask);
         }
