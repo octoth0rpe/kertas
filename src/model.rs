@@ -5,6 +5,7 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use crate::blocks::{BlockKind, Blocks, item_ranges};
+use crate::definitions::Definitions;
 use crate::rendered::{RenderedBlock, render_block};
 
 /// One list item: a block plus the blank lines after it.
@@ -33,8 +34,8 @@ pub enum Gap {
 pub struct Model {
     pub text: Rc<str>,
     pub items: Vec<Item>,
-    /// The source of the document's link reference definitions.
-    pub definitions: Rc<str>,
+    /// The document's link reference definitions.
+    pub definitions: Rc<Definitions>,
 }
 
 /// Which list items changed in an update: `old` (indices into the old
@@ -112,7 +113,7 @@ impl Model {
 
     fn build(text: &str, old: Option<&Model>) -> (Self, Splice) {
         let blocks = Blocks::parse(text);
-        let definitions = definitions(text, &blocks);
+        let definitions = blocks.definitions().clone();
         let ranges = item_ranges(text, &blocks);
 
         let block_info: Vec<(Range<usize>, BlockKind)> = if blocks.is_empty() {
@@ -186,7 +187,7 @@ impl Model {
         let model = Self {
             text: text.into(),
             items,
-            definitions: definitions.into(),
+            definitions: Rc::new(definitions),
         };
         (model, splice)
     }
@@ -196,7 +197,7 @@ fn render_item(
     text: &str,
     block: &Range<usize>,
     kind: BlockKind,
-    definitions: &str,
+    definitions: &Definitions,
 ) -> RenderedBlock {
     let source = &text[block.clone()];
     match kind {
@@ -207,16 +208,6 @@ fn render_item(
         _ => render_block(source, definitions)
             .unwrap_or_else(|| RenderedBlock::Raw(source.to_owned())),
     }
-}
-
-fn definitions(text: &str, blocks: &Blocks) -> String {
-    blocks
-        .as_slice()
-        .iter()
-        .filter(|block| block.kind == BlockKind::LinkReferenceDefinition)
-        .map(|block| &text[block.range.clone()])
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 #[cfg(test)]

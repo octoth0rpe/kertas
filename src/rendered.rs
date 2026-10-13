@@ -4,9 +4,11 @@
 //! blockquotes contain nested blocks, and tables contain cells. Inline text
 //! keeps source ranges relative to the start of its top-level block.
 
-use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Parser, Tag, TagEnd};
+use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Tag, TagEnd};
 
-use crate::blocks::{BlockKind, Blocks, parser_options};
+#[cfg(test)]
+use crate::blocks::{BlockKind, Blocks};
+use crate::definitions::Definitions;
 use crate::inline::{InlineBuilder, InlineText};
 
 /// A block prepared for display.
@@ -62,16 +64,11 @@ pub enum ColumnAlignment {
     Right,
 }
 
-/// Prepares every block in `text` for display.
-pub fn render_blocks(text: &str, blocks: &Blocks) -> Vec<RenderedBlock> {
-    let definitions = blocks
-        .as_slice()
-        .iter()
-        .filter(|block| block.kind == BlockKind::LinkReferenceDefinition)
-        .map(|block| &text[block.range.clone()])
-        .collect::<Vec<_>>()
-        .join("\n");
-
+/// Prepares every block in `text` for display. A test helper: the app
+/// renders each block as needed (see [`crate::model::Model`]).
+#[cfg(test)]
+pub(crate) fn render_blocks(text: &str, blocks: &Blocks) -> Vec<RenderedBlock> {
+    let definitions = blocks.definitions();
     blocks
         .as_slice()
         .iter()
@@ -81,32 +78,22 @@ pub fn render_blocks(text: &str, blocks: &Blocks) -> Vec<RenderedBlock> {
                 BlockKind::FrontMatter | BlockKind::LinkReferenceDefinition => {
                     RenderedBlock::Raw(source.to_owned())
                 }
-                _ => render_block(source, &definitions)
+                _ => render_block(source, definitions)
                     .unwrap_or_else(|| RenderedBlock::Raw(source.to_owned())),
             }
         })
         .collect()
 }
 
-/// Renders a single top-level block from its source. `definitions` is the
+/// Renders a single top-level block from its source. `definitions` are the
 /// document's link reference definitions, so reference links resolve.
-pub fn render_block(source: &str, definitions: &str) -> Option<RenderedBlock> {
-    let full;
-    let parse_text = if definitions.is_empty() {
-        source
-    } else {
-        // Definitions go after a blank line so they're separate blocks;
-        // their events (if any) fall outside `source` and are ignored.
-        full = format!("{source}\n\n{definitions}");
-        &full
-    };
-
+pub fn render_block(source: &str, definitions: &Definitions) -> Option<RenderedBlock> {
     let mut builder = TreeBuilder::default();
-    for (event, range) in Parser::new_ext(parse_text, parser_options()).into_offset_iter() {
+    for (event, range) in definitions.parse(source) {
         builder.handle(event, range);
-        // Stop once the block is complete, before the appended definitions.
-        // Don't cut off by source position: the parser can place events just
-        // past the block's text, e.g. empty cells padding a short table row.
+        // Stop once the block is complete. Don't cut off by source
+        // position: the parser can place events just past the block's
+        // text, e.g. empty cells padding a short table row.
         if builder.is_complete() {
             break;
         }
@@ -653,5 +640,33 @@ mod tests {
         // slow or busy machine.
         assert!(elapsed.as_millis() < 150, "took {elapsed:?}");
         eprintln!("parsed and rendered {} blocks in {elapsed:?}", blocks.len());
+    }
+
+    #[test]
+    fn many_link_definitions_render_quickly() {
+        // Rendering mustn't depend on how many definitions there are: each
+        // block once took time proportional to all of them.
+        let mut text = String::new();
+        for index in 0..2000 {
+            text.push_str(&format!(
+                "Paragraph {index} with a [link][d{}].\n\n",
+                index % 500
+            ));
+        }
+        for index in 0..500 {
+            text.push_str(&format!("[d{index}]: https://example.com/{index}\n"));
+        }
+        let start = std::time::Instant::now();
+        let blocks = Blocks::parse(&text);
+        let rendered = render_blocks(&text, &blocks);
+        let elapsed = start.elapsed();
+        assert_eq!(rendered.len(), 2500);
+        let RenderedBlock::Paragraph(first) = &rendered[0] else {
+            panic!("{:?}", rendered[0]);
+        };
+        assert!(first.segments.iter().any(|segment| segment.style.link));
+        // Typically 10 ms in a debug build (M2, 2026-10-13); it was 2 s
+        // before definitions were looked up instead of re-parsed.
+        assert!(elapsed.as_millis() < 100, "took {elapsed:?}");
     }
 }

@@ -6,9 +6,10 @@
 
 use std::ops::Range;
 
-use pulldown_cmark::{Event, Parser, Tag, TagEnd};
+use pulldown_cmark::{Event, Tag, TagEnd};
 
-use crate::blocks::parser_options;
+#[cfg(test)]
+use crate::definitions::Definitions;
 
 /// Inline formatting applied to a segment of text.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -66,27 +67,15 @@ impl InlineText {
     }
 }
 
-/// Renders the inline content of a paragraph or heading.
-///
-/// `definitions` is the source of the document's link reference
-/// definitions, so reference links like `[text][label]` resolve. Pass an
-/// empty string if there are none.
-pub fn render_inline(source: &str, definitions: &str) -> InlineText {
-    // Append the definitions after a blank line so they're parsed as
-    // separate blocks; their events (if any) fall outside `source` and are
-    // ignored.
-    let full;
-    let parse_text = if definitions.is_empty() {
-        source
-    } else {
-        full = format!("{source}\n\n{definitions}");
-        &full
-    };
-
+/// Renders the inline content of a paragraph or heading. `definitions` are
+/// the document's link reference definitions, so reference links like
+/// `[text][label]` resolve. A test helper: the app renders whole blocks
+/// (see [`crate::rendered::render_block`]).
+#[cfg(test)]
+pub(crate) fn render_inline(source: &str, definitions: &Definitions) -> InlineText {
     let mut builder = InlineBuilder::default();
-    for (event, range) in Parser::new_ext(parse_text, parser_options()).into_offset_iter() {
-        // Stop at the end of the paragraph or heading, before the appended
-        // definitions.
+    for (event, range) in definitions.parse(source) {
+        // Stop at the end of the paragraph or heading.
         if matches!(event, Event::End(TagEnd::Paragraph | TagEnd::Heading(_))) {
             break;
         }
@@ -196,7 +185,7 @@ mod tests {
 
     #[test]
     fn plain_paragraph() {
-        let inline = render_inline("Just text.", "");
+        let inline = render_inline("Just text.", &Definitions::default());
         assert_eq!(inline.text, "Just text.");
         assert_eq!(segments(&inline), [("Just text.", PLAIN)]);
         assert_eq!(inline.segments[0].source, 0..10);
@@ -204,13 +193,22 @@ mod tests {
 
     #[test]
     fn heading_text_drops_markers() {
-        assert_eq!(render_inline("## Title", "").text, "Title");
-        assert_eq!(render_inline("Title\n=====", "").text, "Title");
+        assert_eq!(
+            render_inline("## Title", &Definitions::default()).text,
+            "Title"
+        );
+        assert_eq!(
+            render_inline("Title\n=====", &Definitions::default()).text,
+            "Title"
+        );
     }
 
     #[test]
     fn styles() {
-        let inline = render_inline("a **b** *c* ~~d~~ `e` [f](http://x)", "");
+        let inline = render_inline(
+            "a **b** *c* ~~d~~ `e` [f](http://x)",
+            &Definitions::default(),
+        );
         assert_eq!(inline.text, "a b c d e f");
         let strong = InlineStyle {
             strong: true,
@@ -251,7 +249,10 @@ mod tests {
 
     #[test]
     fn nested_styles_combine() {
-        let inline = render_inline("***both*** and [**bold link**](/x)", "");
+        let inline = render_inline(
+            "***both*** and [**bold link**](/x)",
+            &Definitions::default(),
+        );
         let both = InlineStyle {
             strong: true,
             emphasis: true,
@@ -270,15 +271,24 @@ mod tests {
 
     #[test]
     fn soft_break_becomes_space_and_hard_break_newline() {
-        assert_eq!(render_inline("one\ntwo", "").text, "one two");
-        assert_eq!(render_inline("one  \ntwo", "").text, "one\ntwo");
-        assert_eq!(render_inline("one\\\ntwo", "").text, "one\ntwo");
+        assert_eq!(
+            render_inline("one\ntwo", &Definitions::default()).text,
+            "one two"
+        );
+        assert_eq!(
+            render_inline("one  \ntwo", &Definitions::default()).text,
+            "one\ntwo"
+        );
+        assert_eq!(
+            render_inline("one\\\ntwo", &Definitions::default()).text,
+            "one\ntwo"
+        );
     }
 
     #[test]
     fn source_ranges_point_at_source_text() {
         let source = "Hello **world**";
-        let inline = render_inline(source, "");
+        let inline = render_inline(source, &Definitions::default());
         for segment in &inline.segments {
             assert_eq!(
                 &inline.text[segment.display.clone()],
@@ -290,16 +300,19 @@ mod tests {
 
     #[test]
     fn escapes_and_entities_are_unescaped() {
-        let inline = render_inline(r"\*not emphasis\* &amp; done", "");
+        let inline = render_inline(r"\*not emphasis\* &amp; done", &Definitions::default());
         assert_eq!(inline.text, "*not emphasis* & done");
     }
 
     #[test]
     fn reference_links_resolve_with_definitions() {
         let source = "See [kami][k].";
-        assert_eq!(render_inline(source, "").text, "See [kami][k].");
+        assert_eq!(
+            render_inline(source, &Definitions::default()).text,
+            "See [kami][k]."
+        );
 
-        let inline = render_inline(source, "[k]: https://example.com");
+        let inline = render_inline(source, &Definitions::from_text("[k]: https://example.com"));
         assert_eq!(inline.text, "See kami.");
         assert_eq!(
             segments(&inline),
@@ -319,25 +332,28 @@ mod tests {
 
     #[test]
     fn definitions_do_not_add_text() {
-        let inline = render_inline("Text", "[a]: /a\n[b]: /b");
+        let inline = render_inline("Text", &Definitions::from_text("[a]: /a\n[b]: /b"));
         assert_eq!(inline.text, "Text");
     }
 
     #[test]
     fn inline_html_is_shown_as_text() {
-        assert_eq!(render_inline("a <b>bold</b> c", "").text, "a <b>bold</b> c");
+        assert_eq!(
+            render_inline("a <b>bold</b> c", &Definitions::default()).text,
+            "a <b>bold</b> c"
+        );
     }
 
     #[test]
     fn non_ascii() {
-        let inline = render_inline("**見出し** café 🦀", "");
+        let inline = render_inline("**見出し** café 🦀", &Definitions::default());
         assert_eq!(inline.text, "見出し café 🦀");
     }
 
     #[test]
     fn source_offset_maps_display_to_source() {
         // "Hi **bold** \\*x" displays as "Hi bold *x".
-        let inline = render_inline("Hi **bold** \\*x", "");
+        let inline = render_inline("Hi **bold** \\*x", &Definitions::default());
         assert_eq!(inline.text, "Hi bold *x");
         assert_eq!(inline.source_offset(0), 0);
         assert_eq!(inline.source_offset(2), 2, "end of `Hi `'s first word");
@@ -364,6 +380,9 @@ mod tests {
 
     #[test]
     fn empty_heading() {
-        assert_eq!(render_inline("#", ""), InlineText::default());
+        assert_eq!(
+            render_inline("#", &Definitions::default()),
+            InlineText::default()
+        );
     }
 }
