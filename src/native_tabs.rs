@@ -40,6 +40,16 @@ pub fn automatic_tabbing() -> bool {
     MainThreadMarker::new().is_some_and(NSWindow::allowsAutomaticWindowTabbing)
 }
 
+impl NativeWindow {
+    /// The `NSWindow`, if the view is in one.
+    pub fn ns_window(&self) -> Option<objc2::rc::Retained<NSWindow>> {
+        // SAFETY: the pointer is the content view of a live GPUI window,
+        // captured on the main thread just before this call.
+        let view = unsafe { self.0.cast::<NSView>().as_ref() };
+        view.window()
+    }
+}
+
 /// How many times [`add_as_tab`] found both windows, for the smoke test.
 #[cfg(debug_assertions)]
 pub static TABBING_CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);

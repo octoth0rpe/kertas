@@ -24,14 +24,16 @@ single_range_in_vec_init = "allow"
 [target.'cfg(target_os = "macos")'.dependencies]
 # Native window tabs (see src/native_tabs.rs). Same versions GPUI uses.
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-uniform-type-identifiers", "NSApplication", "NSImage", "NSResponder", "NSView", "NSWindow", "NSWindowTabGroup", "NSWorkspace"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-core-foundation", "objc2-uniform-type-identifiers", "NSApplication", "NSAttributedString", "NSColor", "NSFont", "NSFontManager", "NSImage", "NSLayoutManager", "NSParagraphStyle", "NSPrintInfo", "NSPrintOperation", "NSResponder", "NSText", "NSTextStorage", "NSTextTable", "NSTextView", "NSView", "NSWindow", "NSWindowTabGroup", "NSWorkspace"] }
+# Printing (src/print.rs) lays text out in points.
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes"] }
 objc2-uniform-type-identifiers = { version = "0.3", default-features = false, features = ["std", "UTType"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSBundle", "NSData", "NSDistributedNotificationCenter", "NSError", "NSNotification", "NSOperation", "NSString", "NSURL", "NSUserDefaults"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSArray", "NSAttributedString", "NSBundle", "NSData", "NSDictionary", "NSDistributedNotificationCenter", "NSError", "NSGeometry", "NSNotification", "NSOperation", "NSRange", "NSString", "NSURL", "NSUserDefaults", "NSValue"] }
 block2 = "0.6"
 libc = "0.2"
 raw-window-handle = "0.6"
 
-# For examples/print_spike.rs only (#17): AppKit's text and printing APIs.
+# The printing spikes (#17): examples/print_spike.rs and textkit2_spike.rs.
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSAttributedString", "NSColor", "NSFont", "NSFontManager", "NSParagraphStyle", "NSPrintInfo", "NSPrintOperation", "NSResponder", "NSText", "NSBezierPath", "NSGraphicsContext", "NSLayoutManager", "NSTextContentManager", "NSTextElement", "NSTextLayoutFragment", "NSTextLayoutManager", "NSTextRange", "NSTextStorage", "NSTextTable", "NSTextView", "NSView", "objc2-core-foundation", "objc2-core-graphics"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSAttributedString", "NSDictionary", "NSGeometry", "NSRange", "NSString", "NSURL", "NSValue"] }

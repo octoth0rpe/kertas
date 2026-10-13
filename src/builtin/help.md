@@ -23,6 +23,10 @@ See **Help → Keyboard Shortcuts** for every shortcut.
 
 Each document opens in its own tab. **⌘1** to **⌘9** go straight to a tab. To open documents in separate windows instead, choose **Windows** for "Open documents in" in **Kami → Settings…**. That takes effect the next time Kami starts.
 
+## Printing
+
+**File → Print…** (⌘P) prints the document as it looks rendered, in light colors. To save a PDF, use the PDF menu in the print panel.
+
 ## From the terminal
 
 **Kami → Settings…** can install the `kami` command. Then `kami notes.md` opens a file in Kami. A file that doesn't exist yet opens as a new document, and saving creates it.

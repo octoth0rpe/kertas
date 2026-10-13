@@ -41,6 +41,7 @@ actions!(
         Open,
         Save,
         SaveAs,
+        Print,
         CloseWindow,
         Quit,
         NextTab,
@@ -110,6 +111,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-o", Open, None),
         KeyBinding::new("cmd-s", Save, None),
         KeyBinding::new("cmd-shift-s", SaveAs, None),
+        KeyBinding::new("cmd-p", Print, None),
         KeyBinding::new("cmd-w", CloseWindow, None),
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-,", OpenSettings, None),
@@ -394,6 +396,37 @@ impl DocumentView {
     // Files
 
     /// Starts a new untitled document, ready for typing.
+    /// File > Print…: the standard print panel, as a sheet on this window.
+    fn print(&mut self, _: &Print, window: &mut Window, _: &mut Context<Self>) {
+        #[cfg(target_os = "macos")]
+        {
+            let Some(open) = &self.open else {
+                return;
+            };
+            let Some(mtm) = objc2::MainThreadMarker::new() else {
+                return;
+            };
+            let Some(ns_window) =
+                crate::native_tabs::NativeWindow::of(window).and_then(|native| native.ns_window())
+            else {
+                return;
+            };
+            let title = match self.builtin {
+                Some(builtin) => builtin.title().to_owned(),
+                None => open.document.display_name(),
+            };
+            crate::print::print(&open.model, &title, &ns_window, mtm);
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = window;
+    }
+
+    /// The document's model, for the smoke test.
+    #[cfg(debug_assertions)]
+    pub fn model(&self) -> Option<Rc<Model>> {
+        self.open.as_ref().map(|open| open.model.clone())
+    }
+
     /// Shows one of Kami's built-in documents, view-only.
     pub fn open_builtin(&mut self, builtin: Builtin, window: &mut Window, cx: &mut Context<Self>) {
         self.builtin = Some(builtin);
@@ -1503,6 +1536,7 @@ impl Render for DocumentView {
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::save))
             .on_action(cx.listener(Self::save_as))
+            .on_action(cx.listener(Self::print))
             .on_action(cx.listener(Self::close_window))
             .on_action(|_: &NextTab, window, cx| {
                 SystemWindowTabController::select_next_tab(cx, window.window_handle().window_id())

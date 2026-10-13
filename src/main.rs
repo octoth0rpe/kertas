@@ -12,6 +12,8 @@ mod file_watch;
 mod menus;
 #[cfg(target_os = "macos")]
 mod native_tabs;
+#[cfg(target_os = "macos")]
+mod print;
 mod rendered_block;
 mod revealed_block;
 mod settings_window;
