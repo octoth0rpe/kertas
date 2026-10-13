@@ -5,6 +5,7 @@ pub mod buffer;
 pub mod definitions;
 pub mod document;
 pub mod editing;
+pub mod editor;
 pub mod history;
 pub mod inline;
 pub mod model;

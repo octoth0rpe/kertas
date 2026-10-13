@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use gpui::{
     AnyElement, Bounds, ClipboardItem, Context, EntityInputHandler, FocusHandle, KeyBinding,
@@ -16,12 +16,8 @@ use gpui::{
     SystemWindowTabController, Task, TextLayout, UTF16Selection, Window, actions, div, list, point,
     prelude::*, px, relative, rems, size,
 };
-use kami::blocks::BlockKind;
 use kami::document::{Document, OpenError, SaveError};
-use kami::editing;
-use kami::history::{EditKind, History};
-use kami::model::{Gap, Model};
-use kami::movement::{self, Selection};
+use kami::editor::{Change, Editor, Motion, RevealTarget, Selection};
 use kami::reveal::{StyledSource, styled_source};
 use kami::settings::TextWidth;
 
@@ -206,16 +202,10 @@ pub const CODE_FONT: &str = "Menlo";
 /// How long the caret stays on, and then off, while blinking.
 const CARET_BLINK_INTERVAL: Duration = Duration::from_millis(530);
 
-/// An open document and everything needed to display and edit it.
+/// An open document: its editor, and the layout state that shows it.
 struct OpenDocument {
-    document: Document,
-    model: Rc<Model>,
-    history: History,
+    editor: Editor,
     list_state: ListState,
-    /// The selection, or `None` before the first click or key press.
-    selection: Option<Selection>,
-    /// Text being composed with an input method.
-    marked: Option<Range<usize>>,
     /// The x position to keep when moving up and down.
     goal_x: Option<Pixels>,
     /// The items shown as source, in order: the one holding the caret,
@@ -235,14 +225,7 @@ struct OpenDocument {
 /// An item shown as source, or with the caret in the gap next to it.
 #[derive(Clone)]
 struct Revealed {
-    index: usize,
-    /// The source shown: the item's source, or an empty range at the caret
-    /// in a gap.
-    range: Range<usize>,
-    gap: Option<Gap>,
-    /// Whether this item holds the caret. It takes typing and shows the
-    /// hint; other revealed items are only part of the selection.
-    head: bool,
+    target: RevealTarget,
     styled: Rc<StyledSource>,
 }
 
@@ -335,15 +318,12 @@ impl DocumentView {
 
     /// Shows `document`, replacing the current one.
     fn load(&mut self, document: Document, window: &mut Window, cx: &mut Context<Self>) {
-        let model = Model::new(&document.buffer().rope().to_string());
-        let list_state = ListState::new(model.items.len(), ListAlignment::Top, px(1000.));
+        // Built-in documents are view-only.
+        let editor = Editor::new(document, self.builtin.is_some());
+        let items = editor.model().items.len();
         self.open = Some(OpenDocument {
-            document,
-            model: Rc::new(model),
-            history: History::default(),
-            list_state,
-            selection: None,
-            marked: None,
+            editor,
+            list_state: ListState::new(items, ListAlignment::Top, px(1000.)),
             goal_x: None,
             revealed: Vec::new(),
             revealed_layout: Rc::default(),
@@ -361,10 +341,10 @@ impl DocumentView {
         };
         let name = match self.builtin {
             Some(builtin) => builtin.title().to_owned(),
-            None => open.document.display_name(),
+            None => open.editor.document().display_name(),
         };
         window.set_window_title(&name);
-        window.set_document_path(open.document.path());
+        window.set_document_path(open.editor.document().path());
         // GPUI doesn't update tab titles from the window title.
         SystemWindowTabController::update_tab_title(
             cx,
@@ -381,8 +361,8 @@ impl DocumentView {
         };
         open.list_state.remeasure();
         *open.revealed_layout.borrow_mut() = None;
-        if let Some(selection) = open.selection {
-            let index = open.model.item_at(selection.head);
+        if let Some(selection) = open.editor.selection() {
+            let index = open.editor.model().item_at(selection.head);
             open.list_state.scroll_to_reveal_item(index);
         }
     }
@@ -390,14 +370,25 @@ impl DocumentView {
     /// How many items the document has, for the smoke test.
     #[cfg(debug_assertions)]
     pub fn item_count(&self) -> usize {
-        self.open.as_ref().map_or(0, |open| open.model.items.len())
+        self.open
+            .as_ref()
+            .map_or(0, |open| open.editor.model().items.len())
     }
 
     /// Where item `index`'s block starts in the document, for the smoke
     /// test.
     #[cfg(debug_assertions)]
     pub fn item_start(&self, index: usize) -> Option<usize> {
-        Some(self.open.as_ref()?.model.items.get(index)?.block.start)
+        Some(
+            self.open
+                .as_ref()?
+                .editor
+                .model()
+                .items
+                .get(index)?
+                .block
+                .start,
+        )
     }
 
     /// Where item `index` starts in the document and its top on screen,
@@ -405,7 +396,7 @@ impl DocumentView {
     #[cfg(debug_assertions)]
     pub fn item_position(&self, index: usize) -> Option<(usize, Pixels)> {
         let open = self.open.as_ref()?;
-        let item = open.model.items.get(index)?;
+        let item = open.editor.model().items.get(index)?;
         let top = open.list_state.bounds_for_item(index)?.top();
         Some((item.block.start, top))
     }
@@ -413,9 +404,9 @@ impl DocumentView {
     /// How many items are revealed, and the selection, for the smoke test.
     #[cfg(debug_assertions)]
     pub fn reveal_state(&self) -> (usize, Option<Selection>) {
-        self.open
-            .as_ref()
-            .map_or((0, None), |open| (open.revealed.len(), open.selection))
+        self.open.as_ref().map_or((0, None), |open| {
+            (open.revealed.len(), open.editor.selection())
+        })
     }
 
     /// The list's scroll position, for the smoke test.
@@ -430,7 +421,7 @@ impl DocumentView {
     pub fn text(&self) -> String {
         self.open
             .as_ref()
-            .map(|open| open.model.text.to_string())
+            .map(|open| open.editor.text().to_owned())
             .unwrap_or_default()
     }
 
@@ -439,7 +430,7 @@ impl DocumentView {
     pub fn has_caret(&self) -> bool {
         self.open
             .as_ref()
-            .is_some_and(|open| open.selection.is_some())
+            .is_some_and(|open| open.editor.selection().is_some())
     }
 
     /// The theme the view is drawn with, for the smoke test.
@@ -451,7 +442,7 @@ impl DocumentView {
     pub fn is_dirty(&self) -> bool {
         self.open
             .as_ref()
-            .is_some_and(|open| open.document.is_dirty())
+            .is_some_and(|open| open.editor.is_dirty())
     }
 
     // Files
@@ -471,9 +462,9 @@ impl DocumentView {
             };
             let title = match self.builtin {
                 Some(builtin) => builtin.title().to_owned(),
-                None => open.document.display_name(),
+                None => open.editor.document().display_name(),
             };
-            crate::print::print(&open.model, &title, &ns_window, mtm);
+            crate::print::print(open.editor.model(), &title, &ns_window, mtm);
         }
         #[cfg(not(target_os = "macos"))]
         let _ = window;
@@ -481,8 +472,8 @@ impl DocumentView {
 
     /// The document's model, for the smoke test.
     #[cfg(debug_assertions)]
-    pub fn model(&self) -> Option<Rc<Model>> {
-        self.open.as_ref().map(|open| open.model.clone())
+    pub fn model(&self) -> Option<Rc<kami::model::Model>> {
+        self.open.as_ref().map(|open| open.editor.model().clone())
     }
 
     /// Shows one of Kami's built-in documents, view-only.
@@ -504,7 +495,7 @@ impl DocumentView {
 
     /// The open document's file, if it has one.
     pub fn document_path(&self) -> Option<&Path> {
-        self.open.as_ref()?.document.path()
+        self.open.as_ref()?.editor.document().path()
     }
 
     /// Whether the window holds nothing worth keeping: no document, or an
@@ -513,7 +504,8 @@ impl DocumentView {
     pub fn is_pristine(&self) -> bool {
         self.builtin.is_none()
             && self.open.as_ref().is_none_or(|open| {
-                open.document.path().is_none() && open.document.buffer().is_empty()
+                let document = open.editor.document();
+                document.path().is_none() && document.buffer().is_empty()
             })
     }
 
@@ -536,13 +528,13 @@ impl DocumentView {
         let Some(open) = &mut self.open else {
             return Task::ready(false);
         };
-        // Built-in documents have nothing to save.
-        if self.builtin.is_some() {
+        // Read-only documents have nothing to save.
+        if open.editor.read_only() {
             return Task::ready(false);
         }
-        let current_path = open.document.path().map(Path::to_owned);
+        let current_path = open.editor.document().path().map(Path::to_owned);
         if !choose_path && current_path.is_some() {
-            let result = open.document.save();
+            let result = open.editor.save();
             return Task::ready(self.finish_save(result, window, cx));
         }
 
@@ -553,7 +545,7 @@ impl DocumentView {
             .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
             .unwrap_or_else(|| PathBuf::from("/"));
         let suggested = match &current_path {
-            Some(_) => open.document.display_name(),
+            Some(_) => open.editor.document().display_name(),
             None => "Untitled.md".to_owned(),
         };
         let path = cx.prompt_for_new_path(&directory, Some(&suggested));
@@ -565,7 +557,7 @@ impl DocumentView {
                 let Some(open) = &mut this.open else {
                     return false;
                 };
-                let result = open.document.save_as(path);
+                let result = open.editor.save_as(path);
                 this.finish_save(result, window, cx)
             })
             .unwrap_or(false)
@@ -606,7 +598,7 @@ impl DocumentView {
         let name = self
             .open
             .as_ref()
-            .map(|open| open.document.display_name())
+            .map(|open| open.editor.document().display_name())
             .unwrap_or_default();
         let message = format!("Do you want to save the changes you made to “{name}”?");
         let answer = window.prompt(
@@ -648,7 +640,7 @@ impl DocumentView {
                 this.update_in(cx, |this, window, _| {
                     // Don't ask again on the way out.
                     if let Some(open) = &mut this.open {
-                        open.document = Document::untitled();
+                        open.editor.discard_changes();
                     }
                     window.remove_window();
                 })
@@ -692,7 +684,7 @@ impl DocumentView {
         self.focus_handle.focus(window, cx);
         if let Some(open) = &mut self.open {
             open.goal_x = None;
-            open.marked = None;
+            open.editor.unmark();
         }
         self.dragging = true;
         self.move_caret(offset, extend, cx);
@@ -708,7 +700,7 @@ impl DocumentView {
         let unchanged = self
             .open
             .as_ref()
-            .and_then(|open| open.selection)
+            .and_then(|open| open.editor.selection())
             .is_some_and(|selection| selection.head == offset);
         if self.dragging && !unchanged {
             self.set_caret(offset, true, cx);
@@ -745,7 +737,7 @@ impl DocumentView {
         if reveal_caret
             && let Some((layout, start)) = self.revealed_layout()
             && let Some(open) = &self.open
-            && let Some(selection) = open.selection
+            && let Some(selection) = open.editor.selection()
             && let Some(position) = layout.position_for_index(selection.head.saturating_sub(start))
         {
             let viewport = open.list_state.viewport_bounds();
@@ -765,38 +757,36 @@ impl DocumentView {
     /// the current undo group.
     fn move_caret(&mut self, offset: usize, extend: bool, cx: &mut Context<Self>) {
         if let Some(open) = &mut self.open {
-            open.history.break_group();
+            open.editor.break_group();
         }
         self.set_caret(offset, extend, cx);
     }
 
     /// Moves the caret to `offset`, revealing its item.
     fn set_caret(&mut self, offset: usize, extend: bool, cx: &mut Context<Self>) {
-        let Some(open) = &mut self.open else {
+        let Some(open) = &self.open else {
             return;
         };
-        let mut selection = open.selection.unwrap_or(Selection::caret(offset));
-        selection.move_to(offset, extend);
+        let selection = open.editor.selection_to(offset, extend);
         self.set_selection(selection, cx);
     }
 
     fn set_selection(&mut self, selection: Selection, cx: &mut Context<Self>) {
-        // Built-in documents are view-only: no caret, so every movement,
-        // click and edit stops here.
-        if self.builtin.is_some() {
-            return;
-        }
         let Some(open) = &mut self.open else {
             return;
         };
-        open.selection = Some(selection);
-        let index = open.model.item_at(selection.head);
+        // Read-only documents have no caret, so every movement, click and
+        // edit stops here.
+        if !open.editor.select(selection) {
+            return;
+        }
+        let index = open.editor.model().item_at(selection.head);
         // Where the caret's item is now, to keep it there as blocks reveal.
         let top = open
             .list_state
             .bounds_for_item(index)
             .map(|bounds| bounds.top());
-        if reveal(open, Some(selection)) {
+        if reveal(open) {
             open.anchor = top.map(|top| (index, top));
         }
         if top.is_none() {
@@ -845,11 +835,9 @@ impl DocumentView {
         let Some(open) = &mut self.open else {
             return;
         };
-        open.selection = None;
+        open.editor.deselect();
         open.goal_x = None;
-        open.marked = None;
-        open.history.break_group();
-        reveal(open, None);
+        reveal(open);
         open.anchor = None;
         self.stop_blink();
         cx.notify();
@@ -858,44 +846,27 @@ impl DocumentView {
     /// The caret's offset, placing it at the document start if there's no
     /// caret yet.
     fn caret(&self) -> Option<usize> {
-        let open = self.open.as_ref()?;
-        Some(open.selection.map_or(0, |selection| selection.head))
+        Some(self.open.as_ref()?.editor.caret())
     }
 
     /// Applies a layout-independent movement. `forward` is the direction,
-    /// used to collapse a selection to the matching edge (as on macOS).
-    fn move_by(
-        &mut self,
-        extend: bool,
-        forward: bool,
-        cx: &mut Context<Self>,
-        motion: impl FnOnce(&str, usize) -> usize,
-    ) {
-        let (Some(open), Some(caret)) = (&self.open, self.caret()) else {
+    /// also used to collapse a selection to the matching edge.
+    fn move_by(&mut self, motion: Motion, forward: bool, extend: bool, cx: &mut Context<Self>) {
+        let Some(open) = &mut self.open else {
             return;
         };
-        let target = match open.selection {
-            // The first key press just places the caret.
-            None => caret,
-            Some(selection) if !extend && !selection.is_empty() => {
-                let range = selection.range();
-                if forward { range.end } else { range.start }
-            }
-            Some(_) => motion(&open.model.text, caret),
-        };
-        if let Some(open) = &mut self.open {
-            open.goal_x = None;
-        }
+        let target = open.editor.motion_target(motion, forward, extend);
+        open.goal_x = None;
         self.move_caret(target, extend, cx);
     }
 
     /// The revealed item's layout and start offset, if it's been painted.
     fn revealed_layout(&self) -> Option<(TextLayout, usize)> {
         let open = self.open.as_ref()?;
-        open.selection?;
-        let revealed = open.revealed.iter().find(|revealed| revealed.head)?;
+        open.editor.selection()?;
+        let revealed = open.revealed.iter().find(|revealed| revealed.target.head)?;
         let layout = open.revealed_layout.borrow().clone()?;
-        Some((layout, revealed.range.start))
+        Some((layout, revealed.target.range.start))
     }
 
     /// Moves the caret up or down a visual line, into the neighbor item at
@@ -936,33 +907,9 @@ impl DocumentView {
         }
 
         // Past the edge of what's revealed: reveal the neighbor, then place
-        // the caret on its first or last line once it's laid out. The
-        // neighbor may be the gap next to the block, or the block next to
-        // the gap.
-        let index = open.model.item_at(caret);
-        let item = &open.model.items[index];
-        let source = open.model.source_range(index);
-        let gap = open
-            .revealed
-            .iter()
-            .find(|revealed| revealed.head)
-            .and_then(|revealed| revealed.gap);
-        let neighbor = match (gap, down) {
-            (Some(Gap::Above), true) => Some(source.start),
-            (Some(Gap::Below), false) => Some(source.end),
-            (None, true) if source.end < item.range.end => {
-                Some(movement::next_grapheme(&open.model.text, source.end))
-            }
-            (None, false) if source.start > item.range.start => {
-                Some(movement::prev_grapheme(&open.model.text, source.start))
-            }
-            (_, true) => open.model.items.get(index + 1).map(|item| item.range.start),
-            (_, false) => index
-                .checked_sub(1)
-                .map(|index| open.model.items[index].range.end),
-        };
-        let Some(neighbor) = neighbor else {
-            let edge = if down { open.model.text.len() } else { 0 };
+        // the caret on its first or last line once it's laid out.
+        let Some(neighbor) = open.editor.vertical_neighbor(down) else {
+            let edge = if down { open.editor.text().len() } else { 0 };
             self.move_caret(edge, extend, cx);
             return;
         };
@@ -1036,66 +983,51 @@ impl DocumentView {
         let Some(open) = &mut self.open else {
             return;
         };
-        open.history.break_group();
-        let selection = Selection {
-            anchor: 0,
-            head: open.model.text.len(),
-        };
+        open.editor.break_group();
+        let selection = open.editor.all();
         self.set_selection(selection, cx);
+    }
+
+    /// Moves the caret to the start of the next or previous block's text.
+    /// With no caret, starts at the first block on screen.
+    fn move_to_block(&mut self, down: bool, extend: bool, cx: &mut Context<Self>) {
+        let Some(open) = &mut self.open else {
+            return;
+        };
+        let first_visible = open.list_state.logical_scroll_top().item_ix;
+        let Some(offset) = open.editor.block_target(down, first_visible) else {
+            return;
+        };
+        open.goal_x = None;
+        self.move_caret(offset, extend, cx);
     }
 
     // Editing
 
-    /// Replaces `range` with `text`, records it for undo, and updates the
-    /// display. The caret ends after the inserted text.
-    fn replace(&mut self, range: Range<usize>, text: &str, kind: EditKind, cx: &mut Context<Self>) {
-        if self.builtin.is_some() {
-            return;
-        }
+    /// Makes an edit with the editor and shows the result. The caret's
+    /// goal x position is reset.
+    fn edit(&mut self, cx: &mut Context<Self>, edit: impl FnOnce(&mut Editor) -> Option<Change>) {
         let Some(open) = &mut self.open else {
             return;
         };
-        let before = open.selection.unwrap_or(Selection::caret(range.start));
-        let selection = open.history.replace(
-            open.document.buffer_mut(),
-            range,
-            text,
-            kind,
-            before,
-            Instant::now(),
-        );
-        open.marked = None;
-        open.goal_x = None;
-        text_changed(open);
-        self.set_selection(selection, cx);
-    }
-
-    /// The selected range, or `None` without a caret.
-    fn selected_range(&self) -> Option<Range<usize>> {
-        Some(self.open.as_ref()?.selection?.range())
-    }
-
-    /// Deletes the selection, or else the range from the caret to
-    /// `target(text, caret)`.
-    fn delete(&mut self, cx: &mut Context<Self>, target: impl FnOnce(&str, usize) -> usize) {
-        let Some(range) = self.selected_range() else {
-            return;
-        };
-        let Some(open) = &self.open else {
-            return;
-        };
-        let (range, kind) = if range.is_empty() {
-            let other = target(&open.model.text, range.start);
-            (
-                range.start.min(other)..range.start.max(other),
-                EditKind::Deleting,
-            )
-        } else {
-            (range, EditKind::Other)
-        };
-        if !range.is_empty() {
-            self.replace(range, "", kind, cx);
+        if let Some(change) = edit(&mut open.editor) {
+            open.goal_x = None;
+            self.apply(change, cx);
         }
+    }
+
+    /// Re-measures the items an edit changed and shows its selection,
+    /// which reveals its item again.
+    fn apply(&mut self, change: Change, cx: &mut Context<Self>) {
+        let Some(open) = &mut self.open else {
+            return;
+        };
+        open.list_state
+            .splice(change.splice.old, change.splice.new_count);
+        // The revealed items' indices and sources may have changed.
+        open.revealed.clear();
+        *open.revealed_layout.borrow_mut() = None;
+        self.set_selection(change.selection, cx);
     }
 
     fn delete_to_line_start(
@@ -1107,246 +1039,78 @@ impl DocumentView {
         let Some(line_start) = self.line_edge(false) else {
             return;
         };
-        self.delete(cx, |text, caret| {
-            if line_start == caret {
-                movement::prev_grapheme(text, caret)
-            } else {
-                line_start
-            }
-        });
-    }
-
-    /// Enter, or Shift-Enter if `shift`: a line break that continues lists
-    /// and quotes. See [`editing::enter`].
-    fn newline(&mut self, shift: bool, cx: &mut Context<Self>) {
-        let (Some(range), Some(open)) = (self.selected_range(), &self.open) else {
-            return;
-        };
-        let model = &open.model;
-        let index = model.item_at(range.start);
-        // In a gap, Enter just adds blank lines.
-        let kind = match model.gap_at(index, range.start) {
-            Some(_) => BlockKind::Paragraph,
-            None => model.items[index].kind,
-        };
-        let line_ending = line_ending(&model.text);
-        let (range, text) = editing::enter(&model.text, kind, range, shift, line_ending);
-        self.replace(range, &text, EditKind::Other, cx);
-    }
-
-    /// Tab, Shift-Tab, ⌘] or ⌘[: indents list items and code. See
-    /// [`editing::indent`].
-    fn indent(&mut self, outdent: bool, linewise: bool, cx: &mut Context<Self>) {
-        let Some(open) = &mut self.open else {
-            return;
-        };
-        let Some(selection) = open.selection else {
-            return;
-        };
-        let model = &open.model;
-        let index = model.item_at(selection.range().start);
-        if model.gap_at(index, selection.range().start).is_some() {
-            return;
-        }
-        let item = &model.items[index];
-        let Some(edit) = editing::indent(
-            &model.text,
-            item.kind,
-            item.block.clone(),
-            selection,
-            outdent,
-            linewise,
-        ) else {
-            return;
-        };
-        let after = edit.selection;
-        self.replace(edit.range, &edit.text, EditKind::Other, cx);
-        if let Some(open) = &mut self.open {
-            open.history.set_selection_after(after);
-        }
-        self.set_selection(after, cx);
-    }
-
-    /// ⌥Tab: inserts a tab character.
-    fn insert_tab(&mut self, _: &InsertTab, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(range) = self.selected_range() {
-            self.replace(range, "\t", EditKind::Other, cx);
-        }
-    }
-
-    /// Moves the caret to the start of the next or previous block's text.
-    /// With no caret, starts at the first block on screen.
-    fn move_to_block(&mut self, down: bool, extend: bool, cx: &mut Context<Self>) {
-        let Some(open) = &self.open else {
-            return;
-        };
-        let model = &open.model;
-        let target = match open.selection {
-            None => Some(open.list_state.logical_scroll_top().item_ix),
-            Some(selection) => {
-                let index = model.item_at(selection.head);
-                match (model.gap_at(index, selection.head), down) {
-                    (Some(Gap::Above), true) | (Some(Gap::Below), false) => Some(index),
-                    (_, true) => Some(index + 1).filter(|&next| next < model.items.len()),
-                    (_, false) => index.checked_sub(1),
-                }
-            }
-        };
-        let Some(item) = target.and_then(|index| model.items.get(index)) else {
-            return;
-        };
-        let offset = if item.block.is_empty() {
-            item.range.start
-        } else {
-            editing::content_start(&model.text, item.block.clone(), item.kind)
-        };
-        if let Some(open) = &mut self.open {
-            open.goal_x = None;
-        }
-        self.move_caret(offset, extend, cx);
+        self.edit(cx, |editor| editor.delete_to_line_start(line_start));
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        let (Some(range), Some(open)) = (self.selected_range(), &self.open) else {
-            return;
-        };
-        if !range.is_empty() {
-            let text = open.model.text[range].to_owned();
-            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        if let Some(text) = self
+            .open
+            .as_ref()
+            .and_then(|open| open.editor.selected_text())
+        {
+            cx.write_to_clipboard(ClipboardItem::new_string(text.to_owned()));
         }
     }
 
     fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
         self.copy(&Copy, window, cx);
-        if let Some(range) = self.selected_range()
-            && !range.is_empty()
-        {
-            self.replace(range, "", EditKind::Other, cx);
-        }
+        self.edit(cx, Editor::cut);
     }
 
     fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
-        let (Some(range), Some(open)) = (self.selected_range(), &self.open) else {
-            return;
-        };
         let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
             return;
         };
-        let text = normalize_line_endings(&text, line_ending(&open.model.text));
-        self.replace(range, &text, EditKind::Other, cx);
+        self.edit(cx, |editor| editor.paste(&text));
     }
 
     fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(open) = &mut self.open else {
-            return;
-        };
-        if let Some(selection) = open.history.undo(open.document.buffer_mut()) {
-            open.marked = None;
-            text_changed(open);
-            self.set_selection(selection, cx);
+        if let Some(change) = self.open.as_mut().and_then(|open| open.editor.undo()) {
+            self.apply(change, cx);
         }
     }
 
     fn redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(open) = &mut self.open else {
-            return;
-        };
-        if let Some(selection) = open.history.redo(open.document.buffer_mut()) {
-            open.marked = None;
-            text_changed(open);
-            self.set_selection(selection, cx);
+        if let Some(change) = self.open.as_mut().and_then(|open| open.editor.redo()) {
+            self.apply(change, cx);
         }
     }
 
     // UTF-16 conversion for the platform input handler.
 
-    fn rope(&self) -> Option<&ropey::Rope> {
-        Some(self.open.as_ref()?.document.buffer().rope())
-    }
-
     fn offset_to_utf16(&self, offset: usize) -> usize {
-        self.rope().map_or(0, |rope| {
-            rope.char_to_utf16_cu(rope.byte_to_char(offset.min(rope.len_bytes())))
-        })
-    }
-
-    fn offset_from_utf16(&self, offset: usize) -> usize {
-        self.rope().map_or(0, |rope| {
-            let offset = offset.min(rope.len_utf16_cu());
-            rope.char_to_byte(rope.utf16_cu_to_char(offset))
-        })
-    }
-
-    fn range_to_utf16(&self, range: &Range<usize>) -> Range<usize> {
-        self.offset_to_utf16(range.start)..self.offset_to_utf16(range.end)
+        self.open
+            .as_ref()
+            .map_or(0, |open| open.editor.to_utf16(offset))
     }
 
     fn range_from_utf16(&self, range: &Range<usize>) -> Range<usize> {
-        self.offset_from_utf16(range.start)..self.offset_from_utf16(range.end)
+        self.open
+            .as_ref()
+            .map_or(0..0, |open| open.editor.range_from_utf16(range))
     }
 }
 
-/// Reveals the items `selection` touches (or none), re-measuring the items
-/// that change. Returns whether anything changed. With an empty selection
-/// in a gap next to a block, the block stays rendered and the caret gets an
-/// empty line of its own.
-fn reveal(open: &mut OpenDocument, selection: Option<Selection>) -> bool {
-    let model = &open.model;
-    let targets: Vec<(usize, Range<usize>, Option<Gap>, bool)> = match selection {
-        None => Vec::new(),
-        Some(selection) => {
-            let head = selection.head;
-            let head_index = model.item_at(head);
-            let range = selection.range();
-            let first = model.item_at(range.start);
-            let mut last = model.item_at(range.end);
-            // A selection that ends where the next item starts doesn't
-            // touch it.
-            if last > first && last != head_index && model.items[last].range.start == range.end {
-                last -= 1;
-            }
-            (first..=last)
-                .map(|index| {
-                    let is_head = index == head_index;
-                    let gap = (is_head && selection.is_empty())
-                        .then(|| model.gap_at(index, head))
-                        .flatten();
-                    let source = model.source_range(index);
-                    let shown = match gap {
-                        Some(_) => head..head,
-                        // A selection can reach into the blank lines beyond
-                        // the source; then show the whole item.
-                        None if is_head && !(source.start..=source.end).contains(&head) => {
-                            model.items[index].range.clone()
-                        }
-                        None => source,
-                    };
-                    (index, shown, gap, is_head)
-                })
-                .collect()
-        }
-    };
-    let current: Vec<(usize, Range<usize>, Option<Gap>, bool)> = open
+/// Reveals the items the selection touches (or none), re-measuring the
+/// items that change. Returns whether anything changed.
+fn reveal(open: &mut OpenDocument) -> bool {
+    let targets = open.editor.reveal_targets();
+    if open
         .revealed
         .iter()
-        .map(|revealed| {
-            (
-                revealed.index,
-                revealed.range.clone(),
-                revealed.gap,
-                revealed.head,
-            )
-        })
-        .collect();
-    if current == targets {
+        .map(|revealed| &revealed.target)
+        .eq(&targets)
+    {
         return false;
     }
 
     // Re-measure every item that's revealed now or was before.
-    let mut changed: Vec<usize> = current
+    let mut changed: Vec<usize> = open
+        .revealed
         .iter()
+        .map(|revealed| &revealed.target)
         .chain(&targets)
-        .map(|(index, ..)| *index)
+        .map(|target| target.index)
         .collect();
     changed.sort_unstable();
     changed.dedup();
@@ -1354,50 +1118,19 @@ fn reveal(open: &mut OpenDocument, selection: Option<Selection>) -> bool {
         open.list_state.splice(index..index + 1, 1);
     }
     *open.revealed_layout.borrow_mut() = None;
+    let model = open.editor.model();
     open.revealed = targets
         .into_iter()
-        .map(|(index, range, gap, head)| {
-            let kind = match gap {
-                Some(_) => BlockKind::Paragraph,
-                None => open.model.items[index].kind,
-            };
-            let source = &open.model.text[range.clone()];
-            let styled = styled_source(source, kind, &open.model.definitions);
+        .map(|target| {
+            let source = &model.text[target.range.clone()];
+            let styled = styled_source(source, target.kind, &model.definitions);
             Revealed {
-                index,
-                range,
-                gap,
-                head,
+                target,
                 styled: Rc::new(styled),
             }
         })
         .collect();
     true
-}
-
-/// Rebuilds the model after the buffer changed, re-measuring only the
-/// items that changed. The caller then sets the selection, which reveals
-/// its item again.
-fn text_changed(open: &mut OpenDocument) {
-    let text = open.document.buffer().rope().to_string();
-    let (model, splice) = open.model.updated(&text);
-    open.model = Rc::new(model);
-    open.list_state.splice(splice.old, splice.new_count);
-    // The revealed items' indices and sources may have changed.
-    open.revealed.clear();
-    *open.revealed_layout.borrow_mut() = None;
-}
-
-/// The line ending the document uses: CRLF if it has any, otherwise LF.
-fn line_ending(text: &str) -> &'static str {
-    if text.contains("\r\n") { "\r\n" } else { "\n" }
-}
-
-/// Converts all line endings in `text` to `line_ending`.
-fn normalize_line_endings(text: &str, line_ending: &str) -> String {
-    text.replace("\r\n", "\n")
-        .replace('\r', "\n")
-        .replace('\n', line_ending)
 }
 
 impl EntityInputHandler for DocumentView {
@@ -1408,9 +1141,10 @@ impl EntityInputHandler for DocumentView {
         _: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<String> {
-        let range = self.range_from_utf16(&range_utf16);
-        actual_range.replace(self.range_to_utf16(&range));
-        Some(self.open.as_ref()?.model.text[range].to_owned())
+        let editor = &self.open.as_ref()?.editor;
+        let range = editor.range_from_utf16(&range_utf16);
+        actual_range.replace(editor.range_to_utf16(&range));
+        Some(editor.text()[range].to_owned())
     }
 
     fn selected_text_range(
@@ -1419,21 +1153,22 @@ impl EntityInputHandler for DocumentView {
         _: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<UTF16Selection> {
-        let selection = self.open.as_ref()?.selection?;
+        let editor = &self.open.as_ref()?.editor;
+        let selection = editor.selection()?;
         Some(UTF16Selection {
-            range: self.range_to_utf16(&selection.range()),
+            range: editor.range_to_utf16(&selection.range()),
             reversed: selection.head < selection.anchor,
         })
     }
 
     fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
-        let marked = self.open.as_ref()?.marked.clone()?;
-        Some(self.range_to_utf16(&marked))
+        let editor = &self.open.as_ref()?.editor;
+        Some(editor.range_to_utf16(&editor.marked()?))
     }
 
     fn unmark_text(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(open) = &mut self.open {
-            open.marked = None;
+            open.editor.unmark();
         }
         cx.notify();
     }
@@ -1445,22 +1180,7 @@ impl EntityInputHandler for DocumentView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(open) = &self.open else {
-            return;
-        };
-        let Some(range) = range_utf16
-            .map(|range| self.range_from_utf16(&range))
-            .or(open.marked.clone())
-            .or(self.selected_range())
-        else {
-            return;
-        };
-        let kind = if range.is_empty() && open.marked.is_none() && !text.contains(['\n', '\r']) {
-            EditKind::Typing
-        } else {
-            EditKind::Other
-        };
-        self.replace(range, text, kind, cx);
+        self.edit(cx, |editor| editor.replace_text_in_range(range_utf16, text));
     }
 
     fn replace_and_mark_text_in_range(
@@ -1471,29 +1191,9 @@ impl EntityInputHandler for DocumentView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(open) = &self.open else {
-            return;
-        };
-        let Some(range) = range_utf16
-            .map(|range| self.range_from_utf16(&range))
-            .or(open.marked.clone())
-            .or(self.selected_range())
-        else {
-            return;
-        };
-        self.replace(range.clone(), text, EditKind::Other, cx);
-        // The new selection is relative to the inserted text, in UTF-16.
-        let base = self.offset_to_utf16(range.start);
-        let selection = new_selected_range_utf16.map(|selected| Selection {
-            anchor: self.offset_from_utf16(base + selected.start),
-            head: self.offset_from_utf16(base + selected.end),
+        self.edit(cx, |editor| {
+            editor.replace_and_mark_text_in_range(range_utf16, text, new_selected_range_utf16)
         });
-        if let Some(open) = &mut self.open {
-            open.marked = (!text.is_empty()).then(|| range.start..range.start + text.len());
-        }
-        if let Some(selection) = selection {
-            self.set_selection(selection, cx);
-        }
     }
 
     fn bounds_for_range(
@@ -1624,9 +1324,9 @@ impl Render for DocumentView {
 
         let content = match &self.open {
             Some(open) => {
-                let model = open.model.clone();
-                let selection = open.selection;
-                let marked = open.marked.clone();
+                let model = open.editor.model().clone();
+                let selection = open.editor.selection();
+                let marked = open.editor.marked();
                 let revealed = open.revealed.clone();
                 let layout_slot = open.revealed_layout.clone();
                 let caret_visible = self.caret_visible;
@@ -1637,13 +1337,16 @@ impl Render for DocumentView {
                 let focus_handle = self.focus_handle.clone();
                 list(open.list_state.clone(), move |index, _, _| {
                     let item = &model.items[index];
-                    match revealed.iter().find(|revealed| revealed.index == index) {
+                    match revealed
+                        .iter()
+                        .find(|revealed| revealed.target.index == index)
+                    {
                         Some(Revealed {
-                            range,
-                            gap,
-                            head,
+                            target:
+                                RevealTarget {
+                                    range, gap, head, ..
+                                },
                             styled,
-                            ..
                         }) => {
                             let range = range.clone();
                             let selection = selection.unwrap_or_default();
@@ -1768,40 +1471,40 @@ impl Render for DocumentView {
                 cx.listener(|this, _, _, _| this.end_drag()),
             )
             .on_action(cx.listener(|this, _: &MoveLeft, _, cx| {
-                this.move_by(false, false, cx, movement::prev_grapheme)
+                this.move_by(Motion::Grapheme, false, false, cx)
             }))
             .on_action(cx.listener(|this, _: &MoveRight, _, cx| {
-                this.move_by(false, true, cx, movement::next_grapheme)
+                this.move_by(Motion::Grapheme, true, false, cx)
             }))
             .on_action(cx.listener(|this, _: &SelectLeft, _, cx| {
-                this.move_by(true, false, cx, movement::prev_grapheme)
+                this.move_by(Motion::Grapheme, false, true, cx)
             }))
             .on_action(cx.listener(|this, _: &SelectRight, _, cx| {
-                this.move_by(true, true, cx, movement::next_grapheme)
+                this.move_by(Motion::Grapheme, true, true, cx)
             }))
             .on_action(cx.listener(|this, _: &MoveWordLeft, _, cx| {
-                this.move_by(false, false, cx, movement::prev_word_start)
+                this.move_by(Motion::Word, false, false, cx)
             }))
             .on_action(cx.listener(|this, _: &MoveWordRight, _, cx| {
-                this.move_by(false, true, cx, movement::next_word_end)
+                this.move_by(Motion::Word, true, false, cx)
             }))
             .on_action(cx.listener(|this, _: &SelectWordLeft, _, cx| {
-                this.move_by(true, false, cx, movement::prev_word_start)
+                this.move_by(Motion::Word, false, true, cx)
             }))
             .on_action(cx.listener(|this, _: &SelectWordRight, _, cx| {
-                this.move_by(true, true, cx, movement::next_word_end)
+                this.move_by(Motion::Word, true, true, cx)
             }))
             .on_action(cx.listener(|this, _: &MoveDocumentStart, _, cx| {
-                this.move_by(false, false, cx, |_, _| 0)
+                this.move_by(Motion::Document, false, false, cx)
             }))
             .on_action(cx.listener(|this, _: &MoveDocumentEnd, _, cx| {
-                this.move_by(false, true, cx, |text, _| text.len())
+                this.move_by(Motion::Document, true, false, cx)
             }))
             .on_action(cx.listener(|this, _: &SelectDocumentStart, _, cx| {
-                this.move_by(true, false, cx, |_, _| 0)
+                this.move_by(Motion::Document, false, true, cx)
             }))
             .on_action(cx.listener(|this, _: &SelectDocumentEnd, _, cx| {
-                this.move_by(true, true, cx, |text, _| text.len())
+                this.move_by(Motion::Document, true, true, cx)
             }))
             .on_action(cx.listener(|this, _: &MoveUp, window, cx| {
                 this.move_vertically(false, false, window, cx)
@@ -1830,26 +1533,44 @@ impl Render for DocumentView {
                 }),
             )
             .on_action(cx.listener(Self::select_all))
-            .on_action(
-                cx.listener(|this, _: &Backspace, _, cx| this.delete(cx, movement::prev_grapheme)),
-            )
-            .on_action(
-                cx.listener(|this, _: &Delete, _, cx| this.delete(cx, movement::next_grapheme)),
-            )
+            .on_action(cx.listener(|this, _: &Backspace, _, cx| {
+                this.edit(cx, |editor| editor.delete(Motion::Grapheme, false))
+            }))
+            .on_action(cx.listener(|this, _: &Delete, _, cx| {
+                this.edit(cx, |editor| editor.delete(Motion::Grapheme, true))
+            }))
             .on_action(cx.listener(|this, _: &DeleteWordLeft, _, cx| {
-                this.delete(cx, movement::prev_word_start)
+                this.edit(cx, |editor| editor.delete(Motion::Word, false))
             }))
             .on_action(cx.listener(|this, _: &DeleteWordRight, _, cx| {
-                this.delete(cx, movement::next_word_end)
+                this.edit(cx, |editor| editor.delete(Motion::Word, true))
             }))
             .on_action(cx.listener(Self::delete_to_line_start))
-            .on_action(cx.listener(|this, _: &Newline, _, cx| this.newline(false, cx)))
-            .on_action(cx.listener(|this, _: &LineBreak, _, cx| this.newline(true, cx)))
-            .on_action(cx.listener(|this, _: &IndentTab, _, cx| this.indent(false, false, cx)))
-            .on_action(cx.listener(|this, _: &OutdentTab, _, cx| this.indent(true, false, cx)))
-            .on_action(cx.listener(|this, _: &IndentLines, _, cx| this.indent(false, true, cx)))
-            .on_action(cx.listener(|this, _: &OutdentLines, _, cx| this.indent(true, true, cx)))
-            .on_action(cx.listener(Self::insert_tab))
+            .on_action(
+                cx.listener(|this, _: &Newline, _, cx| {
+                    this.edit(cx, |editor| editor.newline(false))
+                }),
+            )
+            .on_action(cx.listener(|this, _: &LineBreak, _, cx| {
+                this.edit(cx, |editor| editor.newline(true))
+            }))
+            .on_action(cx.listener(|this, _: &IndentTab, _, cx| {
+                this.edit(cx, |editor| editor.indent(false, false))
+            }))
+            .on_action(cx.listener(|this, _: &OutdentTab, _, cx| {
+                this.edit(cx, |editor| editor.indent(true, false))
+            }))
+            .on_action(cx.listener(|this, _: &IndentLines, _, cx| {
+                this.edit(cx, |editor| editor.indent(false, true))
+            }))
+            .on_action(cx.listener(|this, _: &OutdentLines, _, cx| {
+                this.edit(cx, |editor| editor.indent(true, true))
+            }))
+            .on_action(
+                cx.listener(|this, _: &InsertTab, _, cx| {
+                    this.edit(cx, |editor| editor.insert("\t"))
+                }),
+            )
             .on_action(
                 cx.listener(|this, _: &MoveBlockUp, _, cx| this.move_to_block(false, false, cx)),
             )
@@ -1887,23 +1608,5 @@ impl Render for DocumentView {
                     .child(content),
             )
             .children(problems_bar)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn detects_line_ending() {
-        assert_eq!(line_ending("a\nb"), "\n");
-        assert_eq!(line_ending("a\r\nb"), "\r\n");
-        assert_eq!(line_ending(""), "\n");
-    }
-
-    #[test]
-    fn normalizes_pasted_line_endings() {
-        assert_eq!(normalize_line_endings("a\r\nb\nc\rd", "\n"), "a\nb\nc\nd");
-        assert_eq!(normalize_line_endings("a\nb\r\nc", "\r\n"), "a\r\nb\r\nc");
     }
 }
