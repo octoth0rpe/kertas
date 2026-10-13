@@ -10,6 +10,7 @@
 | ⇧⌘S | Save As |
 | ⌘W | Close the document |
 | ⌘Q | Quit Kami |
+| ⌘, | Settings |
 | ⇧⌘] or ⌃⇥ | Next tab |
 | ⇧⌘[ or ⌃⇧⇥ | Previous tab |
 | ⌘1 … ⌘9 | Go to tab 1 to 9 |

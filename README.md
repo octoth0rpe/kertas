@@ -41,7 +41,7 @@ Settings live in `~/Library/Application Support/kami/config.toml`. The file is o
 
 ```toml
 theme = "dark"       # "light", "dark" or "system" (the default)
-layout = "windows"   # "tabs" (the default) or "windows"
+layout = "windows"   # "tabs" (the default) or "windows", from the next start
 text_width = "wide"  # "standard" (the default), "wide" or "full"
 ```
 

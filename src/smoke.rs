@@ -33,6 +33,7 @@ pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
         Ok("quit") => return smoke_quit(window, cx),
         Ok("settings") => return smoke_settings(window, cx),
         Ok("help") => return smoke_help(window, cx),
+        Ok("settings-window") => return smoke_settings_window(window, cx),
         Ok(_) => {}
     }
     let mut steps: Vec<Step> = Vec::new();
@@ -368,7 +369,8 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
             .ok();
         wait().await;
 
-        // New documents open in their own window in the windows layout.
+        // Changing the layout waits until Kami restarts: New still opens a
+        // tab.
         cx.update(|cx| app_settings::set("layout", "windows", cx))
             .ok();
         window
@@ -387,8 +389,8 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
             })
             .unwrap_or(0);
         check(
-            "windows layout opens a window",
-            windows == 2 && grouped == 1,
+            "layout change waits for a restart",
+            windows == 2 && grouped == 2,
         );
 
         println!("SMOKE {}", if ok { "OK" } else { "FAILED" });
@@ -497,6 +499,85 @@ fn smoke_help(window: WindowHandle<DocumentView>, cx: &mut App) {
 
         println!("SMOKE {}", if ok { "OK" } else { "FAILED" });
         cx.update(|cx| cx.quit());
+    })
+    .detach();
+}
+
+/// `KAMI_SMOKE=settings-window`: ⌘, opens one settings window; New from it
+/// still opens a tab; and Quit closes everything. The caller checks that
+/// the process ends.
+fn smoke_settings_window(window: WindowHandle<DocumentView>, cx: &mut App) {
+    use crate::menus::OpenSettings;
+
+    cx.spawn(async move |cx| {
+        let executor = cx.background_executor().clone();
+        let wait = || executor.timer(STEP * 20);
+        let mut ok = true;
+        let mut check = |name: &str, passed: bool| {
+            println!("{name}: {}", if passed { "ok" } else { "FAILED" });
+            ok &= passed;
+        };
+        let count = |cx: &mut gpui::AsyncApp| cx.update(|cx| cx.windows().len());
+
+        for _ in 0..2 {
+            window
+                .update(cx, |_, window, cx| {
+                    window.dispatch_action(Box::new(OpenSettings), cx)
+                })
+                .ok();
+            wait().await;
+        }
+        check("⌘, opens one settings window", count(cx) == 2);
+
+        let settings = cx.update(|cx| {
+            cx.windows()
+                .into_iter()
+                .find(|other| other.downcast::<DocumentView>().is_none())
+        });
+        if let Some(settings) = settings {
+            settings
+                .update(cx, |_, window, cx| {
+                    window.dispatch_action(Box::new(New), cx)
+                })
+                .ok();
+        }
+        wait().await;
+        let tabs = window
+            .update(cx, |_, window, cx| {
+                let id = window.window_handle().window_id();
+                cx.try_global::<gpui::SystemWindowTabController>()
+                    .and_then(|controller| controller.tabs(id))
+                    .map_or(1, |tabs| tabs.len())
+            })
+            .unwrap_or(0);
+        check("New from Settings opens a tab", count(cx) == 3 && tabs == 2);
+
+        // Esc closes the settings sheet.
+        if let Some(settings) = settings {
+            settings
+                .update(cx, |_, window, cx| {
+                    window.dispatch_keystroke(gpui::Keystroke::parse("escape").unwrap(), cx);
+                })
+                .ok();
+        }
+        wait().await;
+        check("Esc closes Settings", count(cx) == 2);
+
+        // Quit with Settings open still quits.
+        window
+            .update(cx, |_, window, cx| {
+                window.dispatch_action(Box::new(OpenSettings), cx)
+            })
+            .ok();
+        wait().await;
+
+        println!("SMOKE {}", if ok { "OK" } else { "FAILED" });
+        println!("dispatching Quit");
+        window
+            .update(cx, |_, window, cx| {
+                window.dispatch_action(Box::new(Quit), cx)
+            })
+            .ok();
     })
     .detach();
 }

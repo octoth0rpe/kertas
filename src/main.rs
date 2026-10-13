@@ -10,6 +10,7 @@ mod menus;
 mod native_tabs;
 mod rendered_block;
 mod revealed_block;
+mod settings_window;
 #[cfg(debug_assertions)]
 mod smoke;
 mod tab_strip;
@@ -40,6 +41,7 @@ fn main() {
         dock_icon::init();
         windows::register(cx);
         cx.bind_keys(document_view::key_bindings());
+        cx.bind_keys(settings_window::key_bindings());
         menus::init(cx);
 
         // Closing the last window quits.

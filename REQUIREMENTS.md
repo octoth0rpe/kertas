@@ -109,7 +109,7 @@ A selection that spans several blocks reveals all of them.
 | G2 | The file is optional. Every setting has a default, so Kami runs with no config file at all. | MUST |
 | G3 | Changes to the config file apply live, without restarting. | MUST |
 | G4 | Invalid or unknown settings don't stop Kami from starting. It falls back to defaults and reports the problem in a visible but unobtrusive way. | MUST |
-| G5 | A settings screen inside the app. | LATER |
+| G5 | A settings window inside the app (Kami > Settings…, ⌘,). | MUST |
 
 ### 8.2 Settings
 

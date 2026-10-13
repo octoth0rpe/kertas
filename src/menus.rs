@@ -9,6 +9,7 @@ use kami::settings::{Settings, TextWidth, ThemeSetting};
 use crate::app_settings::{self, AppSettings};
 use crate::builtin::{self, Builtin};
 use crate::document_view::{CloseWindow, New, Open, Quit, Save, SaveAs};
+use crate::settings_window;
 
 actions!(
     kami,
@@ -22,6 +23,7 @@ actions!(
         OpenHelp,
         OpenKeyboardShortcuts,
         OpenAbout,
+        OpenSettings,
     ]
 );
 
@@ -47,6 +49,7 @@ pub fn init(cx: &mut App) {
     let full = width(TextWidth::Full);
     cx.on_action(move |_: &UseFullWidth, cx| full(cx));
 
+    cx.on_action(|_: &OpenSettings, cx| cx.defer(settings_window::open));
     cx.on_action(|_: &OpenAbout, cx| cx.defer(|cx| builtin::open(Builtin::About, cx)));
     cx.on_action(|_: &OpenHelp, cx| cx.defer(|cx| builtin::open(Builtin::Help, cx)));
     cx.on_action(|_: &OpenKeyboardShortcuts, cx| {
@@ -64,6 +67,8 @@ fn menus(settings: Settings) -> Vec<Menu> {
     vec![
         Menu::new("Kami").items([
             MenuItem::action("About Kami", OpenAbout),
+            MenuItem::separator(),
+            MenuItem::action("Settings…", OpenSettings),
             MenuItem::separator(),
             MenuItem::action("Quit Kami", Quit),
         ]),
