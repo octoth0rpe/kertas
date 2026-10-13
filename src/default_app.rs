@@ -69,6 +69,8 @@ pub fn make_default() -> oneshot::Receiver<Result<(), String>> {
             done.send(result).ok();
         }
     });
+    // AppKit copies the block, so dropping `handler` when this returns is
+    // fine; the copy keeps `done` alive until the handler has run.
     NSWorkspace::sharedWorkspace().setDefaultApplicationAtURL_toOpenContentType_completionHandler(
         &kami,
         &markdown,

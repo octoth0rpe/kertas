@@ -59,8 +59,11 @@ pub fn save_pdf(model: &Model, path: &std::path::Path, mtm: MainThreadMarker) ->
 
     let operation = operation(model, mtm);
     let info = operation.printInfo();
+    // SAFETY: `NSPrintSaveJob` is an AppKit constant, set before any code
+    // runs.
     info.setJobDisposition(unsafe { NSPrintSaveJob });
     let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
+    // SAFETY: the print info's dictionary takes a URL for this key.
     unsafe {
         info.dictionary()
             .setObject_forKey(&url, ProtocolObject::from_ref(NSPrintJobSavingURL));
@@ -159,6 +162,8 @@ fn attributed(layout: &PrintLayout, mtm: MainThreadMarker) -> Retained<NSMutable
         } else {
             NSColor::blackColor()
         };
+        // SAFETY (here and below): reading AppKit's attribute-name constants,
+        // which are set before any code runs.
         unsafe {
             add(NSFontAttributeName, &font, range);
             add(NSForegroundColorAttributeName, &color, range);

@@ -466,9 +466,7 @@ impl DocumentView {
             let Some(mtm) = objc2::MainThreadMarker::new() else {
                 return;
             };
-            let Some(ns_window) =
-                crate::native_tabs::NativeWindow::of(window).and_then(|native| native.ns_window())
-            else {
+            let Some(ns_window) = crate::native_tabs::ns_window(window) else {
                 return;
             };
             let title = match self.builtin {

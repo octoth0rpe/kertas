@@ -21,7 +21,7 @@ use kami::settings::Layout;
 use crate::app_settings;
 use crate::document_view::{CloseWindow, DocumentView, New, Open, Quit};
 #[cfg(target_os = "macos")]
-use crate::native_tabs::{NativeWindow, add_as_tab};
+use crate::native_tabs::{add_as_tab, ns_window};
 
 /// Groups document windows into native tabs.
 const TABBING_IDENTIFIER: &str = "kami-documents";
@@ -107,11 +107,11 @@ pub fn open_window(
         && let Some(previous) = previous
     {
         let host = previous
-            .update(cx, |_, window, _| NativeWindow::of(window))
+            .update(cx, |_, window, _| ns_window(window))
             .ok()
             .flatten();
         let tab = window
-            .update(cx, |_, window, _| NativeWindow::of(window))
+            .update(cx, |_, window, _| ns_window(window))
             .ok()
             .flatten();
         if let (Some(host), Some(tab)) = (host, tab) {

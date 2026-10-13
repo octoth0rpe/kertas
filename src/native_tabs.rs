@@ -7,23 +7,24 @@
 //! adds "Show Tab Bar" and "Show All Tabs" to the View menu, which do
 //! nothing useful with Kami's own tab strip.
 
-use std::ptr::NonNull;
-
 use objc2::MainThreadMarker;
+use objc2::rc::Retained;
 use objc2_app_kit::{NSView, NSWindow, NSWindowOrderingMode};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
-/// A native window, captured from a GPUI window.
-pub struct NativeWindow(NonNull<std::ffi::c_void>);
-
-impl NativeWindow {
-    /// The native window behind a GPUI window.
-    pub fn of(window: &impl HasWindowHandle) -> Option<Self> {
-        match window.window_handle().ok()?.as_raw() {
-            RawWindowHandle::AppKit(handle) => Some(Self(handle.ns_view)),
-            _ => None,
-        }
-    }
+/// The `NSWindow` behind a GPUI window. `None` off the main thread, where
+/// AppKit can't be used.
+pub fn ns_window(window: &impl HasWindowHandle) -> Option<Retained<NSWindow>> {
+    MainThreadMarker::new()?;
+    let RawWindowHandle::AppKit(handle) = window.window_handle().ok()?.as_raw() else {
+        return None;
+    };
+    // SAFETY: GPUI's AppKit handle points at the window's content view,
+    // which lives as long as the GPUI window, borrowed here; and we're on
+    // the main thread (checked above). `window()` returns a retained
+    // NSWindow, so the result stays valid after the borrow ends.
+    let view = unsafe { handle.ns_view.cast::<NSView>().as_ref() };
+    view.window()
 }
 
 /// Turns off macOS automatic window tabbing. GPUI turns it on whenever it
@@ -40,64 +41,37 @@ pub fn automatic_tabbing() -> bool {
     MainThreadMarker::new().is_some_and(NSWindow::allowsAutomaticWindowTabbing)
 }
 
-impl NativeWindow {
-    /// The `NSWindow`, if the view is in one.
-    pub fn ns_window(&self) -> Option<objc2::rc::Retained<NSWindow>> {
-        // SAFETY: the pointer is the content view of a live GPUI window,
-        // captured on the main thread just before this call.
-        let view = unsafe { self.0.cast::<NSView>().as_ref() };
-        view.window()
-    }
-}
-
-/// How many times [`add_as_tab`] found both windows, for the smoke test.
+/// How many times [`add_as_tab`] was asked to group two windows, for the
+/// smoke test.
 #[cfg(debug_assertions)]
 pub static TABBING_CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Adds `tab` as a tab of `host`'s tab group, if it isn't in it already.
-pub fn add_as_tab(host: &NativeWindow, tab: &NativeWindow) {
-    // SAFETY: both pointers are the content views of live GPUI windows,
-    // captured on the main thread just before this call.
-    let (host_view, tab_view) = unsafe {
-        (
-            host.0.cast::<NSView>().as_ref(),
-            tab.0.cast::<NSView>().as_ref(),
-        )
-    };
-    let (Some(host_window), Some(tab_window)) = (host_view.window(), tab_view.window()) else {
-        return;
-    };
-    if host_window == tab_window {
+pub fn add_as_tab(host: &NSWindow, tab: &NSWindow) {
+    if host == tab {
         return;
     }
     #[cfg(debug_assertions)]
     TABBING_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    if let Some(group) = host_window.tabbedWindows()
-        && group.iter().any(|window| window == tab_window)
+    if let Some(group) = host.tabbedWindows()
+        && group.iter().any(|window| &*window == tab)
     {
         return;
     }
-    host_window.addTabbedWindow_ordered(&tab_window, NSWindowOrderingMode::Above);
-    tab_window.makeKeyAndOrderFront(None);
+    host.addTabbedWindow_ordered(tab, NSWindowOrderingMode::Above);
+    tab.makeKeyAndOrderFront(None);
 }
 
 /// How many windows are in `window`'s tab group (1 if it isn't tabbed).
 #[cfg(debug_assertions)]
-pub fn tab_group_size(window: &NativeWindow) -> usize {
-    // SAFETY: the pointer is the content view of a live GPUI window,
-    // captured on the main thread just before this call.
-    let view = unsafe { window.0.cast::<NSView>().as_ref() };
-    view.window()
-        .and_then(|window| window.tabbedWindows())
-        .map_or(1, |group| group.count())
+pub fn tab_group_size(window: &NSWindow) -> usize {
+    window.tabbedWindows().map_or(1, |group| group.count())
 }
 
 /// The position of the selected tab in `window`'s tab group.
 #[cfg(debug_assertions)]
-pub fn selected_tab(window: &NativeWindow) -> Option<usize> {
-    // SAFETY: as in `tab_group_size`.
-    let view = unsafe { window.0.cast::<NSView>().as_ref() };
-    let group = view.window()?.tabGroup()?;
+pub fn selected_tab(window: &NSWindow) -> Option<usize> {
+    let group = window.tabGroup()?;
     let selected = group.selectedWindow()?;
     group.windows().iter().position(|window| window == selected)
 }

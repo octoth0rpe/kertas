@@ -18,7 +18,8 @@ pub fn watch(path: PathBuf) -> mpsc::UnboundedReceiver<()> {
         .name("kami-file-watch".into())
         .spawn(move || {
             // SAFETY: kqueue takes no arguments; a negative result is an
-            // error, checked below.
+            // error, checked below. Child processes (e.g. osascript) don't
+            // inherit kqueues.
             let queue = unsafe { libc::kqueue() };
             if queue < 0 {
                 return;
@@ -58,7 +59,14 @@ pub fn watch(path: PathBuf) -> mpsc::UnboundedReceiver<()> {
                     // closing it also removes its kqueue registration.
                     unsafe { libc::close(fd) };
                 }
-                if received < 0 || changed.unbounded_send(()).is_err() {
+                if received < 0 {
+                    // A signal interrupted the wait: just wait again.
+                    if std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
+                        continue;
+                    }
+                    break;
+                }
+                if changed.unbounded_send(()).is_err() {
                     break;
                 }
             }
@@ -73,8 +81,9 @@ pub fn watch(path: PathBuf) -> mpsc::UnboundedReceiver<()> {
 /// exist.
 fn open_for_events(path: &Path) -> Option<i32> {
     let path = CString::new(path.as_os_str().as_bytes()).ok()?;
-    // SAFETY: `path` is a valid C string.
-    let fd = unsafe { libc::open(path.as_ptr(), libc::O_EVTONLY) };
+    // SAFETY: `path` is a valid C string. O_CLOEXEC keeps the descriptor
+    // out of child processes Kami starts.
+    let fd = unsafe { libc::open(path.as_ptr(), libc::O_EVTONLY | libc::O_CLOEXEC) };
     (fd >= 0).then_some(fd)
 }
 
@@ -86,5 +95,50 @@ fn vnode_event(fd: i32, flags: u32) -> libc::kevent {
         fflags: flags,
         data: 0,
         udata: std::ptr::null_mut(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::*;
+
+    /// Whether a change arrives within a second.
+    fn changed(receiver: &mut mpsc::UnboundedReceiver<()>) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while Instant::now() < deadline {
+            if receiver.try_recv().is_ok() {
+                // Drain any further events from the same change.
+                std::thread::sleep(Duration::from_millis(50));
+                while receiver.try_recv().is_ok() {}
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        false
+    }
+
+    #[test]
+    fn reports_writes_replacements_and_new_files() {
+        let dir = std::env::temp_dir().join(format!("kami-file-watch-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        let mut changes = watch(path.clone());
+        std::thread::sleep(Duration::from_millis(100));
+
+        std::fs::write(&path, "a").unwrap();
+        assert!(changed(&mut changes), "created");
+        std::fs::write(&path, "b").unwrap();
+        assert!(changed(&mut changes), "written");
+        // Editors often save by renaming a new file over the old one.
+        let temp = dir.join("config.toml.tmp");
+        std::fs::write(&temp, "c").unwrap();
+        std::fs::rename(&temp, &path).unwrap();
+        assert!(changed(&mut changes), "replaced");
+        std::fs::write(&path, "d").unwrap();
+        assert!(changed(&mut changes), "written after being replaced");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
