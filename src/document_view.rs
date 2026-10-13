@@ -443,7 +443,6 @@ impl DocumentView {
 
     // Files
 
-    /// Starts a new untitled document, ready for typing.
     /// File > Print…: the standard print panel, as a sheet on this window.
     fn print(&mut self, _: &Print, window: &mut Window, _: &mut Context<Self>) {
         #[cfg(target_os = "macos")]
@@ -486,6 +485,7 @@ impl DocumentView {
         self.builtin
     }
 
+    /// Starts a new untitled document, ready for typing.
     pub fn start_untitled(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.load(Document::untitled(), window, cx);
         self.move_caret(0, false, cx);
