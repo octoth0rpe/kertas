@@ -44,11 +44,9 @@ pub fn open(cx: &mut App) {
             .update(cx, |_, window, _| window.activate_window())
             .ok();
     }
-    // Tall enough for every row, but never taller than the screen; then
-    // the rows scroll.
-    let height = cx.primary_display().map_or(px(SHEET_HEIGHT), |display| {
-        px(SHEET_HEIGHT).min(display.bounds().size.height - px(80.))
-    });
+    // The sheet then fits itself to its rows (see `fit_to_rows`).
+    cx.set_global(RowsFit::default());
+    let height = px(INITIAL_HEIGHT).min(max_height(cx));
     let bounds = Bounds::centered(None, size(px(540.), height), cx);
     let window = cx
         .open_window(
@@ -88,16 +86,30 @@ struct Choice {
     selected: bool,
 }
 
-/// The settings sheet's height, enough for every row.
-const SHEET_HEIGHT: f32 = 680.;
+/// About how tall the settings sheet is, before it fits itself to its
+/// rows.
+const INITIAL_HEIGHT: f32 = 604.;
+
+/// The space between the last row and the Done button's row.
+const ROWS_GAP: f32 = 20.;
+
+/// The tallest the sheet gets: the screen's height, less some room. Taller
+/// rows scroll.
+fn max_height(cx: &App) -> gpui::Pixels {
+    cx.primary_display().map_or(px(INITIAL_HEIGHT), |display| {
+        display.bounds().size.height - px(80.)
+    })
+}
 
 /// Where the rows end and the Done button's row starts, when the settings
-/// sheet was last laid out, for the smoke test: the rows should fit
-/// without scrolling.
+/// sheet was last laid out. The sheet fits itself to its rows with these,
+/// and the smoke test checks they fit without scrolling.
 #[derive(Default)]
 pub struct RowsFit {
     pub rows_bottom: gpui::Pixels,
     pub footer_top: gpui::Pixels,
+    /// The sheet's height then.
+    pub height: gpui::Pixels,
 }
 
 impl gpui::Global for RowsFit {}
@@ -105,7 +117,11 @@ impl gpui::Global for RowsFit {}
 /// An empty element that records where it's laid out in [`RowsFit`].
 fn measure(record: fn(&mut RowsFit, gpui::Pixels)) -> impl IntoElement {
     gpui::canvas(
-        move |bounds, _, cx| record(cx.default_global::<RowsFit>(), bounds.top()),
+        move |bounds, window, cx| {
+            let fit = cx.default_global::<RowsFit>();
+            fit.height = window.viewport_size().height;
+            record(fit, bounds.top());
+        },
         |_, _, _, _| {},
     )
 }
@@ -545,8 +561,29 @@ impl SettingsWindow {
     }
 }
 
+/// Resizes the sheet so the Done button's row is [`ROWS_GAP`] below the
+/// last row, as last laid out: no more, so there's no empty space, and no
+/// less, so nothing scrolls (unless the screen is too short).
+fn fit_to_rows(window: &mut Window, cx: &mut App) {
+    let Some(fit) = cx.try_global::<RowsFit>() else {
+        return;
+    };
+    if fit.rows_bottom <= px(0.) {
+        return;
+    }
+    // Below the footer's top is the same whatever the height.
+    let footer = fit.height - fit.footer_top;
+    let height = (fit.rows_bottom + px(ROWS_GAP) + footer).min(max_height(cx));
+    let current = window.viewport_size();
+    if (height - current.height).abs() > px(1.) {
+        window.resize(size(current.width, height));
+    }
+}
+
 impl Render for SettingsWindow {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Once this frame is laid out, so the rows are measured.
+        window.on_next_frame(fit_to_rows);
         let settings = app_settings::get(cx);
         // The font settings share one row, where the first of them is.
         let mut rows = Vec::new();
@@ -610,14 +647,8 @@ impl Render for SettingsWindow {
                     .flex_1()
                     .min_h(px(0.))
                     .overflow_y_scroll()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_5()
-                            .children(rows)
-                            .child(measure(|fit, top| fit.rows_bottom = top)),
-                    ),
+                    .child(div().flex().flex_col().gap_5().children(rows))
+                    .child(measure(|fit, top| fit.rows_bottom = top)),
             )
             .child(
                 div()

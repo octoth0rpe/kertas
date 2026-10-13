@@ -680,8 +680,8 @@ fn smoke_settings_window(window: WindowHandle<DocumentView>, cx: &mut App) {
             pause(cx, 20).await;
         }
         checks.check("⌘, opens one settings window", window_count(cx) == 2);
-        // The rows end 20 px above the Done button when they all fit. With
-        // autosave on, its note adds a line.
+        // The sheet fits itself to its rows: they end 20 px above the Done
+        // button, with autosave off or on (its note adds a line).
         for autosave in ["off", "on"] {
             if autosave == "on" {
                 cx.update(|cx| crate::app_settings::set("autosave", 5, cx))
@@ -697,7 +697,7 @@ fn smoke_settings_window(window: WindowHandle<DocumentView>, cx: &mut App) {
                     "every row fits in the settings window, autosave {autosave} \
                      ({spare:?} below them)"
                 ),
-                spare.is_some_and(|spare| spare >= gpui::px(20.)),
+                spare.is_some_and(|spare| (spare - gpui::px(20.)).abs() <= gpui::px(1.)),
             );
         }
 
