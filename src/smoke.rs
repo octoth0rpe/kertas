@@ -12,9 +12,10 @@ use std::time::Duration;
 use gpui::{Action, App, EntityInputHandler, WindowHandle};
 
 use crate::document_view::{
-    Backspace, CloseWindow, Delete, DeleteWordLeft, DocumentView, LineBreak, MoveBlockDown,
-    MoveBlockUp, MoveDocumentEnd, MoveDocumentStart, MoveDown, MoveLeft, MoveRight, MoveUp, New,
-    Newline, Quit, Redo, Save, SelectAll, SelectBlockDown, SelectDown, SelectUp, Undo, Unreveal,
+    Backspace, CloseWindow, Delete, DeleteWordLeft, DocumentView, IndentLines, IndentTab,
+    InsertTab, LineBreak, MoveBlockDown, MoveBlockUp, MoveDocumentEnd, MoveDocumentStart, MoveDown,
+    MoveLeft, MoveRight, MoveUp, New, Newline, OutdentTab, Quit, Redo, Save, SelectAll,
+    SelectBlockDown, SelectDown, SelectUp, Undo, Unreveal,
 };
 
 const STEP: Duration = Duration::from_millis(16);
@@ -67,12 +68,30 @@ pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
     steps_ref.push(Step::Type("- item"));
     repeat(steps_ref, &Newline, 1);
     steps_ref.push(Step::Type("[ ] task"));
+    repeat(steps_ref, &IndentTab, 1);
+    repeat(steps_ref, &Newline, 1);
+    steps_ref.push(Step::Type("sub"));
+    repeat(steps_ref, &OutdentTab, 1);
     repeat(steps_ref, &Newline, 2);
     steps_ref.push(Step::Type("> quote"));
     repeat(steps_ref, &LineBreak, 1);
     repeat(steps_ref, &Newline, 3);
     repeat(steps_ref, &MoveBlockUp, 4);
     repeat(steps_ref, &MoveBlockDown, 4);
+    // A code block with indentation.
+    repeat(steps_ref, &MoveDocumentEnd, 1);
+    steps_ref.push(Step::Type("```"));
+    repeat(steps_ref, &Newline, 1);
+    steps_ref.push(Step::Type("fn"));
+    repeat(steps_ref, &IndentTab, 1);
+    repeat(steps_ref, &Newline, 1);
+    steps_ref.push(Step::Type("    x"));
+    repeat(steps_ref, &IndentLines, 1);
+    repeat(steps_ref, &Newline, 1);
+    steps_ref.push(Step::Type("y"));
+    repeat(steps_ref, &OutdentTab, 1);
+    repeat(steps_ref, &InsertTab, 1);
+    repeat(steps_ref, &Undo, 1);
     if write_only {
         steps_ref.push(Step::Action(Box::new(Save)));
     } else {

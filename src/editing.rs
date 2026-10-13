@@ -1,12 +1,13 @@
-//! Markdown-aware editing: what Enter and Shift-Enter insert, and where the
-//! caret goes when moving to a block. See the Enter addendum in
-//! `docs/planning/caret-and-reveal.md`.
+//! Markdown-aware editing: what Enter and Shift-Enter insert, indenting
+//! list items and code, and where the caret goes when moving to a block.
+//! See the Enter addendum in `docs/planning/caret-and-reveal.md`.
 //!
 //! These are pure functions of the source text, like [`crate::movement`].
 
 use std::ops::Range;
 
 use crate::blocks::BlockKind;
+use crate::movement::Selection;
 
 /// The edit Enter (or Shift-Enter, if `shift`) makes with `selection`
 /// selected in a block of `kind`: the range to replace and its replacement.
@@ -46,6 +47,11 @@ pub fn enter(
     match kind {
         BlockKind::List { .. } | BlockKind::BlockQuote => {}
         BlockKind::Paragraph if shift => return hard_break(""),
+        BlockKind::CodeBlock { .. } => {
+            // Keep the line's indentation.
+            let indent = &before_caret[..before_caret.len() - before_caret.trim_start().len()];
+            return newline(indent);
+        }
         _ => return newline(""),
     }
 
@@ -166,6 +172,11 @@ struct Marker {
     /// The start of the indentation before the marker.
     indent_start: usize,
     start: usize,
+    /// The end of the bullet or number and its delimiter.
+    token_end: usize,
+    /// Where the item's content starts, after the marker and its spaces
+    /// (a task box is part of the content).
+    content: usize,
     kind: MarkerKind,
     task: bool,
 }
@@ -180,14 +191,27 @@ impl Marker {
     /// The marker for the next item: the same bullet, or the next number.
     /// Task items get an unchecked box.
     fn next(&self) -> String {
-        let mut marker = match self.kind {
-            MarkerKind::Bullet(bullet) => format!("{bullet} "),
-            MarkerKind::Ordered { number, delimiter } => format!("{}{delimiter} ", number + 1),
-        };
+        let mut marker = format!("{} ", self.next_token());
         if self.task {
             marker.push_str("[ ] ");
         }
         marker
+    }
+
+    /// The bullet, or the next number and its delimiter, for the next item.
+    fn next_token(&self) -> String {
+        match self.kind {
+            MarkerKind::Bullet(bullet) => bullet.to_string(),
+            MarkerKind::Ordered { number, delimiter } => format!("{}{delimiter}", number + 1),
+        }
+    }
+
+    /// The token that starts a new list of this kind.
+    fn first_token(&self) -> String {
+        match self.kind {
+            MarkerKind::Bullet(bullet) => bullet.to_string(),
+            MarkerKind::Ordered { delimiter, .. } => format!("1{delimiter}"),
+        }
     }
 }
 
@@ -240,7 +264,9 @@ impl Prefix {
             return prefix;
         };
 
+        let token_end = index;
         index = spaces(index);
+        let content = index;
         let task = ["[ ]", "[x]", "[X]"]
             .iter()
             .any(|task_box| line[index..].starts_with(task_box))
@@ -251,6 +277,8 @@ impl Prefix {
         prefix.marker = Some(Marker {
             indent_start,
             start: marker_start,
+            token_end,
+            content,
             kind,
             task,
         });
@@ -273,6 +301,336 @@ fn parent_item(text: &str, line_start: usize, prefix: &Prefix) -> Option<String>
         let parent = candidate.marker.as_ref()?;
         (candidate.quote_end == prefix.quote_end && parent.start - parent.indent_start < indent)
             .then(|| format!("{}{}", &line[..parent.start], parent.next()))
+    })
+}
+
+/// An edit made in several places at once, applied as one replacement so
+/// it's one undo step.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Edit {
+    pub range: Range<usize>,
+    pub text: String,
+    /// The selection afterwards: the same text as before stays selected.
+    pub selection: Selection,
+}
+
+/// Indents (or outdents) with Tab, Shift-Tab, ⌘] or ⌘[ in a block of
+/// `kind` spanning `block`. Returns `None` if there's nothing to indent.
+///
+/// - In a list, the item at the caret moves one level in or out, with its
+///   nested items. Indenting nests it under the item before it, and an
+///   ordered item starts the nested list at 1 (or continues one that's
+///   already there). Outdenting makes it the next item of its parent.
+/// - In a code block, `linewise` indents the selected lines; otherwise Tab
+///   inserts an indent at the caret, unless several lines are selected.
+///   An indent is a tab, or spaces if the block already indents with
+///   spaces.
+pub fn indent(
+    text: &str,
+    kind: BlockKind,
+    block: Range<usize>,
+    selection: Selection,
+    outdent: bool,
+    linewise: bool,
+) -> Option<Edit> {
+    match kind {
+        BlockKind::List { .. } | BlockKind::BlockQuote => {
+            indent_list_item(text, block, selection, outdent)
+        }
+        BlockKind::CodeBlock { .. } => indent_code(text, block, selection, outdent, linewise),
+        _ => None,
+    }
+}
+
+fn indent_list_item(
+    text: &str,
+    block: Range<usize>,
+    selection: Selection,
+    outdent: bool,
+) -> Option<Edit> {
+    let lines = lines_in(text, block);
+    let caret = selection.range().start;
+    let current = lines.iter().rposition(|line| line.start <= caret)?;
+    let prefixes: Vec<Prefix> = lines
+        .iter()
+        .map(|line| Prefix::parse(&text[line.clone()]))
+        .collect();
+    let marker = |i: usize| prefixes[i].marker.as_ref();
+    let blank = |i: usize| {
+        marker(i).is_none()
+            && text[lines[i].start + prefixes[i].quote_end..lines[i].end]
+                .trim()
+                .is_empty()
+    };
+    // Columns are counted after any quote markers.
+    let column = |i: usize| {
+        let start = marker(i).map_or(prefixes[i].end, |marker| marker.start);
+        start - prefixes[i].quote_end
+    };
+    let content_column = |i: usize| marker(i).map(|marker| marker.content - prefixes[i].quote_end);
+
+    // The item the caret is in: its own line, or the nearest item above
+    // whose content the caret's line is indented under.
+    let item = (0..=current).rev().find(|&i| {
+        !blank(i)
+            && (i == current && marker(i).is_some()
+                || content_column(i).is_some_and(|content| content <= column(current)))
+    })?;
+    let item_column = column(item);
+    // The item's nested lines: those indented further.
+    let mut last = item;
+    for i in item + 1..lines.len() {
+        if blank(i) {
+            continue;
+        }
+        if column(i) <= item_column {
+            break;
+        }
+        last = i;
+    }
+    let item_marker = marker(item)?;
+    let marker_token =
+        lines[item].start + item_marker.start..lines[item].start + item_marker.token_end;
+    let mut patches = Vec::new();
+
+    let new_token = if outdent {
+        if item_column == 0 {
+            return None;
+        }
+        let parent = (0..item)
+            .rev()
+            .find(|&i| !blank(i) && marker(i).is_some() && column(i) < item_column);
+        let delta = item_column - parent.map_or(0, column);
+        for i in (item..=last).filter(|&i| !blank(i)) {
+            let start = lines[i].start + prefixes[i].quote_end;
+            let leading = text[start..lines[i].end]
+                .bytes()
+                .take_while(|&byte| byte == b' ')
+                .count();
+            patches.push(Patch::remove(start..start + leading.min(delta)));
+        }
+        parent.and_then(marker).map(Marker::next_token)
+    } else {
+        // Nest under the previous item at the same level.
+        let mut sibling = None;
+        for i in (0..item).rev() {
+            if blank(i) {
+                continue;
+            }
+            if column(i) < item_column {
+                break;
+            }
+            if column(i) == item_column && marker(i).is_some() {
+                sibling = Some(i);
+                break;
+            }
+        }
+        let sibling = sibling?;
+        let new_column = content_column(sibling)?;
+        let delta = new_column - item_column;
+        for i in (item..=last).filter(|&i| !blank(i)) {
+            let start = lines[i].start + prefixes[i].quote_end;
+            patches.push(Patch::insert(start, " ".repeat(delta)));
+        }
+        // Continue a nested list that's already there, or start one.
+        let nested = (sibling + 1..item)
+            .rev()
+            .find(|&i| !blank(i) && marker(i).is_some() && column(i) == new_column);
+        Some(match nested.and_then(marker) {
+            Some(nested) => nested.next_token(),
+            None => item_marker.first_token(),
+        })
+    };
+    if let Some(token) = new_token
+        && token != text[marker_token.clone()]
+    {
+        patches.push(Patch {
+            at: marker_token.start,
+            remove: marker_token.len(),
+            insert: token,
+        });
+    }
+    combine(text, patches, selection)
+}
+
+fn indent_code(
+    text: &str,
+    block: Range<usize>,
+    selection: Selection,
+    outdent: bool,
+    linewise: bool,
+) -> Option<Edit> {
+    let lines = lines_in(text, block);
+    let is_fence = |line: &Range<usize>| {
+        let line = text[line.clone()].trim_start();
+        line.starts_with("```") || line.starts_with("~~~")
+    };
+    // The code lines, without the fences.
+    let mut code = 0..lines.len();
+    if lines.first().is_some_and(is_fence) {
+        code.start = 1;
+        if lines.len() > 1 && lines.last().is_some_and(is_fence) {
+            code.end -= 1;
+        }
+    }
+    let code_lines = &lines[code.clone()];
+
+    let leading = |line: &Range<usize>| {
+        text[line.clone()]
+            .bytes()
+            .take_while(|&byte| byte == b' ')
+            .count()
+    };
+    let unit = if code_lines
+        .iter()
+        .any(|line| text[line.clone()].starts_with('\t'))
+    {
+        "\t".to_owned()
+    } else {
+        // The indent width is what all indentation is a multiple of: 2 or
+        // 4 (or 3), since one level alone can't tell 4 from 8.
+        let width = code_lines
+            .iter()
+            .map(leading)
+            .filter(|&count| count > 0)
+            .reduce(gcd);
+        match width {
+            Some(width) if width % 4 == 0 => " ".repeat(4),
+            Some(width) if width % 2 == 0 => " ".repeat(2),
+            Some(3) => " ".repeat(3),
+            Some(_) => " ".repeat(4),
+            None => "\t".to_owned(),
+        }
+    };
+
+    let range = selection.range();
+    let line_of = |offset: usize| lines.iter().rposition(|line| line.start <= offset);
+    let first = line_of(range.start)?;
+    let mut last = line_of(range.end)?;
+    if last > first && lines[last].start == range.end {
+        last -= 1;
+    }
+    let selected = first.max(code.start)..(last + 1).min(code.end);
+    if selected.is_empty() {
+        return None;
+    }
+
+    let mut patches = Vec::new();
+    if !outdent && !linewise && first == last {
+        patches.push(Patch {
+            at: range.start,
+            remove: range.len(),
+            insert: unit,
+        });
+        // Typing replaces the selection, so the caret goes after the indent.
+        let edit = combine(text, patches, selection)?;
+        let caret = edit.range.start + edit.text.len();
+        return Some(Edit {
+            selection: Selection::caret(caret),
+            ..edit
+        });
+    }
+    for line in &lines[selected.clone()] {
+        if outdent {
+            let width = if text[line.clone()].starts_with('\t') {
+                1
+            } else {
+                leading(line).min(unit.len().max(if unit == "\t" { 4 } else { 0 }))
+            };
+            patches.push(Patch::remove(line.start..line.start + width));
+        } else if selected.len() == 1 || !text[line.clone()].trim().is_empty() {
+            patches.push(Patch::insert(line.start, unit.clone()));
+        }
+    }
+    combine(text, patches, selection)
+}
+
+fn gcd(a: usize, b: usize) -> usize {
+    if b == 0 { a } else { gcd(b, a % b) }
+}
+
+/// The lines in `range`, without their line endings.
+fn lines_in(text: &str, range: Range<usize>) -> Vec<Range<usize>> {
+    let mut lines = Vec::new();
+    let mut start = range.start;
+    loop {
+        let end = line_end(text, start).min(range.end);
+        lines.push(start..end);
+        match text[end..range.end].find('\n') {
+            Some(newline) => start = end + newline + 1,
+            None => break,
+        }
+    }
+    lines
+}
+
+/// One replacement within a larger edit.
+#[derive(Debug)]
+struct Patch {
+    at: usize,
+    remove: usize,
+    insert: String,
+}
+
+impl Patch {
+    fn insert(at: usize, text: String) -> Self {
+        Self {
+            at,
+            remove: 0,
+            insert: text,
+        }
+    }
+
+    fn remove(range: Range<usize>) -> Self {
+        Self {
+            at: range.start,
+            remove: range.len(),
+            insert: String::new(),
+        }
+    }
+}
+
+/// Combines `patches` into one edit, and moves `selection` with the text.
+fn combine(text: &str, mut patches: Vec<Patch>, selection: Selection) -> Option<Edit> {
+    patches.retain(|patch| patch.remove > 0 || !patch.insert.is_empty());
+    // At the same position, insertions come before replacements.
+    patches.sort_by_key(|patch| (patch.at, patch.remove));
+    let start = patches.first()?.at;
+    let end = patches.iter().map(|patch| patch.at + patch.remove).max()?;
+    let mut replacement = String::new();
+    let mut position = start;
+    for patch in &patches {
+        replacement.push_str(&text[position..patch.at]);
+        replacement.push_str(&patch.insert);
+        position = patch.at + patch.remove;
+    }
+    replacement.push_str(&text[position..end]);
+
+    // An insertion right at the caret goes before it. A selection that
+    // starts there grows to include it, so whole selected lines stay
+    // selected.
+    let range = selection.range();
+    let map = |offset: usize| {
+        let mut shifted = offset as isize;
+        for patch in &patches {
+            let grows = !range.is_empty() && offset == range.start && patch.at == offset;
+            if offset >= patch.at + patch.remove && !grows {
+                shifted += patch.insert.len() as isize - patch.remove as isize;
+            } else if offset > patch.at {
+                // Inside replaced text: move to the end of its replacement.
+                return (patch.at as isize + shifted - offset as isize) as usize
+                    + patch.insert.len();
+            }
+        }
+        shifted as usize
+    };
+    Some(Edit {
+        range: start..end,
+        text: replacement,
+        selection: Selection {
+            anchor: map(selection.anchor),
+            head: map(selection.head),
+        },
     })
 }
 
@@ -394,6 +752,174 @@ mod tests {
         let text = "- a\r\n- ";
         let (range, inserted) = enter(text, LIST, 7..7, false, "\r\n");
         assert_eq!((range, inserted.as_str()), (5..7, "\r\n"));
+    }
+
+    /// Indents at the selection marked by `[` and `]` (or the caret `|`),
+    /// returning the result with the selection marked the same way.
+    #[track_caller]
+    fn indent_at(text: &str, kind: BlockKind, outdent: bool, linewise: bool) -> String {
+        let (text, selection) = match text.find('|') {
+            Some(caret) => (text.replace('|', ""), Selection::caret(caret)),
+            None => {
+                let anchor = text.find('[').unwrap();
+                let head = text.find(']').unwrap() - 1;
+                (text.replace(['[', ']'], ""), Selection { anchor, head })
+            }
+        };
+        let Some(edit) = indent(&text, kind, 0..text.len(), selection, outdent, linewise) else {
+            return "unchanged".to_owned();
+        };
+        let mut result = text.clone();
+        result.replace_range(edit.range, &edit.text);
+        let Selection { anchor, head } = edit.selection;
+        if anchor == head {
+            result.insert(head, '|');
+        } else {
+            result.insert(head, ']');
+            result.insert(anchor, '[');
+        }
+        result
+    }
+
+    #[test]
+    fn tab_nests_a_list_item() {
+        assert_eq!(indent_at("- a\n- b|", LIST, false, false), "- a\n  - b|");
+        assert_eq!(indent_at("- a\n- |b", LIST, false, false), "- a\n  - |b");
+        assert_eq!(
+            indent_at("- a\n- b|\n  - c\n- d", LIST, false, false),
+            "- a\n  - b|\n    - c\n- d",
+            "nested items move with it"
+        );
+        assert_eq!(
+            indent_at("- a|\n- b", LIST, false, false),
+            "unchanged",
+            "first item"
+        );
+        assert_eq!(
+            indent_at("- a\n  - b\n- c|", LIST, false, false),
+            "- a\n  - b\n  - c|",
+            "joins the nested list"
+        );
+    }
+
+    #[test]
+    fn tab_renumbers_ordered_items() {
+        let ordered = BlockKind::List { ordered: true };
+        assert_eq!(
+            indent_at("1. a\n2. b|", ordered, false, false),
+            "1. a\n   1. b|"
+        );
+        assert_eq!(
+            indent_at("1. a\n   1. b\n2. c|", ordered, false, false),
+            "1. a\n   1. b\n   2. c|"
+        );
+        assert_eq!(
+            indent_at("1. a\n   1. b|", ordered, true, false),
+            "1. a\n2. b|",
+            "continues the parent's numbering"
+        );
+        assert_eq!(
+            indent_at("9. a\n10. b|", ordered, false, false),
+            "9. a\n   1. b|",
+            "a shorter marker"
+        );
+    }
+
+    #[test]
+    fn shift_tab_outdents_a_list_item() {
+        assert_eq!(indent_at("- a\n  - b|", LIST, true, false), "- a\n- b|");
+        assert_eq!(
+            indent_at("- a\n  - b|\n    - c", LIST, true, false),
+            "- a\n- b|\n  - c"
+        );
+        assert_eq!(indent_at("- a|", LIST, true, false), "unchanged");
+    }
+
+    #[test]
+    fn indenting_from_a_continuation_line() {
+        assert_eq!(
+            indent_at("- a\n- b\n  more|", LIST, false, false),
+            "- a\n  - b\n    more|"
+        );
+    }
+
+    #[test]
+    fn list_items_in_quotes() {
+        let quote = BlockKind::BlockQuote;
+        assert_eq!(
+            indent_at("> - a\n> - b|", quote, false, false),
+            "> - a\n>   - b|"
+        );
+        assert_eq!(
+            indent_at("> - a\n>   - b|", quote, true, false),
+            "> - a\n> - b|"
+        );
+        assert_eq!(indent_at("> quote|", quote, false, false), "unchanged");
+    }
+
+    #[test]
+    fn tab_in_code_inserts_an_indent() {
+        let code = BlockKind::CodeBlock { fenced: true };
+        assert_eq!(
+            indent_at("```\nfn x|\n```", code, false, false),
+            "```\nfn x\t|\n```"
+        );
+        assert_eq!(
+            indent_at("```\nfn x() {\n  y|\n```", code, false, false),
+            "```\nfn x() {\n  y  |\n```",
+            "spaces when the block uses them"
+        );
+        assert_eq!(
+            indent_at("|```\nx\n```", code, false, false),
+            "unchanged",
+            "fence"
+        );
+    }
+
+    #[test]
+    fn code_lines_indent_and_outdent() {
+        let code = BlockKind::CodeBlock { fenced: true };
+        assert_eq!(
+            indent_at("```\n[a\n\nb]\n```", code, false, false),
+            "```\n[\ta\n\n\tb]\n```",
+            "selected lines, skipping blank ones"
+        );
+        assert_eq!(
+            indent_at("```\n  a|\n  b\n```", code, false, true),
+            "```\n    a|\n  b\n```",
+            "⌘] indents the caret's line"
+        );
+        assert_eq!(
+            indent_at("```\n  a\n    b|\n```", code, true, false),
+            "```\n  a\n  b|\n```",
+            "by the block's indent width"
+        );
+        assert_eq!(
+            indent_at("```\n\ta|\n```", code, true, false),
+            "```\na|\n```"
+        );
+        assert_eq!(
+            indent_at("```\n        a|\n```", code, true, false),
+            "```\n    a|\n```",
+            "one level of 8 counts as two of 4"
+        );
+    }
+
+    #[test]
+    fn other_blocks_do_not_indent() {
+        assert_eq!(
+            indent_at("Para|", BlockKind::Paragraph, false, false),
+            "unchanged"
+        );
+    }
+
+    #[test]
+    fn enter_in_code_keeps_indentation() {
+        let code = BlockKind::CodeBlock { fenced: true };
+        assert_eq!(
+            press("```\n    x|\n```", code, false),
+            "```\n    x\n    |\n```"
+        );
     }
 
     #[test]
