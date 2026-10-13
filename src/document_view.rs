@@ -27,6 +27,7 @@ use kami::settings::TextWidth;
 
 use crate::app_settings::{self, AppSettings};
 use crate::builtin::Builtin;
+use crate::menus::OpenSettings;
 use crate::rendered_block::{ClickTarget, render_block};
 use crate::revealed_block::{RevealedBlock, TextInput, render_gap, render_revealed};
 use crate::tab_strip::{render_tab_strip, select_tab};
@@ -108,6 +109,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-shift-s", SaveAs, None),
         KeyBinding::new("cmd-w", CloseWindow, None),
         KeyBinding::new("cmd-q", Quit, None),
+        KeyBinding::new("cmd-,", OpenSettings, None),
         KeyBinding::new("cmd-shift-]", NextTab, None),
         KeyBinding::new("cmd-shift-[", PreviousTab, None),
         KeyBinding::new("ctrl-tab", NextTab, None),

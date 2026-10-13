@@ -66,9 +66,13 @@ pub fn open_window(
     cx: &mut App,
     setup: impl FnOnce(&mut DocumentView, &mut Window, &mut Context<DocumentView>),
 ) -> Option<WindowHandle<DocumentView>> {
+    // The frontmost document window, even if another window (such as
+    // Settings) is active.
     let previous = cx
         .active_window()
-        .and_then(|window| window.downcast::<DocumentView>());
+        .into_iter()
+        .chain(cx.window_stack().unwrap_or_default())
+        .find_map(|window| window.downcast::<DocumentView>());
     let previous_bounds =
         previous.and_then(|window| window.update(cx, |_, window, _| window.bounds()).ok());
     let layout = app_settings::get(cx).layout;

@@ -10,6 +10,7 @@ mod menus;
 mod native_tabs;
 mod rendered_block;
 mod revealed_block;
+mod settings_window;
 #[cfg(debug_assertions)]
 mod smoke;
 mod tab_strip;
