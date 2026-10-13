@@ -4,11 +4,14 @@
 //! it. It shows the same settings as the settings file and the View menu,
 //! and changing one here writes it to the file, so all three always agree.
 
+use std::ops::RangeInclusive;
+
 use gpui::{
-    App, Bounds, Context, FocusHandle, Global, KeyBinding, MouseButton, SharedString, Subscription,
-    Window, WindowBounds, WindowHandle, WindowKind, WindowOptions, div, prelude::*, px, size,
+    AnyElement, App, Bounds, Context, FocusHandle, Global, KeyBinding, MouseButton, SharedString,
+    Subscription, Window, WindowBounds, WindowHandle, WindowKind, WindowOptions, div, prelude::*,
+    px, size,
 };
-use kami::settings::{DEFAULT_FONT_SIZE, FONT_SIZES, Layout, Settings, TextWidth, ThemeSetting};
+use kami::settings::{Kind, SETTINGS, Setting, Settings};
 
 use crate::app_settings::{self, AppSettings};
 use crate::document_view::{CloseWindow, DocumentView};
@@ -43,7 +46,7 @@ pub fn open(cx: &mut App) {
             .update(cx, |_, window, _| window.activate_window())
             .ok();
     }
-    let bounds = Bounds::centered(None, size(px(540.), px(500.)), cx);
+    let bounds = Bounds::centered(None, size(px(540.), px(540.)), cx);
     let window = cx
         .open_window(
             WindowOptions {
@@ -119,35 +122,94 @@ impl SettingsWindow {
         }
     }
 
-    /// The "Default text size" row: the size documents start at, with −
-    /// and +.
-    fn text_size(&self, size: u32, cx: &mut Context<Self>) -> impl IntoElement {
-        let set = |size: u32| {
+    /// A row for a whole-number setting: the number, with − and +, and
+    /// Reset when it isn't the default.
+    fn integer(
+        &self,
+        setting: &'static Setting,
+        range: &RangeInclusive<u32>,
+        unit: &'static str,
+        current: u32,
+        default: u32,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let key = setting.key;
+        let range = range.clone();
+        let set = move |n: u32| {
+            let range = range.clone();
             move |_: &mut Self, cx: &mut Context<Self>| {
-                if FONT_SIZES.contains(&size) {
-                    cx.defer(move |cx| app_settings::set_or_report("font_size", size as i64, cx));
+                if range.contains(&n) {
+                    cx.defer(move |cx| app_settings::set_or_report(key, i64::from(n), cx));
                 }
             }
         };
         let content = div()
             .flex()
-            .flex_col()
-            .items_start()
-            .gap_1()
+            .items_center()
+            .gap_2()
+            .child(self.button("smaller", "−", cx, set(current.saturating_sub(1))))
             .child(
                 div()
+                    .w(px(44.))
+                    .text_center()
+                    .child(format!("{current} {unit}")),
+            )
+            .child(self.button("larger", "+", cx, set(current + 1)))
+            .when(current != default, |this| {
+                this.child(self.button("reset-size", "Reset", cx, set(default)))
+            });
+        self.labelled(setting.label, self.with_note(content, setting.note))
+    }
+
+    /// A row for a `true`/`false` setting: a checkbox labelled with the
+    /// setting's note.
+    fn checkbox(&self, setting: &'static Setting, checked: bool) -> impl IntoElement {
+        let theme = self.theme;
+        let key = setting.key;
+        let checkbox = div()
+            .id(key)
+            .flex()
+            .items_center()
+            .gap_2()
+            .pt(px(3.))
+            .cursor_pointer()
+            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                cx.defer(move |cx| app_settings::set_or_report(key, !checked, cx));
+            })
+            .child(
+                div()
+                    .size(px(14.))
                     .flex()
                     .items_center()
-                    .gap_2()
-                    .child(self.button("smaller", "−", cx, set(size.saturating_sub(1))))
-                    .child(div().w(px(44.)).text_center().child(format!("{size} px")))
-                    .child(self.button("larger", "+", cx, set(size + 1)))
-                    .when(size != DEFAULT_FONT_SIZE, |this| {
-                        this.child(self.button("reset-size", "Reset", cx, set(DEFAULT_FONT_SIZE)))
+                    .justify_center()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(if checked {
+                        theme.caret
+                    } else {
+                        theme.muted_text
+                    })
+                    .when(checked, |this| {
+                        this.bg(theme.caret)
+                            .text_color(gpui::white())
+                            .text_size(px(10.))
+                            .child("✓")
                     }),
             )
-            .child(self.note("Documents start at this size."));
-        self.labelled("Default text size", content)
+            .children(setting.note);
+        self.labelled(setting.label, checkbox)
+    }
+
+    /// `content` with `note`, if any, beneath it.
+    fn with_note(&self, content: impl IntoElement, note: Option<&'static str>) -> gpui::Div {
+        div()
+            .flex()
+            .flex_col()
+            // Keep the content as wide as it needs, not the note.
+            .items_start()
+            .gap_1()
+            .child(content)
+            .children(note.map(|note| self.note(note)))
     }
 
     /// A label on the left, and `content` on the right.
@@ -315,20 +377,19 @@ impl SettingsWindow {
     }
 
     /// A row: a label, then buttons for the choices with the current one
-    /// selected. Choosing one sets `key` in the settings file.
-    fn choices<T: Copy + PartialEq + 'static>(
+    /// selected. Choosing one sets the setting in the settings file.
+    fn choices(
         &self,
-        label: &'static str,
-        key: &'static str,
-        current: T,
-        options: &[(&'static str, T, &'static str)],
-        note: Option<&'static str>,
+        setting: &'static Setting,
+        choices: &'static [(&'static str, &'static str)],
+        current: &str,
     ) -> impl IntoElement {
         let theme = self.theme;
-        let buttons = options.iter().map(|&(name, value, setting)| {
+        let key = setting.key;
+        let buttons = choices.iter().map(|&(value, label)| {
             let selected = value == current;
             div()
-                .id(SharedString::from(format!("{key}-{setting}")))
+                .id(SharedString::from(format!("{key}-{value}")))
                 .px_3()
                 .py(px(3.))
                 .rounded_md()
@@ -348,58 +409,55 @@ impl SettingsWindow {
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                     // Applying a setting updates this window, so wait until
                     // this event is handled.
-                    cx.defer(move |cx| app_settings::set_or_report(key, setting, cx));
+                    cx.defer(move |cx| app_settings::set_or_report(key, value, cx));
                 })
-                .child(name)
+                .child(label)
         });
-        div()
+        let buttons = div()
             .flex()
-            .gap_4()
-            .child(
-                div()
-                    .w(px(LABEL_WIDTH))
-                    .flex_none()
-                    .text_right()
-                    .pt(px(4.))
-                    .child(label),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.))
-                    .flex()
-                    .flex_col()
-                    // Keep the buttons as wide as their labels, not the note.
-                    .items_start()
-                    .gap_1()
-                    .child(
-                        div()
-                            .flex()
-                            .gap_1()
-                            .p(px(2.))
-                            .rounded_lg()
-                            .bg(theme.code_background)
-                            .children(buttons),
-                    )
-                    .children(note.map(|note| {
-                        div()
-                            .text_size(px(11.))
-                            .text_color(theme.muted_text)
-                            .child(note)
-                    })),
-            )
+            .gap_1()
+            .p(px(2.))
+            .rounded_lg()
+            .bg(theme.code_background)
+            .children(buttons);
+        self.labelled(setting.label, self.with_note(buttons, setting.note))
+    }
+
+    /// The row for `setting`, showing its value in `settings`.
+    fn row(
+        &self,
+        setting: &'static Setting,
+        settings: &Settings,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        match &setting.kind {
+            Kind::Choice { choices, get, .. } => self
+                .choices(setting, choices, get(settings))
+                .into_any_element(),
+            Kind::Integer {
+                range, unit, get, ..
+            } => self
+                .integer(
+                    setting,
+                    range,
+                    unit,
+                    get(settings),
+                    get(&Settings::default()),
+                    cx,
+                )
+                .into_any_element(),
+            Kind::Bool { get, .. } => self.checkbox(setting, get(settings)).into_any_element(),
+        }
     }
 }
 
 impl Render for SettingsWindow {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Settings {
-            theme,
-            layout,
-            text_width,
-            font_size,
-        } = app_settings::get(cx);
-        let text_size = self.text_size(font_size, cx).into_any_element();
+        let settings = app_settings::get(cx);
+        let rows: Vec<AnyElement> = SETTINGS
+            .iter()
+            .map(|setting| self.row(setting, &settings, cx))
+            .collect();
         #[cfg(target_os = "macos")]
         let system_rows = [
             self.markdown_files(cx).into_any_element(),
@@ -431,39 +489,7 @@ impl Render for SettingsWindow {
             .bg(self.theme.background)
             .text_color(self.theme.text)
             .text_size(px(13.))
-            .child(self.choices(
-                "Appearance",
-                "theme",
-                theme,
-                &[
-                    ("Light", ThemeSetting::Light, "light"),
-                    ("Dark", ThemeSetting::Dark, "dark"),
-                    ("Match System", ThemeSetting::System, "system"),
-                ],
-                None,
-            ))
-            .child(text_size)
-            .child(self.choices(
-                "Text width",
-                "text_width",
-                text_width,
-                &[
-                    ("Standard", TextWidth::Standard, "standard"),
-                    ("Wide", TextWidth::Wide, "wide"),
-                    ("Full Width", TextWidth::Full, "full"),
-                ],
-                None,
-            ))
-            .child(self.choices(
-                "Open documents in",
-                "layout",
-                layout,
-                &[
-                    ("Tabs", Layout::Tabs, "tabs"),
-                    ("Windows", Layout::Windows, "windows"),
-                ],
-                Some("Takes effect the next time Kami starts."),
-            ))
+            .children(rows)
             .children(system_rows)
             .child(div().flex_1())
             .child(div().flex().justify_end().child(done))

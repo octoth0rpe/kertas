@@ -46,6 +46,7 @@ theme = "dark"       # "light", "dark" or "system"
 layout = "windows"   # "tabs" or "windows", from the next start
 text_width = "wide"  # "standard", "wide" or "full"
 font_size = 18       # 10 to 32
+editing_hint = false # hide "esc to finish" on the block being edited
 ```
 
 If the file has a mistake, Kami uses the default for that setting and shows what's wrong at the bottom of the window.

@@ -120,6 +120,7 @@ A selection that spans several blocks reveals all of them.
 | Font size / zoom | number | TBD | SHOULD |
 | Body font | font family | TBD | SHOULD |
 | Code font | font family | TBD | SHOULD |
+| Editing hint | `true` / `false` | `true` | SHOULD |
 | Max line width | number of characters, or `none` for full width | TBD (A1) | SHOULD |
 | Front matter display | `hidden`, `collapsed`, `shown` | `collapsed` | LATER |
 | Link click | `click`, `modifier-click` | `modifier-click` | LATER |

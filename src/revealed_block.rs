@@ -56,6 +56,8 @@ pub struct TextInput {
     pub focus_handle: FocusHandle,
     pub view: Entity<DocumentView>,
     pub layout_slot: Rc<RefCell<Option<TextLayout>>>,
+    /// Whether to show the editing hint (the `editing_hint` setting).
+    pub hint: bool,
 }
 
 /// Renders a revealed block as a list item. `input` is set for the block
@@ -116,7 +118,7 @@ fn revealed_content(
     click: ClickTarget,
     input: Option<TextInput>,
 ) -> AnyElement {
-    let has_input = input.is_some();
+    let show_hint = input.as_ref().is_some_and(|input| input.hint);
     let heading = revealed_heading(block.styled);
     let monospace = block.styled.font == RevealFont::Monospace;
 
@@ -250,7 +252,7 @@ fn revealed_content(
             cx.stop_propagation();
         })
         .child(content)
-        .when(has_input, |this| this.child(hint))
+        .when(show_hint, |this| this.child(hint))
         .into_any_element()
 }
 

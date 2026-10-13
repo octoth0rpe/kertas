@@ -544,6 +544,14 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
             cx.update(|cx| crate::zoom::size(cx)) == 20,
         );
 
+        cx.update(|cx| app_settings::set("editing_hint", false, cx))
+            .ok();
+        settle(cx).await;
+        checks.check(
+            "editing_hint setting applies",
+            !cx.update(|cx| app_settings::get(cx).editing_hint),
+        );
+
         // Changing the layout waits until Kami restarts: New still opens a
         // tab.
         cx.update(|cx| app_settings::set("layout", "windows", cx))
