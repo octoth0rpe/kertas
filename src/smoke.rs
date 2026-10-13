@@ -363,7 +363,7 @@ fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
         {
             let native_tabs = window
                 .update(cx, |_, window, _| {
-                    crate::native_tabs::NativeWindow::of(window)
+                    crate::native_tabs::ns_window(window)
                         .map_or(0, |native| crate::native_tabs::tab_group_size(&native))
                 })
                 .unwrap_or(0);
@@ -390,7 +390,7 @@ fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
             let selected = |cx: &mut AsyncApp| {
                 window
                     .update(cx, |_, window, _| {
-                        crate::native_tabs::NativeWindow::of(window)
+                        crate::native_tabs::ns_window(window)
                             .and_then(|native| crate::native_tabs::selected_tab(&native))
                     })
                     .ok()

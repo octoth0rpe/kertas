@@ -35,7 +35,10 @@ pub fn init() {
             &changed,
         )
     };
-    // Observe for as long as Kami runs.
+    // The notification center copies the block and keeps the observer
+    // registered until it's removed. Kami observes for as long as it runs
+    // and never removes it, so the token that would remove it is leaked
+    // on purpose.
     std::mem::forget(observer);
 }
 
