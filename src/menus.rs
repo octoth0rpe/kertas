@@ -58,22 +58,32 @@ pub fn init(cx: &mut App) {
         cx.defer(|cx| builtin::open(Builtin::KeyboardShortcuts, cx))
     });
 
+    refresh(cx);
+    cx.observe_global::<AppSettings>(refresh).detach();
+}
+
+/// Rebuilds the menus, to show the current settings and system state.
+pub fn refresh(cx: &mut App) {
     cx.set_menus(menus(app_settings::get(cx)));
-    cx.observe_global::<AppSettings>(|cx| cx.set_menus(menus(app_settings::get(cx))))
-        .detach();
 }
 
 fn menus(settings: Settings) -> Vec<Menu> {
     let theme = |value: ThemeSetting| settings.theme == value;
     let width = |value: TextWidth| settings.text_width == value;
+    let mut kami = vec![
+        MenuItem::action("About Kami", OpenAbout),
+        MenuItem::separator(),
+        MenuItem::action("Settings…", OpenSettings),
+        MenuItem::separator(),
+    ];
+    #[cfg(target_os = "macos")]
+    {
+        kami.extend(crate::system_actions::menu_items());
+        kami.push(MenuItem::separator());
+    }
+    kami.push(MenuItem::action("Quit Kami", Quit));
     vec![
-        Menu::new("Kami").items([
-            MenuItem::action("About Kami", OpenAbout),
-            MenuItem::separator(),
-            MenuItem::action("Settings…", OpenSettings),
-            MenuItem::separator(),
-            MenuItem::action("Quit Kami", Quit),
-        ]),
+        Menu::new("Kami").items(kami),
         Menu::new("File").items([
             MenuItem::action("New", New),
             MenuItem::action("Open…", Open),

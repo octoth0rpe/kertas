@@ -156,6 +156,8 @@ impl fmt::Display for Problem {
 /// read [`SETTINGS`], so a setting is described once.
 pub struct Setting {
     pub key: &'static str,
+    /// Its label in the settings sheet. Fonts share a row labelled
+    /// "Fonts", so theirs say which font.
     pub label: &'static str,
     /// A note shown under it in the settings sheet. For a `Bool`, the
     /// checkbox's label.
@@ -233,7 +235,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "font_size",
         label: "Default text size",
-        note: Some("Documents start at this size."),
+        note: None,
         kind: Kind::Integer {
             range: FONT_SIZES,
             unit: "px",
@@ -263,7 +265,7 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "body_font",
-        label: "Text font",
+        label: "Text",
         note: None,
         kind: Kind::Font {
             default: "System",
@@ -273,7 +275,7 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "code_font",
-        label: "Code font",
+        label: "Code",
         note: None,
         kind: Kind::Font {
             default: "Menlo (default)",
@@ -284,10 +286,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "tab_width",
         label: "Tab character width",
-        note: Some(
-            "How many spaces wide tab characters look, in code that contains them. \
-             It doesn't change what the Tab key inserts or how lists are indented.",
-        ),
+        note: Some("How wide tab characters in code look."),
         kind: Kind::Numbers {
             choices: TAB_WIDTHS,
             get: |settings| settings.tab_width,
@@ -297,10 +296,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "list_indent",
         label: "List indent",
-        note: Some(
-            "How far nested list items are drawn in. \
-             It doesn't change the Markdown.",
-        ),
+        note: Some("Doesn't change the Markdown."),
         kind: Kind::Choice {
             choices: &[
                 ("compact", "Compact"),

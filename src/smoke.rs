@@ -680,16 +680,26 @@ fn smoke_settings_window(window: WindowHandle<DocumentView>, cx: &mut App) {
             pause(cx, 20).await;
         }
         checks.check("⌘, opens one settings window", window_count(cx) == 2);
-        let spare = cx.update(|cx| {
-            cx.try_global::<crate::settings_window::RowsFit>()
-                .map(|fit| fit.footer_top - fit.rows_bottom)
-        });
-        // The rows end 20 px above the Done button when they all fit.
-        // Allow for autosave's note, which is a line longer when it's on.
-        checks.check(
-            &format!("every row fits in the settings window ({spare:?} below them)"),
-            spare.is_some_and(|spare| spare >= gpui::px(38.)),
-        );
+        // The rows end 20 px above the Done button when they all fit. With
+        // autosave on, its note adds a line.
+        for autosave in ["off", "on"] {
+            if autosave == "on" {
+                cx.update(|cx| crate::app_settings::set("autosave", 5, cx))
+                    .ok();
+                pause(cx, 10).await;
+            }
+            let spare = cx.update(|cx| {
+                cx.try_global::<crate::settings_window::RowsFit>()
+                    .map(|fit| fit.footer_top - fit.rows_bottom)
+            });
+            checks.check(
+                &format!(
+                    "every row fits in the settings window, autosave {autosave} \
+                     ({spare:?} below them)"
+                ),
+                spare.is_some_and(|spare| spare >= gpui::px(20.)),
+            );
+        }
 
         let settings = cx.update(|cx| {
             cx.windows()

@@ -19,6 +19,8 @@ mod revealed_block;
 mod settings_window;
 #[cfg(debug_assertions)]
 mod smoke;
+#[cfg(target_os = "macos")]
+mod system_actions;
 mod tab_strip;
 mod text_style;
 mod theme;
@@ -52,6 +54,8 @@ fn main() {
         windows::register(cx);
         cx.bind_keys(document_view::key_bindings());
         cx.bind_keys(settings_window::key_bindings());
+        #[cfg(target_os = "macos")]
+        system_actions::init(cx);
         menus::init(cx);
 
         // Closing the last window quits.
