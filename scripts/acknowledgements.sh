@@ -1,28 +1,54 @@
 #!/bin/sh
-# Writes src/builtin/acknowledgements.md, the list of open-source libraries
-# in Kami's About tab, from Cargo.lock. Run it after changing dependencies.
+# Writes src/builtin/acknowledgements.md, the open-source libraries in
+# Kami's About tab: a list of them, then the license notices their licenses
+# ask to be included with Kami. Run it after changing dependencies (the
+# pre-commit hook in scripts/hooks runs it when Cargo.lock changes).
+#
+#   scripts/acknowledgements.sh           # write the file
+#   scripts/acknowledgements.sh --check   # only check it lists exactly the
+#                                         # libraries in Cargo.lock (offline)
+#
+# Needs cargo-about: `cargo install --locked cargo-about --features cli`.
+# Writing the file needs the network: a few libraries don't include their
+# license files, which cargo-about then fetches from their repositories.
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
 out=src/builtin/acknowledgements.md
 
-{
-    echo "| Library | Version | License |"
-    echo "|---|---|---|"
-    cargo tree --edges normal --target aarch64-apple-darwin --prefix none \
-        --format '{p}|{l}' 2>/dev/null |
-        sed 's/ (\*)$//' |
-        sort -u |
-        awk -F'|' '
-            {
-                split($1, package, " ")
-                name = package[1]
-                version = substr(package[2], 2)
-                license = $2
-                if (name == "kami") next
-                if (license == "") license = "See the library"
-                print "| " name " | " version " | " license " |"
-            }'
-} > "$out"
-echo "Wrote $out ($(($(wc -l < "$out") - 2)) libraries)"
+if ! command -v cargo-about >/dev/null 2>&1; then
+    echo "acknowledgements.sh: cargo-about is missing; install it with:" >&2
+    echo "    cargo install --locked cargo-about --features cli" >&2
+    exit 1
+fi
+
+# The libraries in Kami's About tab, as "name version" lines. Kami itself
+# isn't one of them.
+libraries() {
+    sed -n 's/^| \([^ |]*\) | \([^ |]*\) | .*/\1 \2/p' | grep -v '^kami ' | sort
+}
+
+if [ "${1:-}" = "--check" ]; then
+    # The list cargo-about makes, without fetching anything.
+    expected=$(cargo about generate --frozen -c scripts/about.toml \
+        scripts/acknowledgements.hbs 2>/dev/null | libraries)
+    if [ "$expected" != "$(libraries < "$out")" ]; then
+        echo "acknowledgements.sh: $out is out of date; run scripts/acknowledgements.sh" >&2
+        exit 1
+    fi
+    exit 0
+fi
+
+# Errors are kept, but not the warning that Kami itself has no license.
+cargo about generate --locked -c scripts/about.toml scripts/acknowledgements.hbs \
+    2> "$root/target/acknowledgements.log" |
+    # Some license files have Windows line endings.
+    tr -d '\r' |
+    grep -v '^| kami | ' > "$out.tmp" || {
+    cat "$root/target/acknowledgements.log" >&2
+    rm -f "$out.tmp"
+    exit 1
+}
+mv "$out.tmp" "$out"
+echo "Wrote $out ($(libraries < "$out" | wc -l | tr -d ' ') libraries)"
