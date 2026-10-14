@@ -37,11 +37,14 @@ A selection that spans several blocks reveals all of them.
 |----|-------------|----------|
 | M1 | CommonMark compliance. | MUST |
 | M2 | GitHub Flavored Markdown extensions: tables, task lists, strikethrough, autolinks. | MUST |
-| M3 | Fenced code blocks with syntax highlighting. | SHOULD |
 | M4 | Clickable task-list checkboxes that update the source. | SHOULD |
 | M5 | Inline and linked images, with relative paths resolved against the file's location. | MUST |
 | M6 | YAML front matter is preserved; it can be hidden or shown collapsed. | SHOULD |
-| M7 | Math (KaTeX), Mermaid diagrams, footnotes. | LATER |
+| M7 | Mermaid diagrams (see the "Mermaid diagrams" milestone) and footnotes. | SHOULD |
+
+Deliberately **not** supported:
+- **Syntax highlighting in code blocks.** Covering languages, and keeping up as they change, is open-ended work; code blocks are drawn in the code font without colour.
+- **Math.**
 
 ## 3. File handling
 
