@@ -91,7 +91,8 @@ For development:
 
 ```sh
 scripts/bundle-macos.sh             # builds target/release/Kertas.app
-scripts/bundle-macos.sh --install   # ...and installs it in ~/Applications
+scripts/bundle-macos.sh --install   # ...and installs it in ~/Applications, quitting
+                                    # the installed copy first (also: make install)
 scripts/bundle-macos.sh --release   # a release: runs every check and smoke test on a clean
                                     # checkout of the current commit, then builds from it
 ```
