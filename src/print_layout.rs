@@ -11,7 +11,7 @@ use std::ops::Range;
 
 use crate::inline::InlineText;
 use crate::model::Model;
-use crate::rendered::{ColumnAlignment, RenderedBlock};
+use crate::rendered::{AlertKind, ColumnAlignment, RenderedBlock};
 use crate::settings::ListIndent;
 use crate::tabs::expand;
 
@@ -61,6 +61,8 @@ pub struct RunStyle {
     pub link: bool,
     /// Grey, for quotes and source shown as-is.
     pub muted: bool,
+    /// In an alert's color, for its title.
+    pub alert: Option<AlertKind>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -246,6 +248,20 @@ impl PrintLayout {
                     }
                 }
             }
+            RenderedBlock::Alert { kind, children } => {
+                self.push(
+                    kind.title(),
+                    RunStyle {
+                        bold: true,
+                        alert: Some(*kind),
+                        ..style
+                    },
+                );
+                self.end_paragraph(start, paragraph);
+                for child in children {
+                    self.block(child, indent + INDENT, style);
+                }
+            }
             RenderedBlock::BlockQuote(children) => {
                 for child in children {
                     self.block(
@@ -392,6 +408,21 @@ mod tests {
         assert!(style_of(&layout, "italic").italic);
         assert!(style_of(&layout, "gone").strikethrough);
         assert!(style_of(&layout, "code").code);
+    }
+
+    #[test]
+    fn alerts_have_a_title_and_indented_text() {
+        let layout = layout("> [!WARNING]\n> Careful.\n");
+        assert_eq!(paragraphs(&layout), ["Warning", "Careful."]);
+        let title = style_of(&layout, "Warning");
+        assert_eq!(title.alert, Some(AlertKind::Warning));
+        assert!(title.bold);
+        let text = style_of(&layout, "Careful.");
+        assert!(!text.muted && text.alert.is_none());
+        assert_eq!(
+            (layout.paragraphs[0].indent, layout.paragraphs[1].indent),
+            (0., INDENT)
+        );
     }
 
     #[test]

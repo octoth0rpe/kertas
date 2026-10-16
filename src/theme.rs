@@ -3,6 +3,7 @@
 //! The `theme` setting picks one, or follows the macOS appearance.
 
 use gpui::{App, Hsla, Window, WindowAppearance, rgb, rgba};
+use kertas::rendered::AlertKind;
 use kertas::settings::ThemeSetting;
 
 use crate::app_settings;
@@ -24,6 +25,8 @@ pub struct Theme {
     /// Background and border that mark the revealed block.
     pub revealed_background: Hsla,
     pub revealed_border: Hsla,
+    /// GitHub alerts' colors, in [`AlertKind`] order.
+    alerts: [Hsla; 5],
 }
 
 impl Theme {
@@ -49,6 +52,13 @@ impl Theme {
             caret: rgb(0x0969da).into(),
             revealed_background: rgba(0x0969da0a).into(),
             revealed_border: rgba(0x0969da40).into(),
+            alerts: [
+                rgb(0x0969da).into(),
+                rgb(0x1a7f37).into(),
+                rgb(0x8250df).into(),
+                rgb(0x9a6700).into(),
+                rgb(0xd1242f).into(),
+            ],
         }
     }
 
@@ -65,7 +75,19 @@ impl Theme {
             caret: rgb(0x58a6ff).into(),
             revealed_background: rgba(0x58a6ff0f).into(),
             revealed_border: rgba(0x58a6ff47).into(),
+            alerts: [
+                rgb(0x4493f8).into(),
+                rgb(0x3fb950).into(),
+                rgb(0xab7df8).into(),
+                rgb(0xd29922).into(),
+                rgb(0xf85149).into(),
+            ],
         }
+    }
+
+    /// The color of an alert's bar, icon and title, as GitHub draws it.
+    pub fn alert(&self, kind: AlertKind) -> Hsla {
+        self.alerts[kind as usize]
     }
 
     /// The theme matching a window's macOS appearance.
@@ -112,6 +134,15 @@ mod tests {
                 ("link", theme.link, theme.background),
                 ("code", theme.text, theme.code_background),
                 ("table header", theme.text, theme.table_header_background),
+                ("note", theme.alert(AlertKind::Note), theme.background),
+                ("tip", theme.alert(AlertKind::Tip), theme.background),
+                (
+                    "important",
+                    theme.alert(AlertKind::Important),
+                    theme.background,
+                ),
+                ("warning", theme.alert(AlertKind::Warning), theme.background),
+                ("caution", theme.alert(AlertKind::Caution), theme.background),
             ] {
                 let ratio = contrast(color, background);
                 assert!(ratio >= 4.5, "{name} contrast {ratio:.2} in {theme:?}");

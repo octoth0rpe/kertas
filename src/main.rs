@@ -1,4 +1,5 @@
 mod app_settings;
+mod assets;
 mod builtin;
 #[cfg(target_os = "macos")]
 mod cli_tool;
@@ -41,7 +42,7 @@ fn main() {
     // URLs, outside of any app context, so pass them to a task that opens
     // them.
     let (opened_urls, mut urls_to_open) = mpsc::unbounded::<Vec<String>>();
-    let app = application();
+    let app = application().with_assets(assets::Assets);
     app.on_open_urls(move |urls| {
         opened_urls.unbounded_send(urls).ok();
     });

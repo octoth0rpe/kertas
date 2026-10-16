@@ -168,7 +168,7 @@ impl Builder {
                     }
                 }
             }
-            RenderedBlock::BlockQuote(children) => {
+            RenderedBlock::BlockQuote(children) | RenderedBlock::Alert { children, .. } => {
                 for child in children {
                     self.block(
                         child,

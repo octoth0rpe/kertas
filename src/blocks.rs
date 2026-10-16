@@ -57,9 +57,13 @@ pub struct Block {
 }
 
 /// The parser options Kertas uses everywhere: CommonMark plus the GFM
-/// extensions in M2. Front matter is handled separately; see the module docs.
+/// extensions in M2 and GitHub's alerts. Front matter is handled
+/// separately; see the module docs.
 pub fn parser_options() -> Options {
-    Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS
+    Options::ENABLE_TABLES
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_TASKLISTS
+        | Options::ENABLE_GFM
 }
 
 const BYTE_ORDER_MARK: char = '\u{FEFF}';

@@ -96,7 +96,7 @@ fn collect_segments(block: &RenderedBlock, out: &mut Vec<SourceSpan>) {
                 }
             }
         }
-        RenderedBlock::BlockQuote(children) => {
+        RenderedBlock::BlockQuote(children) | RenderedBlock::Alert { children, .. } => {
             for child in children {
                 collect_segments(child, out);
             }

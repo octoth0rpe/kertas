@@ -132,6 +132,18 @@ Each example shows the Markdown, then how it looks.
 
 > A quote.
 
+### Alerts
+
+A quote that starts with `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]` or `[!CAUTION]` on a line of its own is an alert, as on GitHub.
+
+```markdown
+> [!TIP]
+> Alerts stand out from the text around them.
+```
+
+> [!TIP]
+> Alerts stand out from the text around them.
+
 ### Code
 
 ````markdown

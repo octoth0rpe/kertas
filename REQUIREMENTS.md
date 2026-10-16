@@ -36,7 +36,7 @@ A selection that spans several blocks reveals all of them.
 | ID | Requirement | Priority |
 |----|-------------|----------|
 | M1 | CommonMark compliance. | MUST |
-| M2 | GitHub Flavored Markdown extensions: tables, task lists, strikethrough, autolinks. | MUST |
+| M2 | GitHub Flavored Markdown extensions: tables, task lists, strikethrough, autolinks, and GitHub's alerts (`> [!NOTE]` and the others). | MUST |
 | M4 | Clickable task-list checkboxes that update the source. | SHOULD |
 | M5 | Inline and linked images, with relative paths resolved against the file's location. | MUST |
 | M6 | YAML front matter is preserved; it can be hidden or shown collapsed. | SHOULD |
