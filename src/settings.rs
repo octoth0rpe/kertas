@@ -13,10 +13,11 @@ use toml_edit::{DocumentMut, Item, Value};
 
 use crate::rendered::CODE_FONT;
 use crate::tabs::{DEFAULT_TAB_WIDTH, TAB_WIDTHS};
+use crate::themes;
 
-/// The color scheme (A2).
+/// Light or dark mode (A2), which picks a theme's light or dark colors.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ThemeSetting {
+pub enum AppearanceSetting {
     Light,
     Dark,
     /// Follow the macOS appearance.
@@ -87,10 +88,15 @@ pub const AUTOSAVE_SECONDS: RangeInclusive<u32> = 1..=300;
 /// seconds.
 pub const DEFAULT_AUTOSAVE_SECONDS: u32 = 5;
 
+/// The color theme used unless one is set.
+pub const DEFAULT_THEME: &str = "Kertas";
+
 /// All settings, with defaults for any the file doesn't set.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
-    pub theme: ThemeSetting,
+    pub appearance: AppearanceSetting,
+    /// The color theme's name.
+    pub theme: String,
     pub layout: Layout,
     pub text_width: TextWidth,
     /// The text size documents start at, in pixels.
@@ -115,7 +121,8 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            theme: ThemeSetting::default(),
+            appearance: AppearanceSetting::default(),
+            theme: DEFAULT_THEME.to_owned(),
             layout: Layout::default(),
             text_width: TextWidth::default(),
             font_size: DEFAULT_FONT_SIZE,
@@ -199,6 +206,11 @@ pub enum Kind {
         get: fn(&Settings) -> Option<&str>,
         apply: fn(&mut Settings, Option<String>),
     },
+    /// A color theme's name.
+    Theme {
+        get: fn(&Settings) -> &str,
+        apply: fn(&mut Settings, String),
+    },
     /// `true` or `false`.
     Bool {
         get: fn(&Settings) -> bool,
@@ -214,25 +226,31 @@ pub enum Kind {
     },
 }
 
+/// The `appearance` setting's values, and their labels.
+const APPEARANCES: &[(&str, &str)] = &[
+    ("light", "Light"),
+    ("dark", "Dark"),
+    ("system", "Match System"),
+];
+
 pub const SETTINGS: &[Setting] = &[
     Setting {
-        key: "theme",
+        key: "appearance",
         label: "Appearance",
         note: None,
         kind: Kind::Choice {
-            choices: &[
-                ("light", "Light"),
-                ("dark", "Dark"),
-                ("system", "Match System"),
-            ],
-            get: |settings| settings.theme.as_str(),
-            apply: |settings, value| {
-                settings.theme = match value {
-                    "light" => ThemeSetting::Light,
-                    "dark" => ThemeSetting::Dark,
-                    _ => ThemeSetting::System,
-                }
-            },
+            choices: APPEARANCES,
+            get: |settings| settings.appearance.as_str(),
+            apply: |settings, value| settings.appearance = AppearanceSetting::parse(value),
+        },
+    },
+    Setting {
+        key: "theme",
+        label: "Theme",
+        note: None,
+        kind: Kind::Theme {
+            get: |settings| &settings.theme,
+            apply: |settings, name| settings.theme = name,
         },
     },
     Setting {
@@ -377,13 +395,12 @@ fn find(key: &str) -> Option<&'static Setting> {
 
 impl Kind {
     /// Reads `value` into `settings`, or says what's wrong with it, as in
-    /// "`key` …". `installed` gives a font family's name as installed, or
-    /// `None` if it isn't.
+    /// "`key` …". `available` says which fonts and themes there are.
     fn read(
         &self,
         value: &Value,
         settings: &mut Settings,
-        installed: &FontCheck,
+        available: &Available,
     ) -> Result<(), String> {
         let invalid = || Err(format!("must be {}", self.allowed()));
         let number = value.as_integer().and_then(|n| u32::try_from(n).ok());
@@ -403,9 +420,16 @@ impl Kind {
                 _ => return invalid(),
             },
             Self::Font { apply, .. } => match value.as_str() {
-                Some(name) => match installed(name) {
+                Some(name) => match (available.fonts)(name) {
                     Some(name) => apply(settings, Some(name)),
                     None => return Err(format!("names \"{name}\", which isn't installed")),
+                },
+                None => return invalid(),
+            },
+            Self::Theme { apply, .. } => match value.as_str() {
+                Some(name) => match (available.themes)(name) {
+                    Some(name) => apply(settings, name),
+                    None => return Err(format!("names \"{name}\", which isn't a theme")),
                 },
                 None => return invalid(),
             },
@@ -437,6 +461,7 @@ impl Kind {
                 one_of(&values.iter().map(String::as_str).collect::<Vec<_>>())
             }
             Self::Font { .. } => "a font name, e.g. \"Charter\"".to_owned(),
+            Self::Theme { .. } => "a theme's name, e.g. \"Kertas\"".to_owned(),
             Self::Bool { .. } => one_of(&["true", "false"]),
             Self::OffOrInteger { range, .. } => format!(
                 "`off` or a whole number from {} to {}",
@@ -447,7 +472,17 @@ impl Kind {
     }
 }
 
-impl ThemeSetting {
+impl AppearanceSetting {
+    /// The appearance a value in the settings file names: `system` for
+    /// anything but `light` or `dark`.
+    fn parse(value: &str) -> Self {
+        match value {
+            "light" => Self::Light,
+            "dark" => Self::Dark,
+            _ => Self::System,
+        }
+    }
+
     /// The value written in the settings file.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -483,16 +518,30 @@ impl Layout {
 /// isn't.
 pub type FontCheck<'a> = dyn Fn(&str) -> Option<String> + 'a;
 
-/// Reads settings from the file's `text`, taking any font as installed.
-/// Anything wrong is reported, and the affected settings keep their
-/// defaults.
-pub fn parse(text: &str) -> (Settings, Vec<Problem>) {
-    parse_checking_fonts(text, &|name| Some(name.to_owned()))
+/// Checks a color theme's name: the theme's name as it's spelled, or
+/// `None` if there's no such theme.
+pub type ThemeCheck<'a> = dyn Fn(&str) -> Option<String> + 'a;
+
+/// The fonts and color themes settings can name.
+pub struct Available<'a> {
+    pub fonts: &'a FontCheck<'a>,
+    pub themes: &'a ThemeCheck<'a>,
 }
 
-/// Reads settings like [`parse`], reporting fonts that `installed` says
-/// aren't installed.
-pub fn parse_checking_fonts(text: &str, installed: &FontCheck) -> (Settings, Vec<Problem>) {
+/// Reads settings from the file's `text`, taking any font as installed,
+/// and knowing only the built-in themes. Anything wrong is reported, and
+/// the affected settings keep their defaults.
+pub fn parse(text: &str) -> (Settings, Vec<Problem>) {
+    let available = Available {
+        fonts: &|name| Some(name.to_owned()),
+        themes: &|name| themes::find(themes::builtin(), name),
+    };
+    parse_checking(text, &available)
+}
+
+/// Reads settings like [`parse`], reporting fonts and themes that
+/// `available` says there aren't.
+pub fn parse_checking(text: &str, available: &Available) -> (Settings, Vec<Problem>) {
     let mut settings = Settings::default();
     let mut problems = Vec::new();
     let line_of = |offset: usize| text[..offset.min(text.len())].matches('\n').count() + 1;
@@ -507,11 +556,19 @@ pub fn parse_checking_fonts(text: &str, installed: &FontCheck) -> (Settings, Vec
             return (settings, problems);
         }
     };
+    let legacy = legacy_appearance(&document);
     for (key, item) in document.iter() {
         let line = document
             .get_key_value(key)
             .and_then(|(key, _)| key.span())
             .map(|span| line_of(span.start));
+        // Before themes, `theme` was the appearance.
+        if let Some(appearance) = legacy
+            && key == "theme"
+        {
+            settings.appearance = AppearanceSetting::parse(appearance);
+            continue;
+        }
         let Some(setting) = find(key) else {
             problems.push(Problem {
                 line,
@@ -520,7 +577,7 @@ pub fn parse_checking_fonts(text: &str, installed: &FontCheck) -> (Settings, Vec
             continue;
         };
         let read = match item.as_value() {
-            Some(value) => setting.kind.read(value, &mut settings, installed),
+            Some(value) => setting.kind.read(value, &mut settings, available),
             None => Err(format!("must be {}", setting.kind.allowed())),
         };
         if let Err(problem) = read {
@@ -538,17 +595,19 @@ pub fn parse_checking_fonts(text: &str, installed: &FontCheck) -> (Settings, Vec
 /// overwritten, or if `value` isn't allowed for `key`.
 pub fn set(text: &str, key: &str, value: impl Into<Value>) -> Result<String, Problem> {
     let value = value.into();
+    let text = &migrate(text, key);
     let Some(setting) = find(key) else {
         return Err(Problem {
             line: None,
             message: format!("unknown setting `{key}`"),
         });
     };
-    let any_font = |name: &str| Some(name.to_owned());
-    if let Err(problem) = setting
-        .kind
-        .read(&value, &mut Settings::default(), &any_font)
-    {
+    // The settings sheet offers only fonts and themes there are.
+    let any = Available {
+        fonts: &|name| Some(name.to_owned()),
+        themes: &|name| Some(name.to_owned()),
+    };
+    if let Err(problem) = setting.kind.read(&value, &mut Settings::default(), &any) {
         return Err(Problem {
             line: None,
             message: format!("`{key}` {problem}"),
@@ -589,6 +648,7 @@ pub fn set(text: &str, key: &str, value: impl Into<Value>) -> Result<String, Pro
 /// The file's `text` without `key`, so the setting takes its default,
 /// keeping everything else. Fails if the file can't be parsed.
 pub fn remove(text: &str, key: &str) -> Result<String, Problem> {
+    let text = &migrate(text, key);
     let mut document: DocumentMut = text.parse().map_err(|err: toml_edit::TomlError| Problem {
         line: None,
         message: format!(
@@ -600,6 +660,39 @@ pub fn remove(text: &str, key: &str) -> Result<String, Problem> {
         return Ok(text.to_owned());
     }
     Ok(document.to_string())
+}
+
+/// The appearance an old settings file gives as `theme`, from before
+/// there were themes, if it has no `appearance`.
+fn legacy_appearance(document: &toml_edit::Document<&str>) -> Option<&'static str> {
+    if document.contains_key("appearance") {
+        return None;
+    }
+    let value = document.get("theme")?.as_str()?;
+    APPEARANCES
+        .iter()
+        .map(|&(appearance, _)| appearance)
+        .find(|&appearance| appearance == value)
+}
+
+/// Before changing `key`, if it's `appearance` or `theme`, renames an
+/// old file's `theme = "dark"` (say) to `appearance = "dark"`, keeping
+/// its place and comments, so neither setting is lost.
+fn migrate(text: &str, key: &str) -> String {
+    let span = match toml_edit::Document::parse(text) {
+        Ok(document)
+            if ["appearance", "theme"].contains(&key) && legacy_appearance(&document).is_some() =>
+        {
+            document
+                .get_key_value("theme")
+                .and_then(|(key, _)| key.span())
+        }
+        _ => None,
+    };
+    match span {
+        Some(span) => format!("{}appearance{}", &text[..span.start], &text[span.end..]),
+        None => text.to_owned(),
+    }
 }
 
 /// "`a`, `b` or `c`".
@@ -618,19 +711,20 @@ mod tests {
     #[test]
     fn empty_file_gives_defaults() {
         assert_eq!(parse(""), (Settings::default(), vec![]));
-        assert_eq!(Settings::default().theme, ThemeSetting::System);
+        assert_eq!(Settings::default().appearance, AppearanceSetting::System);
         assert_eq!(Settings::default().layout, Layout::Tabs);
     }
 
     #[test]
     fn reads_settings() {
         let (settings, problems) =
-            parse("# Mine\ntheme = \"dark\"\nlayout = \"windows\"\ntext_width = \"wide\"\n");
+            parse("# Mine\nappearance = \"dark\"\nlayout = \"windows\"\ntext_width = \"wide\"\n");
         assert_eq!(problems, vec![]);
         assert_eq!(
             settings,
             Settings {
-                theme: ThemeSetting::Dark,
+                appearance: AppearanceSetting::Dark,
+                theme: DEFAULT_THEME.into(),
                 layout: Layout::Windows,
                 text_width: TextWidth::Wide,
                 font_size: DEFAULT_FONT_SIZE,
@@ -670,8 +764,8 @@ mod tests {
 
     #[test]
     fn bad_values_fall_back_with_their_line() {
-        let (settings, problems) = parse("layout = \"windows\"\n\ntheme = \"blue\"\n");
-        assert_eq!(settings.theme, ThemeSetting::System);
+        let (settings, problems) = parse("layout = \"windows\"\n\nappearance = \"blue\"\n");
+        assert_eq!(settings.appearance, AppearanceSetting::System);
         assert_eq!(
             settings.layout,
             Layout::Windows,
@@ -681,23 +775,24 @@ mod tests {
             problems,
             vec![Problem {
                 line: Some(3),
-                message: "`theme` must be `light`, `dark` or `system`; using the default".into(),
+                message: "`appearance` must be `light`, `dark` or `system`; using the default"
+                    .into(),
             }]
         );
-        let (_, problems) = parse("theme = 3\n");
+        let (_, problems) = parse("appearance = 3\n");
         assert_eq!(problems.len(), 1);
     }
 
     #[test]
     fn unknown_settings_are_reported() {
-        let (settings, problems) = parse("theme = \"light\"\nfont = \"x\"\n");
-        assert_eq!(settings.theme, ThemeSetting::Light);
+        let (settings, problems) = parse("appearance = \"light\"\nfont = \"x\"\n");
+        assert_eq!(settings.appearance, AppearanceSetting::Light);
         assert_eq!(problems[0].to_string(), "line 2: unknown setting `font`");
     }
 
     #[test]
     fn invalid_toml_uses_defaults() {
-        let (settings, problems) = parse("theme = \"dark\"\ntheme = = \n");
+        let (settings, problems) = parse("appearance = \"dark\"\nappearance = = \n");
         assert_eq!(settings, Settings::default());
         assert_eq!(problems.len(), 1);
         assert_eq!(problems[0].line, Some(2));
@@ -705,16 +800,19 @@ mod tests {
 
     #[test]
     fn set_keeps_comments_and_formatting() {
-        let text = "# My settings\ntheme = \"dark\"  # for night work\n\nlayout = \"tabs\"\n";
+        let text = "# My settings\nappearance = \"dark\"  # for night work\n\nlayout = \"tabs\"\n";
         assert_eq!(
-            set(text, "theme", "light").unwrap(),
-            "# My settings\ntheme = \"light\"  # for night work\n\nlayout = \"tabs\"\n"
+            set(text, "appearance", "light").unwrap(),
+            "# My settings\nappearance = \"light\"  # for night work\n\nlayout = \"tabs\"\n"
         );
     }
 
     #[test]
     fn set_adds_missing_settings() {
-        assert_eq!(set("", "theme", "dark").unwrap(), "theme = \"dark\"\n");
+        assert_eq!(
+            set("", "appearance", "dark").unwrap(),
+            "appearance = \"dark\"\n"
+        );
         assert_eq!(
             set("# Mine\n", "layout", "windows").unwrap(),
             "# Mine\nlayout = \"windows\"\n"
@@ -769,7 +867,11 @@ mod tests {
                 .find(|font| font.eq_ignore_ascii_case(name))
                 .map(str::to_owned)
         };
-        let (settings, problems) = parse_checking_fonts(text, &installed);
+        let available = Available {
+            fonts: &installed,
+            themes: &|_| None,
+        };
+        let (settings, problems) = parse_checking(text, &available);
         assert_eq!(
             settings.body_font.as_deref(),
             Some("Charter"),
@@ -788,14 +890,74 @@ mod tests {
     }
 
     #[test]
+    fn themes() {
+        assert_eq!(Settings::default().theme, "Kertas");
+        let available = Available {
+            fonts: &|name| Some(name.to_owned()),
+            themes: &|name| {
+                ["Kertas", "Solarized"]
+                    .into_iter()
+                    .find(|theme| theme.eq_ignore_ascii_case(name))
+                    .map(str::to_owned)
+            },
+        };
+        let (settings, problems) = parse_checking("theme = \"solarized\"\n", &available);
+        assert_eq!(problems, vec![]);
+        assert_eq!(settings.theme, "Solarized", "named as spelled");
+
+        let (settings, problems) = parse_checking("theme = \"Nope\"\n", &available);
+        assert_eq!(settings.theme, DEFAULT_THEME);
+        assert_eq!(
+            problems[0].to_string(),
+            "line 1: `theme` names \"Nope\", which isn't a theme; using the default"
+        );
+        let (_, problems) = parse("theme = true\n");
+        assert_eq!(
+            problems[0].to_string(),
+            "line 1: `theme` must be a theme's name, e.g. \"Kertas\"; using the default"
+        );
+    }
+
+    #[test]
+    fn old_theme_setting_is_the_appearance() {
+        // Before themes, `theme` was the appearance.
+        let old = "# Mine\ntheme = \"dark\"  # at night\nlayout = \"windows\"\n";
+        let (settings, problems) = parse(old);
+        assert_eq!(problems, vec![]);
+        assert_eq!(settings.appearance, AppearanceSetting::Dark);
+        assert_eq!(settings.theme, DEFAULT_THEME);
+        // Not when there's an `appearance`: then it names a theme.
+        let (settings, problems) = parse("appearance = \"light\"\ntheme = \"dark\"\n");
+        assert_eq!(settings.appearance, AppearanceSetting::Light);
+        assert_eq!(problems.len(), 1);
+
+        // Changing either renames it in place, so neither is lost.
+        let renamed = "# Mine\nappearance = \"dark\"  # at night\nlayout = \"windows\"\n";
+        assert_eq!(
+            set(old, "theme", "Kertas").unwrap(),
+            format!("{renamed}theme = \"Kertas\"\n")
+        );
+        assert_eq!(
+            set(old, "appearance", "light").unwrap(),
+            renamed.replace("dark", "light")
+        );
+        assert_eq!(remove(old, "theme").unwrap(), renamed);
+        // Changing anything else leaves it.
+        assert_eq!(
+            set(old, "layout", "tabs").unwrap(),
+            old.replace("windows", "tabs")
+        );
+    }
+
+    #[test]
     fn remove_restores_the_default() {
-        let text = "# Mine\ntheme = \"dark\" # night\nbody_font = \"Charter\"\n";
+        let text = "# Mine\nappearance = \"dark\" # night\nbody_font = \"Charter\"\n";
         assert_eq!(
             remove(text, "body_font").unwrap(),
-            "# Mine\ntheme = \"dark\" # night\n"
+            "# Mine\nappearance = \"dark\" # night\n"
         );
         assert_eq!(remove(text, "code_font").unwrap(), text);
-        assert!(remove("x = = ", "theme").is_err());
+        assert!(remove("x = = ", "appearance").is_err());
     }
 
     #[test]
@@ -823,24 +985,24 @@ mod tests {
 
     #[test]
     fn tables_are_reported_and_kept() {
-        let text = "theme = \"dark\"\n\n[extra]\nx = 1\n";
+        let text = "appearance = \"dark\"\n\n[extra]\nx = 1\n";
         let (settings, problems) = parse(text);
-        assert_eq!(settings.theme, ThemeSetting::Dark);
+        assert_eq!(settings.appearance, AppearanceSetting::Dark);
         assert_eq!(problems[0].to_string(), "line 3: unknown setting `extra`");
         // A new setting goes before the table, so it isn't inside it.
         let changed = set(text, "layout", "windows").unwrap();
         assert_eq!(
             changed,
-            "theme = \"dark\"\nlayout = \"windows\"\n\n[extra]\nx = 1\n"
+            "appearance = \"dark\"\nlayout = \"windows\"\n\n[extra]\nx = 1\n"
         );
         assert_eq!(parse(&changed).0.layout, Layout::Windows);
         // A setting written as a table is replaced by a value.
-        let changed = set("[theme]\nx = 1\n", "theme", "light").unwrap();
+        let changed = set("[appearance]\nx = 1\n", "appearance", "light").unwrap();
         assert_eq!(
             parse(&changed),
             (
                 Settings {
-                    theme: ThemeSetting::Light,
+                    appearance: AppearanceSetting::Light,
                     ..Settings::default()
                 },
                 vec![]
@@ -850,16 +1012,16 @@ mod tests {
 
     #[test]
     fn line_numbers_with_crlf_and_duplicates() {
-        let (_, problems) = parse("theme = \"dark\"\r\n\r\nlayout = 1\r\n");
+        let (_, problems) = parse("appearance = \"dark\"\r\n\r\nlayout = 1\r\n");
         assert_eq!(problems[0].line, Some(3));
-        let (settings, problems) = parse("theme = \"dark\"\ntheme = \"light\"\n");
+        let (settings, problems) = parse("appearance = \"dark\"\nappearance = \"light\"\n");
         assert_eq!(settings, Settings::default());
         assert_eq!(problems[0].line, Some(2));
     }
 
     #[test]
     fn set_refuses_bad_values() {
-        assert!(set("", "theme", "blue").is_err());
+        assert!(set("", "appearance", "blue").is_err());
         assert!(set("", "font_size", 99).is_err());
         assert!(set("", "editing_hint", "yes").is_err());
         assert!(set("", "nonsense", true).is_err());
@@ -893,6 +1055,12 @@ mod tests {
                     let text = remove(&text, setting.key).unwrap();
                     assert_eq!(get(&parse(&text).0), None, "{}", setting.key);
                 }
+                Kind::Theme { get, .. } => {
+                    let text = set("", setting.key, "kertas").unwrap();
+                    assert_eq!(get(&parse(&text).0), "Kertas", "{}", setting.key);
+                    let text = remove(&text, setting.key).unwrap();
+                    assert_eq!(get(&parse(&text).0), DEFAULT_THEME, "{}", setting.key);
+                }
                 Kind::Bool { get, .. } => {
                     for b in [true, false] {
                         let text = set("", setting.key, b).unwrap();
@@ -913,6 +1081,6 @@ mod tests {
 
     #[test]
     fn set_refuses_invalid_files() {
-        assert!(set("theme = = ", "theme", "dark").is_err());
+        assert!(set("appearance = = ", "appearance", "dark").is_err());
     }
 }

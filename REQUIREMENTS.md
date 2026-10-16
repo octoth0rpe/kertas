@@ -118,7 +118,8 @@ Deliberately **not** supported:
 
 | Setting | Values | Default | Priority |
 |---------|--------|---------|----------|
-| Theme | `light`, `dark`, `system` | `system` (A2) | MUST |
+| Appearance | `light`, `dark`, `system` | `system` (A2) | MUST |
+| Theme | a theme's name | `Kertas` (A2) | MUST |
 | Document layout | `tabs`, `windows` | `tabs` | MUST |
 | Font size / zoom | number | TBD | SHOULD |
 | Body font | font family | the system font | SHOULD |

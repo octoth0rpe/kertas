@@ -49,7 +49,7 @@ Each document opens in its own tab. **⌘1** to **⌘9** go straight to a tab. T
 
 ## Appearance
 
-**View → Appearance** chooses Light, Dark or Match System. **View → Text Width** chooses how wide the text is: Standard, Wide, or the whole window.
+**View → Appearance** chooses Light, Dark or Match System, and **View → Theme** chooses the colors. **View → Text Width** chooses how wide the text is: Standard, Wide, or the whole window.
 
 **⌘+** and **⌘-** make the text bigger or smaller in every document, and **⌘0** returns to your usual size. Zooming lasts until you quit. To change the size documents start at, use **Default text size** in **Kertas → Settings…**.
 
@@ -58,7 +58,8 @@ Each document opens in its own tab. **⌘1** to **⌘9** go straight to a tab. T
 Settings are kept in `~/Library/Application Support/kertas/config.toml`. **Kertas → Settings…** (⌘,) and the View menu change them for you, and you can also edit the file. Changes apply straight away, except `layout`, which applies the next time Kertas starts.
 
 ```toml
-theme = "dark"        # "light", "dark" or "system"
+appearance = "dark"   # "light", "dark" or "system"
+theme = "Kertas"      # the color theme
 layout = "windows"    # "tabs" or "windows", from the next start
 text_width = "wide"   # "standard", "wide" or "full"
 font_size = 18        # 10 to 32

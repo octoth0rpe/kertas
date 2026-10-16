@@ -155,6 +155,17 @@ pub fn builtin() -> &'static [Theme] {
     })
 }
 
+/// The name of the theme in `themes` called `name`, ignoring case, as
+/// it's spelled. For [`ThemeCheck`].
+///
+/// [`ThemeCheck`]: crate::settings::ThemeCheck
+pub fn find(themes: &[Theme], name: &str) -> Option<String> {
+    themes
+        .iter()
+        .find(|theme| theme.name.eq_ignore_ascii_case(name.trim()))
+        .map(|theme| theme.name.clone())
+}
+
 /// Kertas's own theme: the default, whose colors stand in for any a theme
 /// file is missing.
 pub fn kertas() -> &'static Theme {

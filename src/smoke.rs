@@ -634,15 +634,16 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
 
         checks.check("no file, no problems", problems(cx) == 0);
 
+        // From before themes, when `theme` was the appearance.
         std::fs::write(&path, "# Mine\ntheme = \"dark\"  # at night\n").ok();
         checks.check(
-            "edit applies live",
+            "edit applies live (old appearance setting)",
             wait_for(cx, APPLY, |cx| theme(cx) == Some(Theme::dark())).await,
         );
 
         // Editors often save by renaming a new file over the old one.
         let temp = path.with_extension("tmp");
-        std::fs::write(&temp, "theme = \"light\"\n").ok();
+        std::fs::write(&temp, "appearance = \"light\"\n").ok();
         std::fs::rename(&temp, &path).ok();
         checks.check(
             "replaced file applies live",
@@ -673,12 +674,12 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
             problems(cx) == 0 && theme(cx) == Some(Theme::dark())
         })
         .await;
-        let set = cx.update(|cx| app_settings::set("theme", "light", cx));
+        let set = cx.update(|cx| app_settings::set("appearance", "light", cx));
         checks.check("setting is written", set.is_ok());
         let text = std::fs::read_to_string(&path).unwrap_or_default();
         checks.check(
-            "comments are kept",
-            text == "# Mine\ntheme = \"light\"  # at night\n",
+            "old setting is renamed, comments are kept",
+            text == "# Mine\nappearance = \"light\"  # at night\n",
         );
         checks.check(
             "written setting applies",
@@ -686,15 +687,15 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
         );
 
         // The View menu's commands change settings.
-        dispatch(window, cx, Box::new(crate::menus::UseDarkTheme));
+        dispatch(window, cx, Box::new(crate::menus::UseDarkAppearance));
         dispatch(window, cx, Box::new(crate::menus::UseFullWidth));
         let dark = wait_for(cx, APPLY, |cx| theme(cx) == Some(Theme::dark())).await;
         let text = std::fs::read_to_string(&path).unwrap_or_default();
         checks.check(
             "View menu writes settings",
-            text == "# Mine\ntheme = \"dark\"  # at night\ntext_width = \"full\"\n",
+            text == "# Mine\nappearance = \"dark\"  # at night\ntext_width = \"full\"\n",
         );
-        checks.check("View menu theme applies", dark);
+        checks.check("View menu appearance applies", dark);
         dispatch(window, cx, Box::new(crate::menus::UseStandardWidth));
         settle(cx).await;
 
@@ -921,7 +922,7 @@ fn smoke_settings_window(window: WindowHandle<DocumentView>, cx: &mut App) {
 
         // From the keyboard: Tab reaches the first control (Appearance's
         // Light), Space chooses it, and Tab moves on to Dark.
-        let theme = |cx: &mut AsyncApp| cx.update(|cx| crate::app_settings::get(cx).theme);
+        let theme = |cx: &mut AsyncApp| cx.update(|cx| crate::app_settings::get(cx).appearance);
         if let Some(settings) = settings {
             settings
                 .update(cx, |_, window, _| window.activate_window())
@@ -941,9 +942,9 @@ fn smoke_settings_window(window: WindowHandle<DocumentView>, cx: &mut App) {
             let back = theme(cx);
             checks.check(
                 &format!("Tab, ⇧Tab and Space choose settings ({light:?}, {dark:?}, {back:?})"),
-                light == kertas::settings::ThemeSetting::Light
-                    && dark == kertas::settings::ThemeSetting::Dark
-                    && back == kertas::settings::ThemeSetting::Light,
+                light == kertas::settings::AppearanceSetting::Light
+                    && dark == kertas::settings::AppearanceSetting::Dark
+                    && back == kertas::settings::AppearanceSetting::Light,
             );
             settings
                 .update(cx, |_, window, cx| {

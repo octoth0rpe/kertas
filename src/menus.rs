@@ -3,8 +3,9 @@
 //! The View menu's choices are settings, so the menus are rebuilt whenever
 //! the settings change, to keep their checkmarks current.
 
-use gpui::{App, Menu, MenuItem, NoAction, actions};
-use kertas::settings::{Settings, TextWidth, ThemeSetting};
+use gpui::{Action, App, Menu, MenuItem, NoAction, SharedString, actions};
+use kertas::settings::{AppearanceSetting, DEFAULT_THEME, Settings, TextWidth};
+use kertas::themes;
 
 use crate::app_settings::{self, AppSettings};
 use crate::builtin::{self, Builtin};
@@ -16,9 +17,9 @@ use crate::settings_window;
 actions!(
     kertas,
     [
-        UseLightTheme,
-        UseDarkTheme,
-        UseSystemTheme,
+        UseLightAppearance,
+        UseDarkAppearance,
+        UseSystemAppearance,
         UseStandardWidth,
         UseWideWidth,
         UseFullWidth,
@@ -32,6 +33,13 @@ actions!(
     ]
 );
 
+/// Uses the theme called `name`.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = kertas, no_json)]
+pub struct UseTheme {
+    pub name: SharedString,
+}
+
 /// Sets up the menu bar and its app-wide actions.
 pub fn init(cx: &mut App) {
     // Menu actions arrive while a window is locked for the dispatch, and
@@ -39,14 +47,26 @@ pub fn init(cx: &mut App) {
     fn setting(key: &'static str, value: &'static str) -> impl Fn(&mut App) {
         move |cx| cx.defer(move |cx| app_settings::set_or_report(key, value, cx))
     }
-    let theme = |value: ThemeSetting| setting("theme", value.as_str());
+    let appearance = |value: AppearanceSetting| setting("appearance", value.as_str());
     let width = |value: TextWidth| setting("text_width", value.as_str());
-    let light = theme(ThemeSetting::Light);
-    cx.on_action(move |_: &UseLightTheme, cx| light(cx));
-    let dark = theme(ThemeSetting::Dark);
-    cx.on_action(move |_: &UseDarkTheme, cx| dark(cx));
-    let system = theme(ThemeSetting::System);
-    cx.on_action(move |_: &UseSystemTheme, cx| system(cx));
+    let light = appearance(AppearanceSetting::Light);
+    cx.on_action(move |_: &UseLightAppearance, cx| light(cx));
+    let dark = appearance(AppearanceSetting::Dark);
+    cx.on_action(move |_: &UseDarkAppearance, cx| dark(cx));
+    let system = appearance(AppearanceSetting::System);
+    cx.on_action(move |_: &UseSystemAppearance, cx| system(cx));
+    cx.on_action(|action: &UseTheme, cx| {
+        let name = action.name.to_string();
+        cx.defer(move |cx| {
+            // The default is set by not setting it, as in the settings
+            // window.
+            if name == DEFAULT_THEME {
+                app_settings::remove_or_report("theme", cx);
+            } else {
+                app_settings::set_or_report("theme", name, cx);
+            }
+        })
+    });
     let standard = width(TextWidth::Standard);
     cx.on_action(move |_: &UseStandardWidth, cx| standard(cx));
     let wide = width(TextWidth::Wide);
@@ -81,7 +101,7 @@ pub fn refresh(cx: &mut App) {
 }
 
 fn menus(settings: Settings) -> Vec<Menu> {
-    let theme = |value: ThemeSetting| settings.theme == value;
+    let appearance = |value: AppearanceSetting| settings.appearance == value;
     let width = |value: TextWidth| settings.text_width == value;
     let mut kertas = vec![
         MenuItem::action("About Kertas", OpenAbout),
@@ -108,26 +128,41 @@ fn menus(settings: Settings) -> Vec<Menu> {
             MenuItem::separator(),
             MenuItem::action("Close", CloseWindow),
         ]),
-        Menu::new("View").items([
-            section("Appearance"),
-            MenuItem::action("Light", UseLightTheme).checked(theme(ThemeSetting::Light)),
-            MenuItem::action("Dark", UseDarkTheme).checked(theme(ThemeSetting::Dark)),
-            MenuItem::action("Match System", UseSystemTheme).checked(theme(ThemeSetting::System)),
-            MenuItem::separator(),
-            section("Text Width"),
-            MenuItem::action("Standard", UseStandardWidth).checked(width(TextWidth::Standard)),
-            MenuItem::action("Wide", UseWideWidth).checked(width(TextWidth::Wide)),
-            MenuItem::action("Full Width", UseFullWidth).checked(width(TextWidth::Full)),
-            MenuItem::separator(),
-            MenuItem::action("Show Scrollbar", ToggleScrollbar).checked(settings.scrollbar),
-            MenuItem::separator(),
-            MenuItem::action("Zoom In", ZoomIn),
-            MenuItem::action("Zoom Out", ZoomOut),
-            MenuItem::action("Reset Zoom", ResetZoom),
-            // macOS adds Enter Full Screen, with an icon, at the end. In a
-            // section of its own, its icon doesn't indent the items above.
-            MenuItem::separator(),
-        ]),
+        Menu::new("View").items(
+            [
+                section("Appearance"),
+                MenuItem::action("Light", UseLightAppearance)
+                    .checked(appearance(AppearanceSetting::Light)),
+                MenuItem::action("Dark", UseDarkAppearance)
+                    .checked(appearance(AppearanceSetting::Dark)),
+                MenuItem::action("Match System", UseSystemAppearance)
+                    .checked(appearance(AppearanceSetting::System)),
+                MenuItem::separator(),
+                section("Theme"),
+            ]
+            .into_iter()
+            .chain(themes::builtin().iter().map(|theme| {
+                let name = SharedString::from(theme.name.clone());
+                MenuItem::action(name.clone(), UseTheme { name })
+                    .checked(theme.name == settings.theme)
+            }))
+            .chain([
+                MenuItem::separator(),
+                section("Text Width"),
+                MenuItem::action("Standard", UseStandardWidth).checked(width(TextWidth::Standard)),
+                MenuItem::action("Wide", UseWideWidth).checked(width(TextWidth::Wide)),
+                MenuItem::action("Full Width", UseFullWidth).checked(width(TextWidth::Full)),
+                MenuItem::separator(),
+                MenuItem::action("Show Scrollbar", ToggleScrollbar).checked(settings.scrollbar),
+                MenuItem::separator(),
+                MenuItem::action("Zoom In", ZoomIn),
+                MenuItem::action("Zoom Out", ZoomOut),
+                MenuItem::action("Reset Zoom", ResetZoom),
+                // macOS adds Enter Full Screen, with an icon, at the end. In a
+                // section of its own, its icon doesn't indent the items above.
+                MenuItem::separator(),
+            ]),
+        ),
         Menu::new("Help").items([
             MenuItem::action("Kertas Help", OpenHelp),
             MenuItem::action("Markdown Syntax", OpenMarkdownSyntax),
