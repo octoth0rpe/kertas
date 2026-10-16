@@ -133,6 +133,7 @@ mod tests {
                 ("link", theme.link, theme.background),
                 ("code", theme.text, theme.code_background),
                 ("table header", theme.text, theme.table_header_background),
+                ("accent text", theme.accent_text, theme.caret),
                 ("note", theme.alert(AlertKind::Note), theme.background),
                 ("tip", theme.alert(AlertKind::Tip), theme.background),
                 (
