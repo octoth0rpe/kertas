@@ -24,6 +24,7 @@ actions!(
         UseFullWidth,
         ToggleScrollbar,
         OpenHelp,
+        OpenMarkdownSyntax,
         OpenKeyboardShortcuts,
         OpenLicenses,
         OpenAbout,
@@ -63,6 +64,9 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &OpenAbout, cx| cx.defer(|cx| builtin::open(Builtin::About, cx)));
     cx.on_action(|_: &OpenHelp, cx| cx.defer(|cx| builtin::open(Builtin::Help, cx)));
     cx.on_action(|_: &OpenLicenses, cx| cx.defer(|cx| builtin::open(Builtin::Licenses, cx)));
+    cx.on_action(|_: &OpenMarkdownSyntax, cx| {
+        cx.defer(|cx| builtin::open(Builtin::MarkdownSyntax, cx))
+    });
     cx.on_action(|_: &OpenKeyboardShortcuts, cx| {
         cx.defer(|cx| builtin::open(Builtin::KeyboardShortcuts, cx))
     });
@@ -126,6 +130,7 @@ fn menus(settings: Settings) -> Vec<Menu> {
         ]),
         Menu::new("Help").items([
             MenuItem::action("Kertas Help", OpenHelp),
+            MenuItem::action("Markdown Syntax", OpenMarkdownSyntax),
             MenuItem::action("Keyboard Shortcuts", OpenKeyboardShortcuts),
             MenuItem::separator(),
             MenuItem::action("Licenses", OpenLicenses),
