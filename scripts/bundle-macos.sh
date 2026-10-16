@@ -2,7 +2,8 @@
 # Builds Kertas.app in target/release/, signed for this Mac only.
 #
 #   scripts/bundle-macos.sh             # build target/release/Kertas.app
-#   scripts/bundle-macos.sh --install   # ...and copy it to ~/Applications
+#   scripts/bundle-macos.sh --install   # ...and replace ~/Applications/Kertas.app,
+#                                       # quitting it first if it's running
 #   scripts/bundle-macos.sh --release   # build from a clean checkout of the
 #                                       # current commit, after every check
 #                                       # (scripts/check.sh) and smoke test
@@ -66,10 +67,28 @@ codesign --force --sign - "$app"
 echo "Built $app ($version)"
 
 if $install; then
+    installed="$HOME/Applications/Kertas.app"
+    # Quit the installed Kertas first, as ⌘Q would, so unsaved changes are
+    # saved or asked about. Only that copy: a build running from target/
+    # is left alone.
+    running() { pgrep -f "$installed/Contents/MacOS/Kertas" >/dev/null; }
+    if running; then
+        echo "Quitting $installed"
+        osascript -e "tell application \"$installed\" to quit" >/dev/null 2>&1 || true
+        waited=0
+        while running; do
+            if [ "$waited" -ge 30 ]; then
+                echo "bundle-macos.sh: Kertas is still running (asking about unsaved changes?); quit it and try again" >&2
+                exit 1
+            fi
+            sleep 1
+            waited=$((waited + 1))
+        done
+    fi
     mkdir -p "$HOME/Applications"
-    rm -rf "$HOME/Applications/Kertas.app"
-    cp -R "$app" "$HOME/Applications/Kertas.app"
+    rm -rf "$installed"
+    cp -R "$app" "$installed"
     # Tell Launch Services about the app, so Finder offers it for Markdown.
-    /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$HOME/Applications/Kertas.app"
+    /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$installed"
     echo "Installed ~/Applications/Kertas.app"
 fi
