@@ -60,6 +60,13 @@ https://example.com/bare, www.example.com and hello@example.com.
 > [!CAUTION]
 > Advises about risks or negative outcomes of certain actions.
 
+## Images
+
+![A blue gradient](images/gradient.png)
+
+Badges sit in the text: [![tests: pass](images/badge.svg)](https://example.com) and a
+missing one: ![no such image](images/missing.png).
+
 ## Code
 
 ```rust

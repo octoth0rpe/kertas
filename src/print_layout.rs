@@ -8,8 +8,10 @@
 //! paragraph.
 
 use std::ops::Range;
+use std::path::{Path, PathBuf};
 
 use crate::inline::InlineText;
+use crate::links;
 use crate::model::Model;
 use crate::rendered::{AlertKind, ColumnAlignment, RenderedBlock};
 use crate::settings::ListIndent;
@@ -35,6 +37,11 @@ pub struct PrintLayout {
     pub paragraphs: Vec<Paragraph>,
     /// The tables that `Frame::Cell` paragraphs belong to.
     pub tables: Vec<TableLayout>,
+    /// The images, each standing in for an object replacement character
+    /// (U+FFFC) in the text.
+    pub images: Vec<PrintImage>,
+    /// The document's file, which images' relative paths start from.
+    document: Option<PathBuf>,
     /// How many spaces a tab in code is printed as.
     tab_width: u32,
     /// How far each list level is indented, in points.
@@ -103,6 +110,17 @@ pub enum Frame {
     },
 }
 
+/// An image to print.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrintImage {
+    /// The byte range of its U+FFFC in `PrintLayout::text`.
+    pub range: Range<usize>,
+    pub path: PathBuf,
+}
+
+/// What an image is replaced with in the text.
+pub const OBJECT_REPLACEMENT: char = '\u{FFFC}';
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableLayout {
     pub columns: usize,
@@ -111,9 +129,16 @@ pub struct TableLayout {
 impl PrintLayout {
     /// Lays out every block in `model` for printing, with each tab in
     /// code shown as `tab_width` spaces, and lists indented by
-    /// `list_indent`.
-    pub fn new(model: &Model, tab_width: u32, list_indent: ListIndent) -> Self {
+    /// `list_indent`. Images' relative paths start from `document`'s
+    /// folder.
+    pub fn new(
+        model: &Model,
+        document: Option<&Path>,
+        tab_width: u32,
+        list_indent: ListIndent,
+    ) -> Self {
         let mut layout = Self {
+            document: document.map(Path::to_owned),
             tab_width,
             list_indent: INDENT * f64::from(list_indent.scale()),
             ..Self::default()
@@ -139,6 +164,9 @@ impl PrintLayout {
     }
 
     fn inline(&mut self, text: &InlineText, base: RunStyle) {
+        if !text.images.is_empty() {
+            return self.inline_with_images(text, base);
+        }
         let mut position = 0;
         for segment in &text.segments {
             if segment.display.start > position {
@@ -161,6 +189,39 @@ impl PrintLayout {
         if position < text.text.len() {
             self.push(&text.text[position..], base);
         }
+    }
+
+    /// Text with images: the text between them, and each image, or its alt
+    /// text if its file can't be found.
+    fn inline_with_images(&mut self, text: &InlineText, base: RunStyle) {
+        let mut position = 0;
+        for image in &text.images {
+            self.inline(&text.slice(position..image.display.start), base);
+            let path = links::image_path(&image.destination, self.document.as_deref())
+                .filter(|path| path.is_file());
+            match path {
+                Some(path) => {
+                    let start = self.text.len();
+                    self.push(&OBJECT_REPLACEMENT.to_string(), base);
+                    self.images.push(PrintImage {
+                        range: start..self.text.len(),
+                        path,
+                    });
+                }
+                None => {
+                    let alt = &text.text[image.display.clone()];
+                    self.push(
+                        if alt.is_empty() { "Image" } else { alt },
+                        RunStyle {
+                            muted: true,
+                            ..base
+                        },
+                    );
+                }
+            }
+            position = image.display.end;
+        }
+        self.inline(&text.slice(position..text.text.len()), base);
     }
 
     /// Ends the paragraph that started at `start`.
@@ -358,7 +419,7 @@ mod tests {
     use super::*;
 
     fn layout(text: &str) -> PrintLayout {
-        PrintLayout::new(&Model::new(text), 4, ListIndent::Standard)
+        PrintLayout::new(&Model::new(text), None, 4, ListIndent::Standard)
     }
 
     /// The text of each paragraph, without its newline.
@@ -426,6 +487,26 @@ mod tests {
     }
 
     #[test]
+    fn images_print_or_show_their_alt_text() {
+        let folder = std::env::temp_dir().join(format!("kertas-print-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("pic.png"), b"not really a png").unwrap();
+        let document = folder.join("doc.md");
+        let layout = PrintLayout::new(
+            &Model::new("A ![pic](pic.png) and ![gone](gone.png).\n"),
+            Some(&document),
+            4,
+            ListIndent::Standard,
+        );
+        std::fs::remove_dir_all(&folder).ok();
+        assert_eq!(paragraphs(&layout), ["A \u{FFFC} and gone."]);
+        assert_eq!(layout.images.len(), 1);
+        assert_eq!(&layout.text[layout.images[0].range.clone()], "\u{FFFC}");
+        assert_eq!(layout.images[0].path, folder.join("pic.png"));
+        assert!(style_of(&layout, "gone").muted);
+    }
+
+    #[test]
     fn hard_breaks_stay_in_the_paragraph() {
         let layout = layout("one\\\ntwo\n");
         assert_eq!(paragraphs(&layout), ["one\u{2028}two"]);
@@ -445,7 +526,7 @@ mod tests {
     fn list_indent_scales_lists_but_not_quotes() {
         let text = "- a\n  - b\n\n> c\n";
         let indents = |indent| {
-            PrintLayout::new(&Model::new(text), 4, indent)
+            PrintLayout::new(&Model::new(text), None, 4, indent)
                 .paragraphs
                 .iter()
                 .map(|paragraph| paragraph.indent)
@@ -458,7 +539,12 @@ mod tests {
 
     #[test]
     fn code_tabs_are_expanded() {
-        let layout = PrintLayout::new(&Model::new("```\n\tx\n```\n"), 2, ListIndent::Standard);
+        let layout = PrintLayout::new(
+            &Model::new("```\n\tx\n```\n"),
+            None,
+            2,
+            ListIndent::Standard,
+        );
         assert_eq!(layout.text.trim_end(), "  x");
     }
 

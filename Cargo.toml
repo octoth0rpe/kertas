@@ -24,7 +24,7 @@ single_range_in_vec_init = "allow"
 [target.'cfg(target_os = "macos")'.dependencies]
 # Native window tabs (see src/native_tabs.rs). Same versions GPUI uses.
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-core-foundation", "objc2-uniform-type-identifiers", "NSApplication", "NSAttributedString", "NSColor", "NSFont", "NSFontManager", "NSGraphics", "NSImage", "NSLayoutManager", "NSParagraphStyle", "NSPrintInfo", "NSPrintOperation", "NSResponder", "NSText", "NSTextStorage", "NSTextTable", "NSTextView", "NSView", "NSWindow", "NSWindowTabGroup", "NSWorkspace"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-core-foundation", "objc2-uniform-type-identifiers", "NSApplication", "NSAttributedString", "NSColor", "NSFont", "NSFontManager", "NSGraphics", "NSImage", "NSLayoutManager", "NSParagraphStyle", "NSPrintInfo", "NSPrintOperation", "NSResponder", "NSText", "NSTextAttachment", "NSTextStorage", "NSTextTable", "NSTextView", "NSView", "NSWindow", "NSWindowTabGroup", "NSWorkspace"] }
 # Printing (src/print.rs) lays text out in points.
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes"] }
 objc2-uniform-type-identifiers = { version = "0.3", default-features = false, features = ["std", "UTType"] }

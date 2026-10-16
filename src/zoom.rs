@@ -47,6 +47,13 @@ pub fn size(cx: &App) -> u32 {
         .map_or(app_settings::get(cx).font_size, |zoom| zoom.size)
 }
 
+/// How much images are scaled: 1 at the `font_size` setting, growing and
+/// shrinking with zoom.
+pub fn image_scale(cx: &App) -> f32 {
+    cx.try_global::<Zoom>()
+        .map_or(1., |zoom| zoom.size as f32 / zoom.default as f32)
+}
+
 /// The next size up, if there is one.
 pub fn larger(cx: &App) -> Option<u32> {
     let size = size(cx);

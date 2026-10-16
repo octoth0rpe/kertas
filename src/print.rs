@@ -18,14 +18,14 @@ use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{AnyThread, MainThreadMarker};
 use objc2_app_kit::{
-    NSBackgroundColorAttributeName, NSColor, NSFont, NSFontAttributeName, NSFontManager,
-    NSFontTraitMask, NSForegroundColorAttributeName, NSMutableParagraphStyle,
-    NSParagraphStyleAttributeName, NSPrintInfo, NSPrintOperation, NSPrintingPaginationMode,
-    NSStrikethroughStyleAttributeName, NSTextAlignment, NSTextBlock, NSTextBlockDimension,
-    NSTextBlockLayer, NSTextBlockValueType, NSTextTable, NSTextTableBlock, NSTextView,
-    NSUnderlineStyleAttributeName, NSWindow,
+    NSAttachmentAttributeName, NSBackgroundColorAttributeName, NSColor, NSFont,
+    NSFontAttributeName, NSFontManager, NSFontTraitMask, NSForegroundColorAttributeName, NSImage,
+    NSMutableParagraphStyle, NSParagraphStyleAttributeName, NSPrintInfo, NSPrintOperation,
+    NSPrintingPaginationMode, NSStrikethroughStyleAttributeName, NSTextAlignment, NSTextAttachment,
+    NSTextBlock, NSTextBlockDimension, NSTextBlockLayer, NSTextBlockValueType, NSTextTable,
+    NSTextTableBlock, NSTextView, NSUnderlineStyleAttributeName, NSWindow,
 };
-use objc2_core_foundation::CGSize;
+use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::{
     NSArray, NSCopying, NSMutableAttributedString, NSNumber, NSRange, NSRectEdge, NSString,
 };
@@ -41,12 +41,13 @@ const MARGIN: f64 = 54.;
 /// `settings`.
 pub fn print(
     model: &Model,
+    document: Option<&std::path::Path>,
     settings: &Settings,
     title: &str,
     window: &NSWindow,
     mtm: MainThreadMarker,
 ) {
-    let operation = operation(model, settings, mtm);
+    let operation = operation(model, document, settings, mtm);
     operation.setJobTitle(Some(&NSString::from_str(title)));
     // SAFETY: no delegate or callback, so nothing to keep alive.
     unsafe {
@@ -64,6 +65,7 @@ pub fn print(
 #[cfg(debug_assertions)]
 pub fn save_pdf(
     model: &Model,
+    document: Option<&std::path::Path>,
     settings: &Settings,
     path: &std::path::Path,
     mtm: MainThreadMarker,
@@ -72,7 +74,7 @@ pub fn save_pdf(
     use objc2_app_kit::{NSPrintJobSavingURL, NSPrintSaveJob};
     use objc2_foundation::NSURL;
 
-    let operation = operation(model, settings, mtm);
+    let operation = operation(model, document, settings, mtm);
     let info = operation.printInfo();
     // SAFETY: `NSPrintSaveJob` is an AppKit constant, set before any code
     // runs.
@@ -91,6 +93,7 @@ pub fn save_pdf(
 /// A print operation for `model`, on a copy of the shared print settings.
 fn operation(
     model: &Model,
+    document: Option<&std::path::Path>,
     settings: &Settings,
     mtm: MainThreadMarker,
 ) -> Retained<NSPrintOperation> {
@@ -106,11 +109,8 @@ fn operation(
     // TextKit 1, so tables and code boxes print.
     let view = NSTextView::initUsingTextLayoutManager(mtm.alloc(), false);
     view.setFrameSize(CGSize::new(paper.width - 2. * MARGIN, paper.height));
-    let text = attributed(
-        &PrintLayout::new(model, settings.tab_width, settings.list_indent),
-        settings,
-        mtm,
-    );
+    let layout = PrintLayout::new(model, document, settings.tab_width, settings.list_indent);
+    let text = attributed(&layout, settings, paper.width - 2. * MARGIN, mtm);
     // SAFETY: the view was just created with a text storage.
     unsafe {
         view.textStorage()
@@ -124,10 +124,11 @@ fn operation(
 }
 
 /// The layout as an attributed string, in black on white, in the fonts
-/// `settings` choose.
+/// `settings` choose, with images no wider than `width`.
 fn attributed(
     layout: &PrintLayout,
     settings: &Settings,
+    width: f64,
     mtm: MainThreadMarker,
 ) -> Retained<NSMutableAttributedString> {
     let text = &layout.text;
@@ -335,6 +336,33 @@ fn attributed(
                 )
             };
         }
+    }
+
+    // Images at their natural size, shrunk to fit the page.
+    for image in &layout.images {
+        let Some(picture) = NSImage::initWithContentsOfFile(
+            NSImage::alloc(),
+            &NSString::from_str(&image.path.to_string_lossy()),
+        ) else {
+            continue;
+        };
+        let size = picture.size();
+        if size.width <= 0. || size.height <= 0. {
+            continue;
+        }
+        let indent = layout
+            .paragraphs
+            .iter()
+            .find(|paragraph| paragraph.range.contains(&image.range.start))
+            .map_or(0., |paragraph| paragraph.indent);
+        let scale = ((width - indent) / size.width).min(1.);
+        let attachment = NSTextAttachment::new();
+        attachment.setImage(Some(&picture));
+        attachment.setBounds(CGRect::new(
+            CGPoint::new(0., 0.),
+            CGSize::new(size.width * scale, size.height * scale),
+        ));
+        unsafe { add(NSAttachmentAttributeName, &attachment, range(&image.range)) };
     }
     string
 }

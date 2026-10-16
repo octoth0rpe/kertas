@@ -42,6 +42,17 @@ pub struct Link {
     pub destination: String,
 }
 
+/// An image in display text. Its alt text is in the display text, so the
+/// text still reads where the image can't be shown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Image {
+    /// The alt text's byte range in [`InlineText::text`]; empty if it has
+    /// none.
+    pub display: Range<usize>,
+    /// The image's path or URL, as written (reference images resolved).
+    pub destination: String,
+}
+
 /// A block's text as displayed: Markdown syntax removed, formatting kept as
 /// styled segments that cover the whole text in order.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -50,12 +61,70 @@ pub struct InlineText {
     pub segments: Vec<Segment>,
     /// The links in the text, in order.
     pub links: Vec<Link>,
+    /// The images in the text, in order.
+    pub images: Vec<Image>,
 }
 
 impl InlineText {
     /// The link whose text includes byte `index` of [`Self::text`].
     pub fn link_at(&self, index: usize) -> Option<&Link> {
         self.links.iter().find(|link| link.display.contains(&index))
+    }
+
+    /// The link around `image`, if it's wrapped in one
+    /// (`[![alt](pic.png)](https://…)`).
+    pub fn link_around(&self, image: &Image) -> Option<&Link> {
+        self.links.iter().find(|link| {
+            link.display.start <= image.display.start && image.display.end <= link.display.end
+        })
+    }
+
+    /// The part of the text in `range`, with its segments and links cut to
+    /// fit and no images. Source ranges are unchanged, so offsets still map
+    /// to the block's source.
+    pub fn slice(&self, range: Range<usize>) -> InlineText {
+        let clip = |display: &Range<usize>| {
+            let start = display.start.max(range.start);
+            let end = display.end.min(range.end);
+            (start < end).then(|| start - range.start..end - range.start)
+        };
+        let segments = self
+            .segments
+            .iter()
+            .filter_map(|segment| {
+                let display = clip(&segment.display)?;
+                // Exact when the text matches its source byte for byte;
+                // otherwise the whole segment's source is kept.
+                let source = if segment.display.len() == segment.source.len() {
+                    let start = segment.source.start + (display.start + range.start)
+                        - segment.display.start;
+                    start..start + display.len()
+                } else {
+                    segment.source.clone()
+                };
+                Some(Segment {
+                    display,
+                    source,
+                    style: segment.style,
+                })
+            })
+            .collect();
+        let links = self
+            .links
+            .iter()
+            .filter_map(|link| {
+                Some(Link {
+                    display: clip(&link.display)?,
+                    destination: link.destination.clone(),
+                })
+            })
+            .collect();
+        InlineText {
+            text: self.text[range].to_owned(),
+            segments,
+            links,
+            images: Vec::new(),
+        }
     }
 
     /// Maps a byte index in [`Self::text`] to a byte offset in the source.
@@ -112,6 +181,8 @@ pub(crate) struct InlineBuilder {
     /// The links being built: where each one's text starts, and its
     /// destination.
     links: Vec<(usize, String)>,
+    /// The images being built, likewise.
+    images: Vec<(usize, String)>,
 }
 
 impl InlineBuilder {
@@ -145,7 +216,14 @@ impl InlineBuilder {
             Event::End(TagEnd::Link) => {
                 if let Some((start, destination)) = self.links.pop() {
                     let end = self.output.text.len();
-                    if start < end {
+                    // An image with no alt text has no text, but can still
+                    // be clicked.
+                    let has_image = self
+                        .output
+                        .images
+                        .last()
+                        .is_some_and(|image| image.display.start >= start);
+                    if start < end || has_image {
                         self.output.links.push(Link {
                             display: start..end,
                             destination,
@@ -153,9 +231,19 @@ impl InlineBuilder {
                     }
                 }
             }
-            // Image alt text arrives as text events and is shown as plain
-            // text until images are supported.
-            Event::Start(Tag::Image { .. }) | Event::End(TagEnd::Image) => {}
+            // Alt text arrives as text events, and is kept as text.
+            Event::Start(Tag::Image { dest_url, .. }) => {
+                self.images
+                    .push((self.output.text.len(), dest_url.to_string()));
+            }
+            Event::End(TagEnd::Image) => {
+                if let Some((start, destination)) = self.images.pop() {
+                    self.output.images.push(Image {
+                        display: start..self.output.text.len(),
+                        destination,
+                    });
+                }
+            }
             _ => return false,
         }
         true
@@ -240,6 +328,18 @@ impl InlineBuilder {
                     }),
             );
         }
+        // Alt text stands in for its image, so it isn't searched.
+        let images: Vec<Range<usize>> = self
+            .output
+            .images
+            .iter()
+            .map(|image| image.display.clone())
+            .collect();
+        found.retain(|(display, _)| {
+            !images
+                .iter()
+                .any(|image| image.start < display.end && display.start < image.end)
+        });
         for (display, destination) in found {
             self.split_at(display.start);
             self.split_at(display.end);
@@ -701,5 +801,86 @@ mod autolink_tests {
             panic!()
         };
         assert_eq!(table.header[0].links.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::*;
+
+    fn render(source: &str) -> InlineText {
+        render_inline(source, &Definitions::default())
+    }
+
+    /// Each image's alt text and destination.
+    fn images(inline: &InlineText) -> Vec<(&str, &str)> {
+        inline
+            .images
+            .iter()
+            .map(|image| {
+                (
+                    &inline.text[image.display.clone()],
+                    image.destination.as_str(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn images_keep_their_alt_text() {
+        let inline = render("Logo: ![The *logo*](img/logo.png) and ![](dot.svg).");
+        assert_eq!(inline.text, "Logo: The logo and .");
+        assert_eq!(
+            images(&inline),
+            [("The logo", "img/logo.png"), ("", "dot.svg")]
+        );
+    }
+
+    #[test]
+    fn reference_images_resolve() {
+        let text = "![alt][pic]\n\n[pic]: pics/a.png\n";
+        let blocks = crate::blocks::Blocks::parse(text);
+        let source = &text[blocks.as_slice()[0].range.clone()];
+        let mut builder = InlineBuilder::default();
+        for (event, range) in blocks.definitions().parse(source) {
+            if matches!(event, Event::End(TagEnd::Paragraph)) {
+                break;
+            }
+            builder.handle(&event, range);
+        }
+        assert_eq!(images(&builder.finish()), [("alt", "pics/a.png")]);
+    }
+
+    #[test]
+    fn linked_images() {
+        let inline = render("[![badge](b.svg)](https://example.com) [![](x.png)](y.md)");
+        assert_eq!(inline.links.len(), 2);
+        let first = inline.link_around(&inline.images[0]).unwrap();
+        assert_eq!(first.destination, "https://example.com");
+        // No alt text, but still a link.
+        let second = inline.link_around(&inline.images[1]).unwrap();
+        assert_eq!(second.destination, "y.md");
+    }
+
+    #[test]
+    fn alt_text_is_not_autolinked() {
+        let inline = render("![see https://example.com](a.png) https://example.org");
+        assert_eq!(inline.links.len(), 1);
+        assert_eq!(inline.links[0].destination, "https://example.org");
+    }
+
+    #[test]
+    fn slices_keep_source_offsets() {
+        let source = "a **bold** [link](x) ![img](p.png) end";
+        let inline = render(source);
+        let image = inline.images[0].display.clone();
+        let before = inline.slice(0..image.start);
+        assert_eq!(before.text, "a bold link ");
+        assert_eq!(before.links[0].display, 7..11);
+        let bold = before.text.find("old").unwrap();
+        assert_eq!(&source[before.source_offset(bold)..][..3], "old");
+        let after = inline.slice(image.end..inline.text.len());
+        assert_eq!(after.text, " end");
+        assert_eq!(&source[after.source_offset(1)..], "end");
     }
 }

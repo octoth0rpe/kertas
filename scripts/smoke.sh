@@ -33,6 +33,7 @@ run() {
     dir="$work/$mode"
     mkdir -p "$dir/config"
     cp "$fixtures/$fixture" "$dir/$fixture"
+    cp -R "$fixtures/images" "$dir/images"
     echo "==> $mode ($fixture)"
     # macOS has no timeout(1); perl's alarm kills Kertas if it hangs.
     if ! output=$(env KERTAS_SMOKE="$mode" KERTAS_CONFIG_DIR="$dir/config" "$@" \
@@ -77,6 +78,7 @@ run help showcase.md
 run reveal showcase.md
 run clicks clicks.md
 run anchors anchors.md
+run images showcase.md
 run a11y a11y.md
 run print showcase.md KERTAS_PRINT_PDF="$work/print/out.pdf"
 run disk showcase.md
