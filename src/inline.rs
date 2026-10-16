@@ -9,6 +9,7 @@ use std::ops::Range;
 use pulldown_cmark::{Event, LinkType, Tag, TagEnd};
 
 use crate::autolinks;
+use crate::html_tags;
 
 #[cfg(test)]
 use crate::definitions::Definitions;
@@ -63,6 +64,9 @@ pub struct InlineText {
     pub links: Vec<Link>,
     /// The images in the text, in order.
     pub images: Vec<Image>,
+    /// The names `#name` links can use to reach this text: the `id`s in its
+    /// HTML tags, and `<a name>`s (#96).
+    pub anchors: Vec<String>,
 }
 
 impl InlineText {
@@ -124,6 +128,7 @@ impl InlineText {
             segments,
             links,
             images: Vec::new(),
+            anchors: Vec::new(),
         }
     }
 
@@ -183,6 +188,8 @@ pub(crate) struct InlineBuilder {
     links: Vec<(usize, String)>,
     /// The images being built, likewise.
     images: Vec<(usize, String)>,
+    /// How many hidden `<a id>` tags are waiting for their `</a>`.
+    hidden_anchors: usize,
 }
 
 impl InlineBuilder {
@@ -190,8 +197,12 @@ impl InlineBuilder {
     /// inline, which the caller should handle.
     pub(crate) fn handle(&mut self, event: &Event, range: Range<usize>) -> bool {
         match event {
-            Event::Text(text) | Event::InlineHtml(text) => self.push(text, range, false),
+            Event::Text(text) => self.push(text, range, false),
+            Event::InlineHtml(html) => self.inline_html(html, range),
             Event::Code(text) => self.push(text, range, true),
+            // Nothing shows before it when it follows a hidden
+            // `<a id="x"></a>` line.
+            Event::SoftBreak if self.output.text.is_empty() => {}
             Event::SoftBreak => self.push(" ", range, false),
             Event::HardBreak => self.push("\n", range, false),
             Event::Start(Tag::Emphasis) => self.emphasis += 1,
@@ -247,6 +258,32 @@ impl InlineBuilder {
             _ => return false,
         }
         true
+    }
+
+    /// An inline HTML tag, shown as its source, except for `<a id>` tags
+    /// that only mark a link target: those, and their `</a>`, are hidden.
+    fn inline_html(&mut self, html: &str, range: Range<usize>) {
+        let trimmed = html.trim();
+        if self.hidden_anchors > 0 && trimmed.eq_ignore_ascii_case("</a>") {
+            self.hidden_anchors -= 1;
+            return;
+        }
+        let tags = html_tags::start_tags(html);
+        self.output.anchors.extend(
+            tags.iter()
+                .filter_map(|tag| tag.anchor().map(str::to_owned)),
+        );
+        if let [tag] = tags.as_slice()
+            && tag.is_target_only()
+            && trimmed.starts_with('<')
+            && trimmed.ends_with('>')
+        {
+            if !trimmed.ends_with("/>") {
+                self.hidden_anchors += 1;
+            }
+            return;
+        }
+        self.push(html, range, false);
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -882,5 +919,49 @@ mod image_tests {
         let after = inline.slice(image.end..inline.text.len());
         assert_eq!(after.text, " end");
         assert_eq!(&source[after.source_offset(1)..], "end");
+    }
+}
+
+#[cfg(test)]
+mod anchor_tag_tests {
+    use super::*;
+
+    fn render(source: &str) -> InlineText {
+        render_inline(source, &Definitions::default())
+    }
+
+    #[test]
+    fn target_only_anchors_are_hidden() {
+        let inline = render(r#"<a id="install"></a>Install it"#);
+        assert_eq!(inline.text, "Install it");
+        assert_eq!(inline.anchors, ["install"]);
+        let inline = render(r#"<a name="old"/>Old"#);
+        assert_eq!(inline.text, "Old");
+        assert_eq!(inline.anchors, ["old"]);
+    }
+
+    #[test]
+    fn a_target_on_its_own_line_leaves_no_space() {
+        let inline = render("<a id=\"top\"></a>\nText");
+        assert_eq!(inline.text, "Text");
+    }
+
+    #[test]
+    fn text_inside_a_target_stays() {
+        let inline = render(r#"See <a id="here">this part</a>."#);
+        assert_eq!(inline.text, "See this part.");
+    }
+
+    #[test]
+    fn other_html_is_shown_with_its_ids() {
+        let inline = render(r#"<span id="s">x</span> <a href="/y">y</a>"#);
+        assert_eq!(inline.text, r#"<span id="s">x</span> <a href="/y">y</a>"#);
+        assert_eq!(inline.anchors, ["s"]);
+    }
+
+    #[test]
+    fn a_self_closed_target_does_not_hide_a_later_closing_tag() {
+        let inline = render(r#"<a id="x"/> <a href="/y">y</a>"#);
+        assert_eq!(inline.text, r#" <a href="/y">y</a>"#);
     }
 }

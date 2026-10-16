@@ -1087,10 +1087,10 @@ fn smoke_images(window: WindowHandle<DocumentView>, cx: &mut App) {
     .detach();
 }
 
-/// `KERTAS_SMOKE=anchors`, on `anchors.md` (#91): clicking a `#setup`
-/// link scrolls its heading to the top; a link to a missing heading stays
-/// put; and clicking `other.md#deep-dive` opens other.md scrolled to that
-/// heading.
+/// `KERTAS_SMOKE=anchors`, on `anchors.md` (#91, #96): clicking a
+/// `#setup` link scrolls its heading to the top; a link to a missing
+/// heading stays put; `#middle` reaches an `<a id>`; and clicking
+/// `other.md#deep-dive` opens other.md scrolled to that heading.
 fn smoke_anchors(window: WindowHandle<DocumentView>, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
@@ -1151,6 +1151,26 @@ fn smoke_anchors(window: WindowHandle<DocumentView>, cx: &mut App) {
             "a missing heading stays put",
             top_item(window, cx) == Some(63),
         );
+
+        // An HTML anchor, with and without GitHub's prefix (#96). It's on
+        // the 31st filler paragraph, item 33.
+        for link in ["#middle", "#user-content-middle"] {
+            window
+                .update(cx, |view, window, cx| {
+                    view.follow_link("#anchors", window, cx)
+                })
+                .ok();
+            pause(cx, 5).await;
+            window
+                .update(cx, |view, window, cx| view.follow_link(link, window, cx))
+                .ok();
+            pause(cx, 10).await;
+            let top = top_item(window, cx);
+            checks.check(
+                &format!("{link} scrolls to the <a id> (top item {top:?})"),
+                top == Some(33),
+            );
+        }
 
         // Back to the top, then follow item 2's link into other.md.
         window

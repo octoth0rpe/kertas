@@ -11,11 +11,11 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use crate::inline::InlineText;
-use crate::links;
 use crate::model::Model;
 use crate::rendered::{AlertKind, ColumnAlignment, RenderedBlock};
 use crate::settings::ListIndent;
 use crate::tabs::expand;
+use crate::{html_tags, links};
 
 /// A line break within a paragraph.
 pub const LINE_SEPARATOR: char = '\u{2028}';
@@ -393,6 +393,8 @@ impl PrintLayout {
                 let after = self.text.len();
                 self.end_paragraph(after, paragraph);
             }
+            // `<a id="x"></a>` only marks a link target, so prints nothing.
+            RenderedBlock::Html(source) if html_tags::only_targets(source) => {}
             RenderedBlock::Html(source) | RenderedBlock::Raw(source) => {
                 self.push(
                     &expand(source.trim_end(), self.tab_width),
@@ -504,6 +506,12 @@ mod tests {
         assert_eq!(&layout.text[layout.images[0].range.clone()], "\u{FFFC}");
         assert_eq!(layout.images[0].path, folder.join("pic.png"));
         assert!(style_of(&layout, "gone").muted);
+    }
+
+    #[test]
+    fn link_targets_print_nothing() {
+        let layout = layout("<a id=\"top\"></a>\nText\n\n<a name=\"end\">\n");
+        assert_eq!(paragraphs(&layout), ["Text"]);
     }
 
     #[test]

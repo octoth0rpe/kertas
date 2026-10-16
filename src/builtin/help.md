@@ -100,7 +100,7 @@ Each example shows the Markdown, then how it looks.
 
 [Markdown](https://commonmark.org)
 
-A link to `#` and a heading's name jumps to that heading. The name is the heading in lowercase, with punctuation removed and spaces turned into `-`, as on GitHub: `[Tables](#tables)` jumps to the Tables heading below. `other.md#setup` opens other.md at its Setup heading.
+A link to `#` and a heading's name jumps to that heading. The name is the heading in lowercase, with punctuation removed and spaces turned into `-`, as on GitHub: `[Tables](#tables)` jumps to the Tables heading below. `other.md#setup` opens other.md at its Setup heading. To link to a spot that isn't a heading, mark it with `<a id="spot"></a>` and link to `#spot`.
 
 Web addresses and email addresses become links by themselves, as on GitHub:
 
