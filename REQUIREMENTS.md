@@ -126,6 +126,7 @@ Deliberately **not** supported:
 | Tab character width (how wide tabs in code look) | `2`, `4`, `8` | `4` | SHOULD |
 | List indent (how far nested list items are drawn in; the Markdown is unchanged) | `compact`, `standard`, `wide` | `standard` | SHOULD |
 | Editing hint | `true` / `false` | `true` | SHOULD |
+| Scrollbar (also View → Show Scrollbar) | `true` / `false` | `true` | SHOULD |
 | Max line width | number of characters, or `none` for full width | TBD (A1) | SHOULD |
 | Front matter display | `hidden`, `collapsed`, `shown` | `collapsed` | LATER |
 | Restore open files on launch | `true` / `false` | `true` | LATER |

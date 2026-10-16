@@ -17,6 +17,7 @@ pub mod movement;
 pub mod print_layout;
 pub mod rendered;
 pub mod reveal;
+pub mod scroll_estimate;
 pub mod settings;
 pub mod tabs;
 pub mod titles;

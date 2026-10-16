@@ -4,8 +4,8 @@ use std::path::Path;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, Context, Div, Rems, Role, SharedString, Stateful, SystemWindowTabController,
-    Window, div, list, prelude::*, px, relative, rems,
+    AnyElement, Context, Div, ImgResourceLoader, Rems, Role, SharedString, Stateful,
+    SystemWindowTabController, Window, div, list, prelude::*, px, relative, rems,
 };
 use kertas::editor::{Motion, RevealTarget};
 use kertas::settings::TextWidth;
@@ -31,7 +31,7 @@ use crate::zoom;
 /// `None` to use the whole window.
 /// Widths are in rems, so zooming keeps the same number of characters per
 /// line: 45 rems is 720 px at the default 16 px.
-fn column_width(width: TextWidth) -> Option<Rems> {
+pub(super) fn column_width(width: TextWidth) -> Option<Rems> {
     match width {
         TextWidth::Standard => Some(rems(45.)),
         TextWidth::Wide => Some(rems(60.)),
@@ -160,7 +160,8 @@ impl DocumentView {
         let hint = app_settings::get(cx).editing_hint;
         let editable = !open.editor.read_only();
         let document: Option<Rc<Path>> = open.editor.document().path().map(Rc::from);
-        list(open.list_state.clone(), move |index, _, _| {
+        let loading_images = self.loading_images.clone();
+        let list = list(open.list_state.clone(), move |index, _, _| {
             let item = &model.items[index];
             match revealed
                 .iter()
@@ -211,6 +212,7 @@ impl DocumentView {
                                 column_width,
                                 editable,
                                 document: document.clone(),
+                                loading_images: loading_images.clone(),
                             },
                             input,
                         ),
@@ -223,6 +225,7 @@ impl DocumentView {
                                 column_width,
                                 editable,
                                 document: document.clone(),
+                                loading_images: loading_images.clone(),
                             },
                             input,
                         ),
@@ -238,12 +241,40 @@ impl DocumentView {
                         column_width,
                         editable,
                         document: document.clone(),
+                        loading_images: loading_images.clone(),
                     },
                 ),
             }
         })
-        .size_full()
-        .into_any_element()
+        .size_full();
+        let scrollbar = app_settings::get(cx)
+            .scrollbar
+            .then(|| self.render_scrollbar(open, window, cx));
+        div()
+            .relative()
+            .size_full()
+            .child(list)
+            .children(scrollbar)
+            .into_any_element()
+    }
+
+    /// Re-measures the blocks whose images have arrived since they were
+    /// drawn (#88): they were measured without them, so the scrollbar
+    /// would be wrong about the document's length.
+    fn remeasure_loaded_images(&mut self, cx: &mut Context<Self>) {
+        let Some(open) = &self.open else {
+            return;
+        };
+        self.loading_images
+            .borrow_mut()
+            .retain(|(block_start, resource)| {
+                if cx.fetch_asset::<ImgResourceLoader>(resource).is_none() {
+                    return true;
+                }
+                let index = open.editor.model().item_at(*block_start);
+                open.list_state.remeasure_items(index..index + 1);
+                false
+            });
     }
 
     /// The view's actions: files, tabs, zoom, movement and editing.
@@ -285,9 +316,13 @@ impl DocumentView {
             .on_action(cx.listener(Self::unreveal))
             .on_action(cx.listener(|this, _: &PageUp, _, cx| this.scroll_page(false, cx)))
             .on_action(cx.listener(|this, _: &PageDown, _, cx| this.scroll_page(true, cx)))
+            .on_mouse_move(cx.listener(Self::scrollbar_mouse_move))
             .on_mouse_up(
                 gpui::MouseButton::Left,
-                cx.listener(|this, _, _, _| this.end_drag()),
+                cx.listener(|this, _, _, cx| {
+                    this.end_scrollbar_drag(cx);
+                    this.end_drag();
+                }),
             )
             .on_action(cx.listener(|this, _: &MoveLeft, _, cx| {
                 this.move_by(Motion::Grapheme, false, false, cx)
@@ -422,6 +457,7 @@ impl Render for DocumentView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Document text is sized in rems, so this sets the zoom.
         window.set_rem_size(px(zoom::size(cx) as f32));
+        self.remeasure_loaded_images(cx);
         if let Some(open) = &self.open
             && (open.anchor.is_some() || open.reveal_caret)
         {

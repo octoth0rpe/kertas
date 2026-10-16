@@ -14,6 +14,7 @@ mod disk;
 mod files;
 mod input;
 mod render;
+mod scrollbar;
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -219,6 +220,11 @@ struct OpenDocument {
     disk_change: Option<DiskChange>,
     /// Set when an autosave fails, until the user saves the document.
     autosave_paused: bool,
+    /// The scrollbar's estimate of the items' heights, kept until the
+    /// document or its line width changes.
+    scroll_estimate: RefCell<Option<scrollbar::CachedEstimate>>,
+    /// A drag of the scrollbar's thumb in progress.
+    scrollbar_drag: Option<scrollbar::ScrollbarDrag>,
 }
 
 /// An item shown as source, or with the caret in the gap next to it.
@@ -241,6 +247,9 @@ pub struct DocumentView {
     /// Set when showing one of Kertas's built-in documents, which are
     /// view-only.
     builtin: Option<Builtin>,
+    /// Images still loading in the document, whose blocks need measuring
+    /// again once they arrive.
+    loading_images: crate::rendered_block::LoadingImages,
     /// The folder shown after the file's name in the title, if another
     /// open file has the same name.
     title_hint: Option<String>,
@@ -327,6 +336,7 @@ impl DocumentView {
             open: None,
             builtin: None,
             title_hint: None,
+            loading_images: Rc::default(),
             theme: Theme::current(window, cx),
             text_settings: TextSettings::from(&app_settings::get(cx)),
             caret_visible: true,
@@ -353,9 +363,16 @@ impl DocumentView {
         // Built-in documents are view-only.
         let editor = Editor::new(document, self.builtin.is_some());
         let items = editor.model().items.len();
+        let list_state = ListState::new(items, ListAlignment::Top, px(1000.));
+        // Short documents are measured up front, so the scrollbar is exact.
+        let list_state = if items <= scrollbar::MEASURE_ALL_LIMIT {
+            list_state.measure_all()
+        } else {
+            list_state
+        };
         self.open = Some(OpenDocument {
             editor,
-            list_state: ListState::new(items, ListAlignment::Top, px(1000.)),
+            list_state,
             goal_x: None,
             revealed: Vec::new(),
             revealed_layout: Rc::default(),
@@ -364,6 +381,8 @@ impl DocumentView {
             watched: None,
             disk_change: None,
             autosave_paused: false,
+            scroll_estimate: RefCell::default(),
+            scrollbar_drag: None,
         });
         self.watch_file(window, cx);
         self.stop_blink();
