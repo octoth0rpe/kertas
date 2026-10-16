@@ -5,15 +5,16 @@ use std::path::{Path, PathBuf};
 /// What following a link does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LinkTarget {
-    /// A Markdown file, opened in Kertas.
-    Markdown(PathBuf),
+    /// A Markdown file, opened in Kertas, and the heading or anchor to
+    /// jump to, if there is one (`other.md#setup`).
+    Markdown(PathBuf, Option<String>),
     /// Another file or a folder, opened in its default app.
     File(PathBuf),
     /// A web link, `mailto:` or another URL, opened by the system.
     Url(String),
-    /// A heading in the same document (`#setup`), or an empty link.
-    /// Jumping to headings isn't supported yet, so nothing happens.
-    SameDocument,
+    /// A heading or anchor in the same document (`#setup`), or `None` for
+    /// an empty link, which does nothing.
+    SameDocument(Option<String>),
     /// A file that doesn't exist.
     Missing(PathBuf),
     /// A relative path in a document that hasn't been saved, so there's
@@ -23,9 +24,10 @@ pub enum LinkTarget {
 
 /// Resolves a link's `destination` for the document saved at `document`
 /// (`None` if it's untitled). Relative paths are relative to the document's
-/// folder. A heading or query after a path (`other.md#setup`) is ignored.
+/// folder. A query after a path (`other.md?x`) is ignored.
 pub fn resolve(destination: &str, document: Option<&Path>) -> LinkTarget {
     let destination = destination.trim();
+    let anchor = anchor(destination);
     let path = match scheme(destination) {
         Some(scheme) if scheme.eq_ignore_ascii_case("file") => {
             let rest = &destination[scheme.len() + 1..];
@@ -39,7 +41,7 @@ pub fn resolve(destination: &str, document: Option<&Path>) -> LinkTarget {
         None => {
             let relative = strip_fragment(destination);
             if relative.is_empty() {
-                return LinkTarget::SameDocument;
+                return LinkTarget::SameDocument(anchor);
             }
             let path = percent_decode(relative);
             if path.is_absolute() {
@@ -55,7 +57,7 @@ pub fn resolve(destination: &str, document: Option<&Path>) -> LinkTarget {
     if !path.exists() {
         LinkTarget::Missing(path)
     } else if is_markdown(&path) && path.is_file() {
-        LinkTarget::Markdown(path)
+        LinkTarget::Markdown(path, anchor)
     } else {
         LinkTarget::File(path)
     }
@@ -69,6 +71,15 @@ fn scheme(destination: &str) -> Option<&str> {
     let valid = chars.next()?.is_ascii_alphabetic()
         && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
     valid.then_some(scheme)
+}
+
+/// The heading or anchor a link points to: what follows its `#`,
+/// percent-decoded, or `None` if there's nothing there.
+fn anchor(destination: &str) -> Option<String> {
+    let (_, fragment) = destination.split_once('#')?;
+    let decoded = percent_decode(fragment);
+    let anchor = decoded.to_string_lossy();
+    (!anchor.is_empty()).then(|| anchor.into_owned())
 }
 
 /// A path without the heading (`#…`) or query (`?…`) after it.
@@ -166,15 +177,15 @@ mod tests {
         let document = Some(document.as_path());
         assert_eq!(
             resolve("../notes.md", document),
-            LinkTarget::Markdown(folder.0.join("sub/../notes.md"))
+            LinkTarget::Markdown(folder.0.join("sub/../notes.md"), None)
         );
         assert_eq!(
             resolve("deeper.md#setup", document),
-            LinkTarget::Markdown(folder.0.join("sub/deeper.md"))
+            LinkTarget::Markdown(folder.0.join("sub/deeper.md"), Some("setup".to_owned()))
         );
         assert_eq!(
             resolve("../My%20Notes.markdown", document),
-            LinkTarget::Markdown(folder.0.join("sub/../My Notes.markdown"))
+            LinkTarget::Markdown(folder.0.join("sub/../My Notes.markdown"), None)
         );
         assert_eq!(
             resolve("../paper.pdf", document),
@@ -195,14 +206,17 @@ mod tests {
         let folder = Folder::new("absolute");
         let notes = folder.0.join("notes.md");
         let path = notes.to_str().unwrap();
-        assert_eq!(resolve(path, None), LinkTarget::Markdown(notes.clone()));
+        assert_eq!(
+            resolve(path, None),
+            LinkTarget::Markdown(notes.clone(), None)
+        );
         assert_eq!(
             resolve(&format!("file://{path}#top"), None),
-            LinkTarget::Markdown(notes.clone())
+            LinkTarget::Markdown(notes.clone(), Some("top".to_owned()))
         );
         assert_eq!(
             resolve(&format!("file://localhost{path}"), None),
-            LinkTarget::Markdown(notes)
+            LinkTarget::Markdown(notes, None)
         );
     }
 
@@ -216,8 +230,16 @@ mod tests {
 
     #[test]
     fn headings_in_the_same_document() {
-        assert_eq!(resolve("#setup", None), LinkTarget::SameDocument);
-        assert_eq!(resolve("", None), LinkTarget::SameDocument);
+        assert_eq!(
+            resolve("#setup", None),
+            LinkTarget::SameDocument(Some("setup".to_owned()))
+        );
+        assert_eq!(
+            resolve("#caf%C3%A9", None),
+            LinkTarget::SameDocument(Some("café".to_owned()))
+        );
+        assert_eq!(resolve("", None), LinkTarget::SameDocument(None));
+        assert_eq!(resolve("#", None), LinkTarget::SameDocument(None));
     }
 
     #[test]

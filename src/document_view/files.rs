@@ -2,7 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
-use gpui::{Context, PromptLevel, Task, Window};
+use gpui::{Context, ListOffset, PromptLevel, Task, Window, px};
+use kertas::anchors;
 use kertas::document::{Document, OpenError, SaveError};
 use kertas::links::{self, LinkTarget};
 
@@ -254,8 +255,8 @@ impl DocumentView {
     /// link can't be followed.
     pub fn follow_link(&mut self, destination: &str, window: &mut Window, cx: &mut Context<Self>) {
         let (message, detail) = match links::resolve(destination, self.document_path()) {
-            LinkTarget::Markdown(path) => {
-                cx.defer(move |cx| crate::windows::open_path(path, cx));
+            LinkTarget::Markdown(path, anchor) => {
+                cx.defer(move |cx| crate::windows::open_path_at(path, anchor, cx));
                 return;
             }
             LinkTarget::File(path) => {
@@ -266,7 +267,11 @@ impl DocumentView {
                 cx.open_url(&url);
                 return;
             }
-            LinkTarget::SameDocument => return,
+            LinkTarget::SameDocument(Some(anchor)) => {
+                self.go_to_anchor(&anchor, cx);
+                return;
+            }
+            LinkTarget::SameDocument(None) => return,
             LinkTarget::Missing(path) => (
                 format!("Couldn't find “{}”", display_name(&path)),
                 format!(
@@ -283,6 +288,34 @@ impl DocumentView {
         let answer = window.prompt(PromptLevel::Warning, &message, Some(&detail), &["OK"], cx);
         cx.spawn(async move |_, _| answer.await.ok()).detach();
     }
+}
+
+impl DocumentView {
+    /// Scrolls the heading named `name` (as in a `#name` link) to the top
+    /// of the window (#91). If there's no such heading, beeps and stays
+    /// put.
+    pub fn go_to_anchor(&mut self, name: &str, cx: &mut Context<Self>) {
+        let Some(open) = &mut self.open else {
+            return;
+        };
+        let Some(index) = anchors::find(open.editor.model(), name) else {
+            beep();
+            return;
+        };
+        open.anchor = None;
+        open.reveal_caret = false;
+        open.list_state.scroll_to(ListOffset {
+            item_ix: index,
+            offset_in_item: px(0.),
+        });
+        cx.notify();
+    }
+}
+
+/// The system's alert sound, for a link to a heading that doesn't exist.
+fn beep() {
+    #[cfg(target_os = "macos")]
+    objc2_app_kit::NSBeep();
 }
 
 /// A path's file name, for alerts.

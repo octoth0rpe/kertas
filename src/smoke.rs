@@ -12,7 +12,8 @@
 //!   saves, so the text can be checked.
 //! - `bench`: times 500 inserts in the middle of the document.
 //! - `tabs`, `settings`, `settings-window`, `help`, `reveal`, `clicks`,
-//!   `a11y`, `print`, `disk`, `autosave`, `quit`: see each function.
+//!   `anchors`, `a11y`, `print`, `disk`, `autosave`, `quit`: see each
+//!   function.
 
 use std::cell::Cell;
 use std::path::Path;
@@ -43,6 +44,7 @@ pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
         "settings-window" => smoke_settings_window(window, cx),
         "reveal" => smoke_reveal(window, cx),
         "clicks" => smoke_clicks(window, cx),
+        "anchors" => smoke_anchors(window, cx),
         "a11y" => smoke_a11y(window, cx),
         "print" => smoke_print(window, cx),
         "disk" => smoke_disk(window, cx),
@@ -1021,6 +1023,141 @@ fn smoke_reveal(window: WindowHandle<DocumentView>, cx: &mut App) {
             revealed == 3 && selection.is_some_and(|selection| Some(selection.head) == target),
         );
         window.update(cx, |view, _, _| view.end_drag()).ok();
+        checks.finish(cx);
+    })
+    .detach();
+}
+
+/// `KERTAS_SMOKE=anchors`, on `anchors.md` (#91): clicking a `#setup`
+/// link scrolls its heading to the top; a link to a missing heading stays
+/// put; and clicking `other.md#deep-dive` opens other.md scrolled to that
+/// heading.
+fn smoke_anchors(window: WindowHandle<DocumentView>, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        let mut checks = Checks::default();
+        pause(cx, 10).await;
+        let Some(path) = window
+            .read_with(cx, |view, _| view.document_path().map(Path::to_owned))
+            .ok()
+            .flatten()
+        else {
+            checks.check("the document has a file", false);
+            return checks.finish(cx);
+        };
+        let mut other_text = String::from("# Other\n\n");
+        for index in 0..60 {
+            other_text.push_str(&format!("Paragraph {index}.\n\n"));
+        }
+        other_text.push_str("## Deep dive\n\n");
+        // Enough after it that it can scroll to the top.
+        for index in 0..60 {
+            other_text.push_str(&format!("More {index}.\n\n"));
+        }
+        let other = path.with_file_name("other.md");
+        std::fs::write(&other, other_text).ok();
+
+        let top_item = |window: WindowHandle<DocumentView>, cx: &mut AsyncApp| {
+            window
+                .read_with(cx, |view, _| view.scroll_top().map(|(item, _)| item))
+                .ok()
+                .flatten()
+        };
+        let click_link = async |index: usize, cx: &mut AsyncApp| {
+            let origin = window
+                .update(cx, |view, window, _| view.text_origin(index, window))
+                .ok()
+                .flatten();
+            if let Some(origin) = origin {
+                let position = origin + gpui::point(gpui::px(12.), gpui::px(10.));
+                mouse_click(window, cx, position).await;
+            }
+            pause(cx, 10).await;
+        };
+
+        // Item 1 links to #setup; the heading is item 63.
+        click_link(1, cx).await;
+        let top = top_item(window, cx);
+        checks.check(
+            &format!("#setup scrolls to the heading (top item {top:?})"),
+            top == Some(63),
+        );
+
+        window
+            .update(cx, |view, window, cx| {
+                view.follow_link("#no-such-heading", window, cx)
+            })
+            .ok();
+        pause(cx, 5).await;
+        checks.check(
+            "a missing heading stays put",
+            top_item(window, cx) == Some(63),
+        );
+
+        // Back to the top, then follow item 2's link into other.md.
+        window
+            .update(cx, |view, window, cx| {
+                view.follow_link("#anchors", window, cx)
+            })
+            .ok();
+        pause(cx, 10).await;
+        checks.check("#anchors goes back up", top_item(window, cx) == Some(0));
+        click_link(2, cx).await;
+        let opened = wait_until(cx, |cx| {
+            cx.update(|cx| {
+                cx.windows()
+                    .into_iter()
+                    .filter_map(|handle| handle.downcast::<DocumentView>())
+                    .find(|handle| {
+                        handle
+                            .read(cx)
+                            .ok()
+                            .and_then(|view| view.document_path())
+                            .is_some_and(|open| open.file_name() == other.file_name())
+                    })
+                    .is_some()
+            })
+        })
+        .await;
+        pause(cx, 10).await;
+        let other_window = cx.update(|cx| {
+            cx.windows()
+                .into_iter()
+                .filter_map(|handle| handle.downcast::<DocumentView>())
+                .find(|handle| {
+                    handle
+                        .read(cx)
+                        .ok()
+                        .and_then(|view| view.document_path())
+                        .is_some_and(|open| open.file_name() == other.file_name())
+                })
+        });
+        let other_top = other_window.and_then(|other| top_item(other, cx));
+        checks.check(
+            &format!("other.md#deep-dive opens it at the heading (top item {other_top:?})"),
+            opened && other_top == Some(61),
+        );
+
+        // Following it again from the first window, with other.md already
+        // open, scrolls there again.
+        if let Some(other_window) = other_window {
+            other_window
+                .update(cx, |view, window, cx| {
+                    view.follow_link("#other", window, cx)
+                })
+                .ok();
+            pause(cx, 10).await;
+            window
+                .update(cx, |view, window, cx| {
+                    view.follow_link("other.md#deep-dive", window, cx)
+                })
+                .ok();
+            pause(cx, 20).await;
+            let again = top_item(other_window, cx);
+            checks.check(
+                &format!("an already open file scrolls too (top item {again:?})"),
+                again == Some(61),
+            );
+        }
         checks.finish(cx);
     })
     .detach();
