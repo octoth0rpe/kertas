@@ -12,8 +12,8 @@
 //!   saves, so the text can be checked.
 //! - `bench`: times 500 inserts in the middle of the document.
 //! - `tabs`, `settings`, `settings-window`, `help`, `reveal`, `clicks`,
-//!   `anchors`, `images`, `caret`, `a11y`, `print`, `disk`, `autosave`,
-//!   `quit`: see each function.
+//!   `anchors`, `images`, `caret`, `scrollbar`, `a11y`, `print`, `disk`,
+//!   `autosave`, `quit`: see each function.
 
 use std::cell::Cell;
 use std::path::Path;
@@ -47,6 +47,7 @@ pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
         "anchors" => smoke_anchors(window, cx),
         "images" => smoke_images(window, cx),
         "caret" => smoke_caret(window, cx),
+        "scrollbar" => smoke_scrollbar(window, cx),
         "a11y" => smoke_a11y(window, cx),
         "print" => smoke_print(window, cx),
         "disk" => smoke_disk(window, cx),
@@ -1025,6 +1026,121 @@ fn smoke_reveal(window: WindowHandle<DocumentView>, cx: &mut App) {
             revealed == 3 && selection.is_some_and(|selection| Some(selection.head) == target),
         );
         window.update(cx, |view, _, _| view.end_drag()).ok();
+        checks.finish(cx);
+    })
+    .detach();
+}
+
+/// `KERTAS_SMOKE=scrollbar`, on `10k.md` (#88): the thumb starts at the top,
+/// keeps its size and only moves down while paging through, reaches the
+/// bottom at the end, and dragging it to the middle shows the middle.
+/// Clicking the track pages, and the setting hides it.
+fn smoke_scrollbar(window: WindowHandle<DocumentView>, cx: &mut App) {
+    use crate::document_view::PageDown;
+
+    cx.spawn(async move |cx| {
+        let mut checks = Checks::default();
+        pause(cx, 10).await;
+        let thumb = |cx: &mut AsyncApp| {
+            window
+                .update(cx, |view, window, cx| view.scrollbar_thumb(window, cx))
+                .ok()
+                .flatten()
+        };
+        let top_item = |cx: &mut AsyncApp| {
+            window
+                .read_with(cx, |view, _| view.scroll_top().map(|(item, _)| item))
+                .ok()
+                .flatten()
+                .unwrap_or(0)
+        };
+        let first = thumb(cx);
+        checks.check(
+            &format!("the thumb starts at the top ({first:?})"),
+            first.is_some_and(|(top, height, track)| top == 0. && height < track),
+        );
+
+        let mut tops = Vec::new();
+        let mut heights = Vec::new();
+        for _ in 0..40 {
+            dispatch(window, cx, Box::new(PageDown));
+            pause(cx, 3).await;
+            if let Some((top, height, _)) = thumb(cx) {
+                tops.push(top);
+                heights.push(height);
+            }
+        }
+        let steady = heights
+            .iter()
+            .all(|height| (height - heights[0]).abs() < 0.5);
+        let down = tops.windows(2).all(|pair| pair[1] >= pair[0] - 0.5);
+        checks.check(
+            &format!(
+                "paging keeps the thumb's size and moves it down ({:?} to {:?})",
+                tops.first(),
+                tops.last()
+            ),
+            tops.len() == 40 && steady && down && tops.last() > tops.first(),
+        );
+
+        // With no caret, the first press only places it.
+        for _ in 0..2 {
+            dispatch(window, cx, Box::new(MoveDocumentEnd));
+            pause(cx, 20).await;
+        }
+        let end = thumb(cx);
+        checks.check(
+            &format!("at the end the thumb is at the bottom ({end:?})"),
+            end.is_some_and(|(top, height, track)| (top + height - track).abs() < 1.),
+        );
+
+        // Drag the thumb to the middle of the track.
+        if let Some((_, height, track)) = end {
+            window
+                .update(cx, |view, window, cx| {
+                    view.drag_thumb_to((track - height) / 2., window, cx)
+                })
+                .ok();
+        }
+        pause(cx, 10).await;
+        let items = window
+            .read_with(cx, |view, _| view.item_count())
+            .unwrap_or(1);
+        let middle = top_item(cx);
+        checks.check(
+            &format!("dragging to the middle shows the middle (item {middle} of {items})"),
+            middle * 10 > items * 3 && middle * 10 < items * 7,
+        );
+
+        // Click the track below the thumb: a page down.
+        let track = window
+            .read_with(cx, |view, _| view.scrollbar_track())
+            .ok()
+            .flatten();
+        let before = window
+            .read_with(cx, |view, _| view.scroll_top())
+            .ok()
+            .flatten();
+        if let Some(track) = track {
+            let below = gpui::point(track.center().x, track.bottom() - gpui::px(4.));
+            mouse_click(window, cx, below).await;
+        }
+        pause(cx, 5).await;
+        let after = window
+            .read_with(cx, |view, _| view.scroll_top())
+            .ok()
+            .flatten();
+        checks.check(
+            &format!("clicking the track pages down ({before:?} -> {after:?})"),
+            matches!((before, after), (Some((a, _)), Some((b, _))) if b > a),
+        );
+
+        cx.update(|cx| crate::app_settings::set_or_report("scrollbar", false, cx));
+        pause(cx, 10).await;
+        checks.check("the setting hides it", thumb(cx).is_none());
+        cx.update(|cx| crate::app_settings::set_or_report("scrollbar", true, cx));
+        pause(cx, 10).await;
+        checks.check("and shows it again", thumb(cx).is_some());
         checks.finish(cx);
     })
     .detach();

@@ -22,6 +22,7 @@ actions!(
         UseStandardWidth,
         UseWideWidth,
         UseFullWidth,
+        ToggleScrollbar,
         OpenHelp,
         OpenKeyboardShortcuts,
         OpenLicenses,
@@ -51,6 +52,12 @@ pub fn init(cx: &mut App) {
     cx.on_action(move |_: &UseWideWidth, cx| wide(cx));
     let full = width(TextWidth::Full);
     cx.on_action(move |_: &UseFullWidth, cx| full(cx));
+    cx.on_action(|_: &ToggleScrollbar, cx| {
+        cx.defer(|cx| {
+            let show = !app_settings::get(cx).scrollbar;
+            app_settings::set_or_report("scrollbar", show, cx);
+        })
+    });
 
     cx.on_action(|_: &OpenSettings, cx| cx.defer(settings_window::open));
     cx.on_action(|_: &OpenAbout, cx| cx.defer(|cx| builtin::open(Builtin::About, cx)));
@@ -107,6 +114,8 @@ fn menus(settings: Settings) -> Vec<Menu> {
             MenuItem::action("Standard", UseStandardWidth).checked(width(TextWidth::Standard)),
             MenuItem::action("Wide", UseWideWidth).checked(width(TextWidth::Wide)),
             MenuItem::action("Full Width", UseFullWidth).checked(width(TextWidth::Full)),
+            MenuItem::separator(),
+            MenuItem::action("Show Scrollbar", ToggleScrollbar).checked(settings.scrollbar),
             MenuItem::separator(),
             MenuItem::action("Zoom In", ZoomIn),
             MenuItem::action("Zoom Out", ZoomOut),

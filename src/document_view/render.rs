@@ -31,7 +31,7 @@ use crate::zoom;
 /// `None` to use the whole window.
 /// Widths are in rems, so zooming keeps the same number of characters per
 /// line: 45 rems is 720 px at the default 16 px.
-fn column_width(width: TextWidth) -> Option<Rems> {
+pub(super) fn column_width(width: TextWidth) -> Option<Rems> {
     match width {
         TextWidth::Standard => Some(rems(45.)),
         TextWidth::Wide => Some(rems(60.)),
@@ -160,7 +160,7 @@ impl DocumentView {
         let hint = app_settings::get(cx).editing_hint;
         let editable = !open.editor.read_only();
         let document: Option<Rc<Path>> = open.editor.document().path().map(Rc::from);
-        list(open.list_state.clone(), move |index, _, _| {
+        let list = list(open.list_state.clone(), move |index, _, _| {
             let item = &model.items[index];
             match revealed
                 .iter()
@@ -242,8 +242,17 @@ impl DocumentView {
                 ),
             }
         })
-        .size_full()
-        .into_any_element()
+        .size_full();
+        let scrollbar = app_settings::get(cx)
+            .scrollbar
+            .then(|| self.render_scrollbar(open, window, cx))
+            .flatten();
+        div()
+            .relative()
+            .size_full()
+            .child(list)
+            .children(scrollbar)
+            .into_any_element()
     }
 
     /// The view's actions: files, tabs, zoom, movement and editing.
@@ -285,9 +294,13 @@ impl DocumentView {
             .on_action(cx.listener(Self::unreveal))
             .on_action(cx.listener(|this, _: &PageUp, _, cx| this.scroll_page(false, cx)))
             .on_action(cx.listener(|this, _: &PageDown, _, cx| this.scroll_page(true, cx)))
+            .on_mouse_move(cx.listener(Self::scrollbar_mouse_move))
             .on_mouse_up(
                 gpui::MouseButton::Left,
-                cx.listener(|this, _, _, _| this.end_drag()),
+                cx.listener(|this, _, _, cx| {
+                    this.end_scrollbar_drag(cx);
+                    this.end_drag();
+                }),
             )
             .on_action(cx.listener(|this, _: &MoveLeft, _, cx| {
                 this.move_by(Motion::Grapheme, false, false, cx)

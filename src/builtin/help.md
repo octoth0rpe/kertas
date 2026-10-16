@@ -63,6 +63,7 @@ code_font = "SF Mono" # Menlo if not set
 tab_width = 2         # how wide tab characters in code look: 2, 4 or 8 spaces
 list_indent = "wide"  # how far nested list items are drawn in: "compact", "standard" or "wide"
 editing_hint = false  # hide keyboard hints on the block being edited
+scrollbar = false     # hide the scrollbar (also View → Show Scrollbar)
 autosave = 5          # save 5 seconds after typing stops; "off" if not set
 ```
 

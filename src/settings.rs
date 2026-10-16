@@ -105,6 +105,8 @@ pub struct Settings {
     pub code_font: Option<String>,
     /// Whether the block being edited shows its keyboard hints.
     pub editing_hint: bool,
+    /// Whether documents show a scrollbar (#88).
+    pub scrollbar: bool,
     /// Save documents once typing has paused this many seconds, or
     /// `None` not to save them automatically (F6).
     pub autosave: Option<u32>,
@@ -122,6 +124,7 @@ impl Default for Settings {
             body_font: None,
             code_font: None,
             editing_hint: true,
+            scrollbar: true,
             autosave: None,
         }
     }
@@ -320,6 +323,15 @@ pub const SETTINGS: &[Setting] = &[
         kind: Kind::Bool {
             get: |settings| settings.editing_hint,
             apply: |settings, show| settings.editing_hint = show,
+        },
+    },
+    Setting {
+        key: "scrollbar",
+        label: "Scrollbar",
+        note: Some("Show a scrollbar beside the document"),
+        kind: Kind::Bool {
+            get: |settings| settings.scrollbar,
+            apply: |settings, show| settings.scrollbar = show,
         },
     },
     Setting {
@@ -627,9 +639,17 @@ mod tests {
                 body_font: None,
                 code_font: None,
                 editing_hint: true,
+                scrollbar: true,
                 autosave: None,
             }
         );
+    }
+
+    #[test]
+    fn scrollbar() {
+        assert!(Settings::default().scrollbar);
+        assert!(!parse("scrollbar = false\n").0.scrollbar);
+        assert_eq!(set("", "scrollbar", false).unwrap(), "scrollbar = false\n");
     }
 
     #[test]

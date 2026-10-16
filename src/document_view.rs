@@ -14,6 +14,7 @@ mod disk;
 mod files;
 mod input;
 mod render;
+mod scrollbar;
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -219,6 +220,11 @@ struct OpenDocument {
     disk_change: Option<DiskChange>,
     /// Set when an autosave fails, until the user saves the document.
     autosave_paused: bool,
+    /// The scrollbar's estimate of the items' heights, kept until the
+    /// document or its line width changes.
+    scroll_estimate: RefCell<Option<scrollbar::CachedEstimate>>,
+    /// A drag of the scrollbar's thumb in progress.
+    scrollbar_drag: Option<scrollbar::ScrollbarDrag>,
 }
 
 /// An item shown as source, or with the caret in the gap next to it.
@@ -364,6 +370,8 @@ impl DocumentView {
             watched: None,
             disk_change: None,
             autosave_paused: false,
+            scroll_estimate: RefCell::default(),
+            scrollbar_drag: None,
         });
         self.watch_file(window, cx);
         self.stop_blink();
