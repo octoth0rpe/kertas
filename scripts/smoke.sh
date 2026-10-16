@@ -80,6 +80,7 @@ run clicks clicks.md
 run anchors anchors.md
 run footnotes footnotes.md
 run caret anchors.md
+run caret showcase.md
 run reading anchors.md
 run scrollbar 10k.md
 run scrollbar-drag showcase.md

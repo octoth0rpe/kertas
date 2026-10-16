@@ -34,8 +34,7 @@ use kertas::titles;
 use crate::app_settings::{self, AppSettings};
 use crate::builtin::Builtin;
 use crate::menus::OpenSettings;
-use crate::rendered_block::ReferenceSlot;
-use crate::revealed_block::RevealedLayout;
+use crate::revealed_block::{CaretPlace, RevealedLayout};
 use crate::text_style::TextSettings;
 use crate::theme::Theme;
 use crate::windows;
@@ -208,13 +207,8 @@ struct OpenDocument {
     revealed: Vec<Revealed>,
     /// The caret's revealed item's text layout from the last frame.
     revealed_layout: Rc<RefCell<Option<RevealedLayout>>>,
-    /// An item to keep at the same place on screen once the next frame is
-    /// laid out, and where it was (C7): revealing blocks changes their
-    /// heights, which would otherwise move the text under the pointer.
-    anchor: Option<(usize, Pixels)>,
-    /// Whether to scroll the caret into view once the next frame is laid
-    /// out.
-    reveal_caret: bool,
+    /// What to bring on screen in the next frame. Rendering takes it.
+    scroll_request: Option<ScrollRequest>,
     /// The file being watched for changes by other apps, and the task
     /// that handles them. Dropping it stops watching.
     watched: Option<(PathBuf, Task<()>)>,
@@ -227,8 +221,19 @@ struct OpenDocument {
     scroll_estimate: RefCell<Option<scrollbar::CachedEstimate>>,
     /// A drag of the scrollbar's thumb in progress.
     scrollbar_drag: Option<scrollbar::ScrollbarDrag>,
-    /// The footnote reference a note's back-link is scrolling to (#90).
-    reference: ReferenceSlot,
+}
+
+/// Something to bring on screen. The element that draws it asks the list
+/// to scroll to it as the frame is laid out (`Window::request_autoscroll`),
+/// so it's on screen in that same frame, rather than a frame late.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum ScrollRequest {
+    /// The caret's line, with a line of context above and below, and its
+    /// item at `CaretPlace`.
+    Caret(CaretPlace),
+    /// The line holding document offset `offset`, to the top of the
+    /// window: the footnote reference a note's back-link went to (#90).
+    Position(usize),
 }
 
 impl OpenDocument {
@@ -398,14 +403,12 @@ impl DocumentView {
             goal_x: None,
             revealed: Vec::new(),
             revealed_layout: Rc::default(),
-            anchor: None,
-            reveal_caret: false,
+            scroll_request: None,
             watched: None,
             disk_change: None,
             autosave_paused: false,
             scroll_estimate: RefCell::default(),
             scrollbar_drag: None,
-            reference: ReferenceSlot::default(),
         });
         self.watch_file(window, cx);
         self.stop_blink();

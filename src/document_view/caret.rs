@@ -10,10 +10,11 @@ use kertas::reveal::styled_source;
 /// How far ↑ and ↓ scroll with no caret, about as far as in Safari.
 const LINE_SCROLL: f32 = 40.;
 
-use crate::revealed_block::RevealedLayout;
+use crate::revealed_block::{CaretPlace, RevealedLayout};
 
 use super::{
-    CARET_BLINK_INTERVAL, DocumentView, LineGoal, OpenDocument, Revealed, SelectAll, Unreveal,
+    CARET_BLINK_INTERVAL, DocumentView, LineGoal, OpenDocument, Revealed, ScrollRequest, SelectAll,
+    Unreveal,
 };
 
 impl DocumentView {
@@ -75,39 +76,18 @@ impl DocumentView {
         cx.notify();
     }
 
-    /// Once a frame is laid out: keeps the anchored item in place, then
-    /// scrolls the caret into view if it moved off screen.
-    pub(super) fn after_layout(&mut self, cx: &mut Context<Self>) {
-        // A footnote reference a back-link went to: its item is at the
-        // top, so bring its line there (#90).
-        if let Some(open) = &self.open {
-            let target = std::mem::take(&mut *open.reference.borrow_mut());
-            if let Some((layout, index)) = target.found
-                && let Some(position) = layout.position_for_index(index)
-            {
-                let viewport = open.list_state.viewport_bounds();
-                open.list_state
-                    .scroll_by(position.y - viewport.top() - px(16.));
-            }
-        }
-        let mut shift = px(0.);
-        if let Some(open) = &mut self.open
-            && let Some((index, top)) = open.anchor.take()
-            && let Some(bounds) = open.list_state.bounds_for_item(index)
-        {
-            shift = bounds.top() - top;
-            open.list_state.scroll_by(shift);
-        }
-        let reveal_caret = self
-            .open
-            .as_mut()
-            .is_some_and(|open| std::mem::take(&mut open.reveal_caret));
-        // The caret's item wasn't drawn: the list scrolled short of it,
-        // misjudging the heights of items it hasn't measured (#98). Bring
-        // it to the top, then find the caret's line next frame.
-        if reveal_caret
-            && self.revealed_layout().is_none()
-            && let Some(open) = &mut self.open
+    /// Once a frame that scrolled to the caret is drawn: the fallback for
+    /// a caret whose item wasn't laid out, so it couldn't ask to be
+    /// scrolled to. `set_selection` makes the caret's item the list's
+    /// first whenever it might not be on screen, so this shouldn't happen;
+    /// if it does, the item goes to the top and asks again next frame.
+    pub(super) fn after_layout(&mut self, request: Option<ScrollRequest>, cx: &mut Context<Self>) {
+        let Some(open) = &mut self.open else {
+            return;
+        };
+        if let Some(ScrollRequest::Caret(_)) = request
+            && open.scroll_request.is_none()
+            && open.revealed_layout.borrow().is_none()
             && let Some(selection) = open.editor.selection()
         {
             let index = open.editor.model().item_at(selection.head);
@@ -115,27 +95,9 @@ impl DocumentView {
                 item_ix: index,
                 offset_in_item: px(0.),
             });
-            open.reveal_caret = true;
+            open.scroll_request = Some(ScrollRequest::Caret(CaretPlace::Top(px(0.))));
             cx.notify();
-            return;
         }
-        if reveal_caret
-            && let Some((layout, start)) = self.revealed_layout()
-            && let Some(open) = &self.open
-            && let Some(selection) = open.editor.selection()
-            && let Some(position) = layout.position_for_index(selection.head.saturating_sub(start))
-        {
-            let viewport = open.list_state.viewport_bounds();
-            let line = layout.line_height();
-            let top = position.y - shift;
-            let bottom = top + line;
-            if top < viewport.top() {
-                open.list_state.scroll_by(top - viewport.top() - line);
-            } else if bottom > viewport.bottom() {
-                open.list_state.scroll_by(bottom - viewport.bottom() + line);
-            }
-        }
-        cx.notify();
     }
 
     /// Moves the caret to `offset` as a navigation (not an edit): it ends
@@ -173,17 +135,41 @@ impl DocumentView {
             .list_state
             .bounds_for_item(index)
             .filter(|bounds| bounds.top() < viewport.bottom() && bounds.bottom() > viewport.top());
-        // Where the caret's item is now, to keep it there as blocks reveal.
-        let top = on_screen.map(|bounds| bounds.top());
-        if top.is_none() {
-            // Before revealing: that re-measures the items, and the list
-            // can only scroll to items whose heights it knows.
-            open.list_state.scroll_to_reveal_item(index);
-        }
-        if reveal(open) {
-            open.anchor = top.map(|top| (index, top));
-        }
-        open.reveal_caret = true;
+        let changed = reveal(open);
+        // Unless the caret stays in its item, make the item the list's
+        // first, so it's laid out next frame however wrong the list is
+        // about the heights before it. The caret's element then scrolls it
+        // to its place in that same frame.
+        let scroll_to = |offset_in_item| {
+            open.list_state.scroll_to(ListOffset {
+                item_ix: index,
+                offset_in_item,
+            })
+        };
+        let place = match on_screen {
+            Some(_) if !changed => CaretPlace::Nearest,
+            // Where it is (C7): revealing blocks changes their heights,
+            // which would otherwise move the text under the pointer.
+            Some(bounds) if bounds.top() >= viewport.top() => {
+                scroll_to(px(0.));
+                CaretPlace::Top(bounds.top() - viewport.top())
+            }
+            Some(bounds) => {
+                scroll_to(viewport.top() - bounds.top());
+                CaretPlace::Nearest
+            }
+            // Off screen, below the window: its bottom at the window's
+            // bottom, scrolling as little as possible. Above: at the top.
+            None if index > open.list_state.logical_scroll_top().item_ix => {
+                scroll_to(px(0.));
+                CaretPlace::Bottom
+            }
+            None => {
+                scroll_to(px(0.));
+                CaretPlace::Top(px(0.))
+            }
+        };
+        open.scroll_request = Some(ScrollRequest::Caret(place));
         self.restart_blink(cx);
         cx.notify();
     }
@@ -229,7 +215,6 @@ impl DocumentView {
         open.editor.deselect();
         open.goal_x = None;
         reveal(open);
-        open.anchor = None;
         self.stop_blink();
         cx.notify();
     }
@@ -476,10 +461,11 @@ pub(super) fn reveal(open: &mut OpenDocument) -> bool {
         return false;
     }
 
-    // Re-measure the items that are revealed differently now. Not every
-    // revealed item: extending a selection over many blocks would forget
-    // the heights of those scrolled out of view, which the list needs to
-    // scroll to the caret (#98).
+    // Re-measure the items that are revealed differently now, keeping
+    // their heights as the list's guesses until they're measured again.
+    // Not every revealed item: extending a selection over many blocks
+    // would make the list guess the heights of those scrolled out of view,
+    // which it needs to scroll to the caret (#98).
     let old: Vec<&RevealTarget> = open
         .revealed
         .iter()
@@ -494,7 +480,7 @@ pub(super) fn reveal(open: &mut OpenDocument) -> bool {
     changed.sort_unstable();
     changed.dedup();
     for index in changed {
-        open.list_state.splice(index..index + 1, 1);
+        open.list_state.remeasure_items(index..index + 1);
     }
     *open.revealed_layout.borrow_mut() = None;
     let model = open.editor.model();

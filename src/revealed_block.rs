@@ -1,14 +1,14 @@
 //! Drawing the revealed block: its Markdown source, styled, with the
 //! selection and caret (C4).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::{
     AnyElement, Bounds, ElementInputHandler, Entity, FocusHandle, FontWeight, MouseButton, Pixels,
-    Point, SharedString, StyledText, TextLayout, TextRun, canvas, div, fill, prelude::*, px, rems,
-    size,
+    Point, SharedString, StyledText, TextLayout, TextRun, canvas, div, fill, point, prelude::*, px,
+    rems, size,
 };
 use kertas::inline::InlineStyle;
 use kertas::model::Gap;
@@ -58,6 +58,87 @@ pub struct TextInput {
     pub layout_slot: Rc<RefCell<Option<RevealedLayout>>>,
     /// Whether to show the editing hint (the `editing_hint` setting).
     pub hint: bool,
+    /// Set if the view asked for the caret to be scrolled into view in
+    /// this frame.
+    pub scroll_to_caret: Option<ScrollToCaret>,
+}
+
+/// Where to scroll the caret's item to, besides showing the caret's line.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum CaretPlace {
+    /// Wherever it is: scroll only as far as the caret's line needs.
+    Nearest,
+    /// The item's top this far below the window's top: where it was
+    /// before blocks were revealed (C7), or at the top.
+    Top(Pixels),
+    /// The item's bottom at the window's bottom, as when scrolling down
+    /// to it.
+    Bottom,
+}
+
+/// The caret to scroll into view in this frame, and where to put its
+/// item. The view makes the item the list's first, so the list lays it out
+/// whatever it knows of the heights of the items before it. Then the
+/// caret's element asks the list to scroll to a window-sized space around
+/// the item, which the list does in the same frame, measuring the items
+/// before it as needed.
+#[derive(Clone)]
+pub struct ScrollToCaret {
+    /// The caret, in block-relative offsets.
+    offset: usize,
+    place: CaretPlace,
+    /// The height of the window's document area, or zero before it's
+    /// first drawn.
+    viewport_height: Pixels,
+    /// The item's bounds in this frame, once it's laid out.
+    item: Rc<Cell<Option<Bounds<Pixels>>>>,
+}
+
+impl ScrollToCaret {
+    pub fn new(offset: usize, place: CaretPlace, viewport_height: Pixels) -> Self {
+        Self {
+            offset,
+            place,
+            viewport_height,
+            item: Rc::default(),
+        }
+    }
+
+    /// Wraps the caret's item, so its bounds are known when the caret's
+    /// element asks to be scrolled to.
+    pub fn track_item(&self, item: AnyElement) -> AnyElement {
+        let slot = self.item.clone();
+        div()
+            .relative()
+            .child(
+                canvas(move |bounds, _, _| slot.set(Some(bounds)), |_, _, _, _| {})
+                    .absolute()
+                    .size_full(),
+            )
+            .child(item)
+            .into_any_element()
+    }
+
+    /// The space to ask the list to show, given where the caret's line
+    /// is: a line above and below it, inside a window's height around the
+    /// item if it has a place.
+    fn bounds(&self, caret: Point<Pixels>, line: Pixels) -> Bounds<Pixels> {
+        let (above, below) = (caret.y - line, caret.y + line * 2.);
+        let height = self.viewport_height;
+        let top = match (self.place, self.item.get()) {
+            _ if height < below - above => None,
+            (CaretPlace::Top(offset), Some(item)) => Some(item.top() - offset),
+            (CaretPlace::Bottom, Some(item)) => Some(item.bottom() - height),
+            _ => None,
+        };
+        match top {
+            Some(top) => Bounds::new(
+                point(caret.x, top.min(above).max(below - height)),
+                size(px(CARET_WIDTH), height),
+            ),
+            None => Bounds::new(point(caret.x, above), size(px(CARET_WIDTH), below - above)),
+        }
+    }
 }
 
 /// The revealed block's text layout, in source offsets: tabs are shown as
@@ -191,8 +272,20 @@ fn revealed_content(
 
     let caret = block.caret;
     let caret_layout = layout.clone();
+    let scroll_layout = layout.clone();
+    let scroll_to_caret = input
+        .as_ref()
+        .and_then(|input| input.scroll_to_caret.clone());
     let caret_overlay = canvas(
-        |_, _, _| {},
+        // The text is laid out by now: ask the list to show the caret, in
+        // this same frame.
+        move |_, window, _| {
+            if let Some(scroll) = scroll_to_caret
+                && let Some(position) = scroll_layout.position_for_index(scroll.offset)
+            {
+                window.request_autoscroll(scroll.bounds(position, scroll_layout.line_height()));
+            }
+        },
         move |bounds, _, window, cx| {
             if let Some(input) = input {
                 // Publish the layout only now that it's been painted: its

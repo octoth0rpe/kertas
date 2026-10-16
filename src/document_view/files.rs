@@ -2,13 +2,12 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::rendered_block::ReferenceTarget;
 use gpui::{Context, ListOffset, PromptLevel, Task, Window, px};
 use kertas::anchors;
 use kertas::document::{Document, OpenError, SaveError};
 use kertas::links::{self, LinkTarget};
 
-use super::{CloseWindow, DocumentView, Print, Save, SaveAs};
+use super::{CloseWindow, DocumentView, Print, Save, SaveAs, ScrollRequest};
 use crate::builtin::Builtin;
 
 impl DocumentView {
@@ -307,17 +306,12 @@ impl DocumentView {
         let Some(open) = &mut self.open else {
             return;
         };
-        let reference = anchors::find_reference(open.editor.model(), name);
-        *open.reference.borrow_mut() = ReferenceTarget {
-            offset: reference,
-            found: None,
-        };
         let Some(index) = anchors::find(open.editor.model(), name) else {
             beep();
             return;
         };
-        open.anchor = None;
-        open.reveal_caret = false;
+        open.scroll_request =
+            anchors::find_reference(open.editor.model(), name).map(ScrollRequest::Position);
         open.list_state.scroll_to(ListOffset {
             item_ix: index,
             offset_in_item: px(0.),

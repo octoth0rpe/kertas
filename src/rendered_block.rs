@@ -6,9 +6,10 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gpui::{
-    AccessibleAction, AnyElement, App, ElementId, Font, FontWeight, Hsla, ImageSource,
-    ImgResourceLoader, InteractiveText, MouseButton, Rems, Resource, Role, SharedString,
-    StyledText, TextLayout, Toggled, WeakEntity, Window, div, img, prelude::*, px, rems, svg,
+    AccessibleAction, AnyElement, App, Bounds, ElementId, Font, FontWeight, Hsla, ImageSource,
+    ImgResourceLoader, InteractiveText, MouseButton, Pixels, Rems, Resource, Role, SharedString,
+    StyledText, TextLayout, Toggled, WeakEntity, Window, canvas, div, img, point, prelude::*, px,
+    rems, size, svg,
 };
 use kertas::inline::{Image, InlineText, Link};
 use kertas::model::Note;
@@ -74,23 +75,21 @@ pub struct ClickTarget {
     /// re-measure the block once each one arrives.
     pub loading_images: LoadingImages,
     /// The footnote reference the view is scrolling to, if any.
-    pub reference: ReferenceSlot,
+    pub reference: Option<ReferenceTarget>,
 }
 
 /// Images still loading, and where their blocks start.
 pub type LoadingImages = Rc<std::cell::RefCell<Vec<(usize, Resource)>>>;
 
-/// A footnote reference that a note's back-link is scrolling to (#90).
-#[derive(Default)]
+/// A footnote reference that a note's back-link is scrolling to the top
+/// of the window (#90).
+#[derive(Clone, Copy)]
 pub struct ReferenceTarget {
     /// Where the reference starts in the document.
-    pub offset: Option<usize>,
-    /// Once it's drawn: the layout of the text it's in, and where it is in
-    /// that text.
-    pub found: Option<(TextLayout, usize)>,
+    pub offset: usize,
+    /// The height of the window's document area.
+    pub viewport_height: Pixels,
 }
-
-pub type ReferenceSlot = Rc<std::cell::RefCell<ReferenceTarget>>;
 
 impl ClickTarget {
     /// Places the caret at `offset` in the block's source (shift-click
@@ -778,7 +777,7 @@ pub(crate) fn natural_size(image: &gpui::RenderImage, destination: &str) -> (f32
 fn clickable_run(text: &InlineText, style: &TextStyle, accessible: bool) -> AnyElement {
     let styled = styled_text(text, style);
     let layout = styled.layout().clone();
-    find_reference(text, &layout, &style.click);
+    let scroll_to_reference = scroll_to_reference(text, &layout, &style.click);
     let inline = text.clone();
     let click = style.click.clone();
     let (drag_layout, drag_inline, drag) = (layout.clone(), inline.clone(), click.clone());
@@ -830,23 +829,42 @@ fn clickable_run(text: &InlineText, style: &TextStyle, accessible: bool) -> AnyE
             }
         })
         .child(content)
+        .children(scroll_to_reference)
         .into_any_element()
 }
 
-/// Notes where the footnote reference the view is scrolling to is, if
-/// it's in `text`, which is drawn with `layout`.
-fn find_reference(text: &InlineText, layout: &TextLayout, click: &ClickTarget) {
-    let mut target = click.reference.borrow_mut();
-    let Some(offset) = target.offset else {
-        return;
-    };
+/// If the footnote reference the view is scrolling to is in `text`, drawn
+/// with `layout`: an element that scrolls its line to the top of the
+/// window as the frame is laid out.
+fn scroll_to_reference(
+    text: &InlineText,
+    layout: &TextLayout,
+    click: &ClickTarget,
+) -> Option<AnyElement> {
+    let target = click.reference?;
     let reference = text.links.iter().find(|link| {
         link.destination.starts_with("#fn-")
-            && click.block_start + text.source_offset(link.display.start) == offset
-    });
-    if let Some(reference) = reference {
-        target.found = Some((layout.clone(), reference.display.start));
-    }
+            && click.block_start + text.source_offset(link.display.start) == target.offset
+    })?;
+    let (layout, index) = (layout.clone(), reference.display.start);
+    // After the text in the frame, so its layout has a position.
+    let element = canvas(
+        move |_, window, _| {
+            if let Some(position) = layout.position_for_index(index) {
+                // A window's height of space from just above the line: the
+                // list scrolls it to fill the window, putting the line
+                // near the top.
+                let top = position.y - px(16.);
+                let height = target.viewport_height.max(layout.line_height());
+                window
+                    .request_autoscroll(Bounds::new(point(position.x, top), size(px(1.), height)));
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .size_0();
+    Some(element.into_any_element())
 }
 
 /// Plain text shown with tabs expanded. A click maps the clicked index back
