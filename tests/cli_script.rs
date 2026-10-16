@@ -1,5 +1,5 @@
-//! The `kt` command line script (macos/kt), run with a stand-in for
-//! macOS's `open` that prints its arguments.
+//! The `kt` command line script (macos/kt), run with stand-ins for macOS's
+//! `open` and for Kertas's executable that print their arguments.
 
 #![cfg(target_os = "macos")]
 
@@ -9,21 +9,27 @@ use std::path::PathBuf;
 use std::process::Command;
 
 /// Runs the script from inside a fake Kertas.app, in `cwd`, returning the
-/// arguments it passed to `open`, one per line.
+/// arguments it passed to `open` or to Kertas's executable, one per line.
+/// The fake executable prints "Kertas" first, and fails with status 3.
 fn run(args: &[&str], cwd: &str) -> Vec<String> {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("cli-script");
     fs::remove_dir_all(&dir).ok();
-    let resources = dir.join("Kertas.app/Contents/Resources");
-    fs::create_dir_all(&resources).unwrap();
-    let script = resources.join("kt");
+    let contents = dir.join("Kertas.app/Contents");
+    fs::create_dir_all(contents.join("Resources")).unwrap();
+    fs::create_dir_all(contents.join("MacOS")).unwrap();
+    let script = contents.join("Resources/kt");
     fs::copy(concat!(env!("CARGO_MANIFEST_DIR"), "/macos/kt"), &script).unwrap();
+    let fake = |path: &PathBuf, script: &str| {
+        fs::write(path, script).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    let print_args = "for arg in \"$@\"; do echo \"$arg\"; done\n";
     let fake_open = dir.join("fake-open");
-    fs::write(
-        &fake_open,
-        "#!/bin/sh\nfor arg in \"$@\"; do echo \"$arg\"; done\n",
-    )
-    .unwrap();
-    fs::set_permissions(&fake_open, fs::Permissions::from_mode(0o755)).unwrap();
+    fake(&fake_open, &format!("#!/bin/sh\n{print_args}"));
+    fake(
+        &contents.join("MacOS/Kertas"),
+        &format!("#!/bin/sh\necho Kertas\n{print_args}exit 3\n"),
+    );
 
     let output = Command::new(&script)
         .args(args)
@@ -31,7 +37,12 @@ fn run(args: &[&str], cwd: &str) -> Vec<String> {
         .env("KERTAS_OPEN", &fake_open)
         .output()
         .unwrap();
-    assert!(output.status.success(), "{output:?}");
+    let ran_kertas = output.stdout.starts_with(b"Kertas\n");
+    assert_eq!(
+        output.status.code(),
+        Some(if ran_kertas { 3 } else { 0 }),
+        "{output:?}"
+    );
     let app = fs::canonicalize(dir.join("Kertas.app")).unwrap();
     String::from_utf8(output.stdout)
         .unwrap()
@@ -55,5 +66,13 @@ fn files_become_encoded_absolute_paths() {
             "kertas://open?path=/tmp/My%20Notes/caf%C3%A9%20%26%20100%25.md",
             "kertas://open?path=/usr/b.md",
         ]
+    );
+}
+
+#[test]
+fn convert_runs_kertas_directly_and_passes_its_status_on() {
+    assert_eq!(
+        run(&["--convert", "in.md", "out.pdf"], "/tmp"),
+        ["Kertas", "--convert", "in.md", "out.pdf"]
     );
 }

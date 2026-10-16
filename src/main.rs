@@ -4,6 +4,8 @@ mod builtin;
 #[cfg(target_os = "macos")]
 mod cli_tool;
 #[cfg(target_os = "macos")]
+mod convert;
+#[cfg(target_os = "macos")]
 mod default_app;
 #[cfg(target_os = "macos")]
 mod dock_icon;
@@ -35,7 +37,11 @@ use futures::channel::mpsc;
 use gpui::App;
 use gpui_platform::application;
 
-fn main() {
+fn main() -> std::process::ExitCode {
+    #[cfg(target_os = "macos")]
+    if let Some(code) = convert::run_if_requested() {
+        return code;
+    }
     let path = std::env::args_os().nth(1).map(PathBuf::from);
 
     // Files opened from Finder, the Dock or the `kt` command arrive as
@@ -94,4 +100,5 @@ fn main() {
         #[cfg(not(debug_assertions))]
         let _ = window;
     });
+    std::process::ExitCode::SUCCESS
 }

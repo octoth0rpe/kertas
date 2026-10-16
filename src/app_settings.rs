@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use gpui::{App, BorrowAppContext, Global, WindowAppearance};
-use kertas::settings::{self, Layout, Problem, Settings, ThemeSetting};
+use kertas::settings::{self, FontCheck, Layout, Problem, Settings, ThemeSetting};
 
 use crate::file_watch;
 
@@ -167,17 +167,28 @@ fn load(path: PathBuf, cx: &App) -> AppSettings {
             .find(|font| font.eq_ignore_ascii_case(name))
             .cloned()
     };
-    let (settings, problems) = match fs::read_to_string(&path) {
-        Ok(text) => settings::parse_checking_fonts(&text, &installed),
-        // No file means all defaults (G2).
-        Err(err) if err.kind() == io::ErrorKind::NotFound => (Settings::default(), vec![]),
-        Err(err) => (Settings::default(), vec![file_problem(&path, &err)]),
-    };
+    let (settings, problems) = read(&path, &installed);
     AppSettings {
         settings,
         problems,
         path,
         stamp,
+    }
+}
+
+/// Reads the settings file once, outside of GPUI, for `--convert`.
+/// Problems are ignored: the defaults stand in, as they do in the app.
+#[cfg(target_os = "macos")]
+pub fn read_once(installed: &FontCheck) -> Settings {
+    read(&settings_path(), installed).0
+}
+
+fn read(path: &Path, installed: &FontCheck) -> (Settings, Vec<Problem>) {
+    match fs::read_to_string(path) {
+        Ok(text) => settings::parse_checking_fonts(&text, installed),
+        // No file means all defaults (G2).
+        Err(err) if err.kind() == io::ErrorKind::NotFound => (Settings::default(), vec![]),
+        Err(err) => (Settings::default(), vec![file_problem(path, &err)]),
     }
 }
 

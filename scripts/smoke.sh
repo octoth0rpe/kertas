@@ -86,6 +86,39 @@ run scrollbar-drag showcase.md
 run images showcase.md
 run a11y a11y.md
 run print showcase.md KERTAS_PRINT_PDF="$work/print/out.pdf"
+
+# convert: kt --convert lays out a fixture as Print does (the same number
+# of pages as the print mode's PDF), without a window, and rejects bad
+# arguments.
+echo "==> convert"
+mkdir -p "$work/convert/config"
+cp "$fixtures/showcase.md" "$work/convert/showcase.md"
+cp -R "$fixtures/images" "$work/convert/images"
+convert() {
+    (cd "$work/convert" && KERTAS_CONFIG_DIR="$work/convert/config" \
+        perl -e 'alarm shift; exec @ARGV' 60 "$kertas" --convert "$@" 2>&1)
+}
+# The page tree's /Count is the number of pages.
+pages() { LC_ALL=C grep -ao '/Count [0-9]*' "$1" | head -1 | cut -d' ' -f2; }
+convert showcase.md out.pdf >/dev/null || {
+    echo "smoke.sh: FAILED: convert exited with an error" >&2
+    exit 1
+}
+converted=$(pages "$work/convert/out.pdf")
+printed=$(pages "$work/print/out.pdf")
+if [ -z "$converted" ] || [ "$converted" -lt 2 ] || [ "$converted" != "$printed" ]; then
+    echo "smoke.sh: FAILED: convert gave ${converted:-no} pages, print gave ${printed:-no}" >&2
+    exit 1
+fi
+for bad in "showcase.md out.html" "missing.md out.pdf" "showcase.md"; do
+    # shellcheck disable=SC2086
+    if convert $bad >/dev/null; then
+        echo "smoke.sh: FAILED: convert $bad succeeded" >&2
+        exit 1
+    fi
+done
+echo "    SMOKE OK ($converted pages, as printed; bad arguments rejected)"
+
 run disk showcase.md
 run autosave showcase.md
 grep -q "^Quitting. Still paused. " "$work/autosave/showcase.md" || {
