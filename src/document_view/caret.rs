@@ -3,8 +3,8 @@
 
 use std::rc::Rc;
 
-use gpui::{Context, Pixels, Window, point, px};
-use kertas::editor::{Motion, Selection};
+use gpui::{Context, ListOffset, Pixels, Window, point, px};
+use kertas::editor::{Motion, RevealTarget, Selection};
 use kertas::reveal::styled_source;
 
 use crate::revealed_block::RevealedLayout;
@@ -87,6 +87,23 @@ impl DocumentView {
             .open
             .as_mut()
             .is_some_and(|open| std::mem::take(&mut open.reveal_caret));
+        // The caret's item wasn't drawn: the list scrolled short of it,
+        // misjudging the heights of items it hasn't measured (#98). Bring
+        // it to the top, then find the caret's line next frame.
+        if reveal_caret
+            && self.revealed_layout().is_none()
+            && let Some(open) = &mut self.open
+            && let Some(selection) = open.editor.selection()
+        {
+            let index = open.editor.model().item_at(selection.head);
+            open.list_state.scroll_to(ListOffset {
+                item_ix: index,
+                offset_in_item: px(0.),
+            });
+            open.reveal_caret = true;
+            cx.notify();
+            return;
+        }
         if reveal_caret
             && let Some((layout, start)) = self.revealed_layout()
             && let Some(open) = &self.open
@@ -134,16 +151,22 @@ impl DocumentView {
             return;
         }
         let index = open.editor.model().item_at(selection.head);
-        // Where the caret's item is now, to keep it there as blocks reveal.
-        let top = open
+        // The list knows where items just off screen are too, so check the
+        // caret's item is actually in the window (#98).
+        let viewport = open.list_state.viewport_bounds();
+        let on_screen = open
             .list_state
             .bounds_for_item(index)
-            .map(|bounds| bounds.top());
+            .filter(|bounds| bounds.top() < viewport.bottom() && bounds.bottom() > viewport.top());
+        // Where the caret's item is now, to keep it there as blocks reveal.
+        let top = on_screen.map(|bounds| bounds.top());
+        if top.is_none() {
+            // Before revealing: that re-measures the items, and the list
+            // can only scroll to items whose heights it knows.
+            open.list_state.scroll_to_reveal_item(index);
+        }
         if reveal(open) {
             open.anchor = top.map(|top| (index, top));
-        }
-        if top.is_none() {
-            open.list_state.scroll_to_reveal_item(index);
         }
         open.reveal_caret = true;
         self.restart_blink(cx);
@@ -375,14 +398,21 @@ pub(super) fn reveal(open: &mut OpenDocument) -> bool {
         return false;
     }
 
-    // Re-measure every item that's revealed now or was before.
-    let mut changed: Vec<usize> = open
+    // Re-measure the items that are revealed differently now. Not every
+    // revealed item: extending a selection over many blocks would forget
+    // the heights of those scrolled out of view, which the list needs to
+    // scroll to the caret (#98).
+    let old: Vec<&RevealTarget> = open
         .revealed
         .iter()
         .map(|revealed| &revealed.target)
-        .chain(&targets)
-        .map(|target| target.index)
         .collect();
+    let removed = old
+        .iter()
+        .copied()
+        .filter(|target| !targets.contains(target));
+    let added = targets.iter().filter(|target| !old.contains(target));
+    let mut changed: Vec<usize> = removed.chain(added).map(|target| target.index).collect();
     changed.sort_unstable();
     changed.dedup();
     for index in changed {
