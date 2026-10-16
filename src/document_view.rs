@@ -27,6 +27,7 @@ use gpui::{
 use kertas::document::{DiskChange, Document};
 use kertas::editor::{Editor, RevealTarget};
 use kertas::reveal::StyledSource;
+use kertas::titles;
 
 use crate::app_settings::{self, AppSettings};
 use crate::builtin::Builtin;
@@ -34,6 +35,7 @@ use crate::menus::OpenSettings;
 use crate::revealed_block::RevealedLayout;
 use crate::text_style::TextSettings;
 use crate::theme::Theme;
+use crate::windows;
 use crate::zoom::Zoom;
 
 actions!(
@@ -239,6 +241,9 @@ pub struct DocumentView {
     /// Set when showing one of Kertas's built-in documents, which are
     /// view-only.
     builtin: Option<Builtin>,
+    /// The folder shown after the file's name in the title, if another
+    /// open file has the same name.
+    title_hint: Option<String>,
     theme: Theme,
     /// The settings the document was last laid out with: the text width,
     /// tab width and fonts.
@@ -321,6 +326,7 @@ impl DocumentView {
             focus_handle,
             open: None,
             builtin: None,
+            title_hint: None,
             theme: Theme::current(window, cx),
             text_settings: TextSettings::from(&app_settings::get(cx)),
             caret_visible: true,
@@ -365,13 +371,37 @@ impl DocumentView {
         cx.notify();
     }
 
+    /// Updates the window's title after its document changes file, and
+    /// every other window's, since they may share a name (#95).
     fn update_window_title(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.apply_window_title(window, cx);
+        cx.defer(windows::refresh_titles);
+    }
+
+    /// Sets the folder shown after the file's name, to tell it from other
+    /// open files with the same name.
+    pub fn set_title_hint(
+        &mut self,
+        hint: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.title_hint != hint {
+            self.title_hint = hint;
+            self.apply_window_title(window, cx);
+        }
+    }
+
+    fn apply_window_title(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(open) = &self.open else {
             return;
         };
         let name = match self.builtin {
             Some(builtin) => builtin.title().to_owned(),
-            None => open.editor.document().display_name(),
+            None => titles::title(
+                &open.editor.document().display_name(),
+                self.title_hint.as_deref(),
+            ),
         };
         window.set_window_title(&name);
         window.set_document_path(open.editor.document().path());

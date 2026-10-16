@@ -63,6 +63,10 @@ fn main() {
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
                 cx.quit();
+            } else {
+                // A file that shared its name with the closed one may not
+                // need its folder any more.
+                cx.defer(windows::refresh_titles);
             }
         })
         .detach();
