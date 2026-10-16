@@ -2,30 +2,23 @@
 //! setting.
 //!
 //! Once the list knows every item's height, the thumb is exact. Short
-//! documents are measured up front, so that's from the start (see
-//! [`MEASURE_ALL_LIMIT`]). In a long document only the items that have been
-//! drawn are measured, so until it has all been seen the thumb is placed
-//! using [`ScrollEstimate`] instead, which estimates every item from its
-//! text: steadier than the list's partial measurements, which grow as it
-//! scrolls.
+//! documents are measured up front, so that's from the start. In a long
+//! document only the items that have been drawn are measured, so until it
+//! has all been seen the thumb is placed using [`ScrollEstimate`] instead,
+//! which estimates every item from its text: steadier than the list's
+//! partial measurements, which grow as it scrolls. [`Heights`] decides
+//! which.
 
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, Bounds, Context, ListOffset, ListState, MouseButton, MouseDownEvent,
-    MouseMoveEvent, Pixels, Role, ScrollWheelEvent, Window, canvas, div, fill, point, prelude::*,
-    px, size,
+    AnyElement, Bounds, Context, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Role,
+    ScrollWheelEvent, Window, canvas, div, fill, point, prelude::*, px, size,
 };
 use kertas::scroll_estimate::ScrollEstimate;
 
+use super::heights::{Heights, ScrollbarMode};
 use super::{DocumentView, OpenDocument};
-
-/// Documents with up to this many items have every item measured up
-/// front, so the scrollbar is exact from the start. Measuring is repeated
-/// whenever the zoom or the window's width changes, which takes too long
-/// for long documents (0.6 s for spikes/fixtures/10k.md's 2,700 items in a
-/// debug build, against a frame for a few hundred).
-pub(super) const MEASURE_ALL_LIMIT: usize = 400;
 
 /// The width of the scrollbar's track, which sits in the list's right
 /// padding, clear of the text.
@@ -50,15 +43,6 @@ pub(super) struct CachedEstimate {
     estimate: Rc<ScrollEstimate>,
 }
 
-/// How the thumb is placed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Mode {
-    /// From the list's own heights, once it knows them all.
-    Exact,
-    /// From [`ScrollEstimate`].
-    Estimated,
-}
-
 /// A drag of the thumb in progress.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct ScrollbarDrag {
@@ -68,7 +52,7 @@ pub(super) struct ScrollbarDrag {
     thumb_top: Pixels,
     /// Kept for the whole drag, so the thumb doesn't change scale under
     /// the pointer.
-    mode: Mode,
+    mode: ScrollbarMode,
 }
 
 /// Where the thumb is.
@@ -78,7 +62,7 @@ struct Thumb {
     track: Bounds<Pixels>,
     top: Pixels,
     height: Pixels,
-    mode: Mode,
+    mode: ScrollbarMode,
 }
 
 impl Thumb {
@@ -92,39 +76,31 @@ impl Thumb {
 /// out in each frame.
 #[derive(Clone)]
 struct Placement {
-    list_state: ListState,
-    estimate: Rc<ScrollEstimate>,
-    /// Body text's line height, which the estimate counts in.
-    line: Pixels,
+    heights: Heights,
     drag: Option<ScrollbarDrag>,
 }
 
 impl Placement {
     /// Where the thumb goes, or `None` if the document fits in the window.
     fn thumb(&self) -> Option<Thumb> {
-        let list = &self.list_state;
-        let track = list.viewport_bounds();
+        let heights = &self.heights;
+        let track = heights.viewport();
         let height = track.size.height;
-        let max = list.max_offset_for_scrollbar().y;
-        if height <= px(0.) || max <= px(0.) {
+        if height <= px(0.) || heights.scroll_range(ScrollbarMode::Exact) <= px(0.) {
             return None;
         }
-        let mode = self.drag.map_or(
-            // `is_scrolled_to_end` answers only once every height is known.
-            if list.is_scrolled_to_end().is_some() {
-                Mode::Exact
-            } else {
-                Mode::Estimated
-            },
-            |drag| drag.mode,
-        );
-        let (shown, through) = match mode {
-            Mode::Exact => {
-                let offset = -list.scroll_px_offset_for_scrollbar().y;
-                (height / (max + height), (offset / max).clamp(0., 1.))
-            }
-            Mode::Estimated => self.estimated(track),
-        };
+        // A drag keeps the mode it started with, so the thumb doesn't
+        // change scale under the pointer.
+        let mode = self
+            .drag
+            .map_or_else(|| heights.scrollbar_mode(), |drag| drag.mode);
+        let range = heights.scroll_range(mode);
+        let total = range + height;
+        let mut through = (heights.scroll_position(mode) / range.max(px(1.))).clamp(0., 1.);
+        if mode == ScrollbarMode::Estimated {
+            through = self.correct_estimate(range, through);
+        }
+        let shown = (height / total.max(height)).min(1.);
         let thumb = (height * shown).max(px(MIN_THUMB)).min(height);
         let room = height - thumb;
         // While dragging, the thumb follows the pointer exactly.
@@ -140,73 +116,31 @@ impl Placement {
         })
     }
 
-    /// How much of the document is shown, and how far through it the top
-    /// of the window is, by the estimate.
-    fn estimated(&self, track: Bounds<Pixels>) -> (f32, f32) {
-        let list = &self.list_state;
-        let height = track.size.height;
-        let total = self.line * self.estimate.total();
-        let top = list.logical_scroll_top();
-        let item_height = list
-            .bounds_for_item(top.item_ix)
-            .map(|bounds| bounds.size.height)
-            .filter(|&height| height > px(0.));
-        let fraction = item_height.map_or(0., |item| top.offset_in_item / item);
-        let position = self.line * self.estimate.position(top.item_ix, fraction);
-        let range = (total - height).max(px(1.));
-        let mut through = (position / range).clamp(0., 1.);
+    /// Corrects how far through the document the estimate puts the window,
+    /// at the ends, where the list knows better.
+    fn correct_estimate(&self, range: Pixels, mut through: f32) -> f32 {
+        let heights = &self.heights;
+        let range = range.max(px(1.));
         // Near the end, the last item has been drawn, so how far there is
         // still to go is known exactly; trust it over the estimate.
-        let last = list.item_count().saturating_sub(1);
-        if let Some(bounds) = list.bounds_for_item(last) {
-            let remaining = (bounds.bottom() - track.bottom()).max(px(0.));
+        if let Some(remaining) = heights.left_below() {
             through = through.max(1. - (remaining / range).min(1.));
         }
-        if top.item_ix == 0 && top.offset_in_item <= px(0.) {
+        if heights.at_top() {
             through = 0.;
         }
-        ((height / total.max(height)).min(1.), through)
+        through
     }
 
     /// Scrolls so the thumb's top is at `thumb_top` in the track.
     fn scroll_to(&self, thumb: Thumb, thumb_top: Pixels) {
-        let list = &self.list_state;
         let room = thumb.room();
         let through = if room > px(0.) {
             (thumb_top / room).clamp(0., 1.)
         } else {
             0.
         };
-        match thumb.mode {
-            Mode::Exact => {
-                let max = list.max_offset_for_scrollbar().y;
-                list.set_offset_from_scrollbar(point(px(0.), -(max * through)));
-            }
-            Mode::Estimated if through >= 1. => {
-                // All the way down: the list's end, wherever it really is.
-                list.scroll_to(ListOffset {
-                    item_ix: list.item_count(),
-                    offset_in_item: px(0.),
-                });
-            }
-            Mode::Estimated => {
-                let visible = thumb.track.size.height / self.line;
-                let span = (self.estimate.total() - visible).max(0.);
-                let (index, fraction) = self.estimate.locate(through * span);
-                let item_height = list
-                    .bounds_for_item(index)
-                    .map(|bounds| bounds.size.height)
-                    .unwrap_or(
-                        self.line
-                            * (self.estimate.position(index, 1.)
-                                - self.estimate.position(index, 0.)),
-                    );
-                list.scroll_to(ListOffset {
-                    item_ix: index,
-                    offset_in_item: item_height * fraction,
-                });
-            }
-        }
+        self.heights.scroll_through(thumb.mode, through);
     }
 }
 
@@ -241,9 +175,11 @@ impl DocumentView {
 
     fn placement(&self, open: &OpenDocument, window: &Window) -> Placement {
         Placement {
-            list_state: open.list_state.clone(),
-            estimate: self.scroll_estimate(open, window),
-            line: window.rem_size() * LINE_HEIGHT,
+            heights: Heights::estimated(
+                &open.list_state,
+                self.scroll_estimate(open, window),
+                window.rem_size() * LINE_HEIGHT,
+            ),
             drag: open.scrollbar_drag,
         }
     }
@@ -409,7 +345,7 @@ impl DocumentView {
         self.open.as_ref().is_some_and(|open| {
             self.placement(open, window)
                 .thumb()
-                .is_some_and(|thumb| thumb.mode == Mode::Exact)
+                .is_some_and(|thumb| thumb.mode == ScrollbarMode::Exact)
         })
     }
 

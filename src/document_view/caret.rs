@@ -12,6 +12,8 @@ const LINE_SCROLL: f32 = 40.;
 
 use crate::revealed_block::{CaretPlace, RevealedLayout};
 
+use super::heights::Heights;
+
 use super::{
     CARET_BLINK_INTERVAL, DocumentView, LineGoal, OpenDocument, Revealed, ScrollRequest, SelectAll,
     Unreveal,
@@ -128,13 +130,9 @@ impl DocumentView {
             return;
         }
         let index = open.editor.model().item_at(selection.head);
-        // The list knows where items just off screen are too, so check the
-        // caret's item is actually in the window (#98).
-        let viewport = open.list_state.viewport_bounds();
-        let on_screen = open
-            .list_state
-            .bounds_for_item(index)
-            .filter(|bounds| bounds.top() < viewport.bottom() && bounds.bottom() > viewport.top());
+        let heights = Heights::measured(&open.list_state);
+        let viewport = heights.viewport();
+        let on_screen = heights.on_screen(index);
         let changed = reveal(open);
         // Unless the caret stays in its item, make the item the list's
         // first, so it's laid out next frame however wrong the list is
