@@ -529,6 +529,64 @@ fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
             dispatch(blank, cx, Box::new(CloseWindow));
         }
         pause(cx, 10).await;
+
+        // Files with the same name show their folders (#95).
+        let folder = window
+            .read_with(cx, |view, _| {
+                view.document_path()
+                    .and_then(Path::parent)
+                    .map(Path::to_owned)
+            })
+            .ok()
+            .flatten();
+        if let Some(folder) = folder {
+            for name in ["docs", "src"] {
+                let path = folder.join(name).join("README.md");
+                std::fs::create_dir_all(path.parent().unwrap()).ok();
+                std::fs::write(&path, format!("# {name}\n")).ok();
+                cx.update(|cx| crate::windows::open_path(path, cx));
+                pause(cx, 20).await;
+            }
+        }
+        let titles = |cx: &mut AsyncApp| {
+            window
+                .update(cx, |_, window, cx| {
+                    let id = window.window_handle().window_id();
+                    cx.try_global::<gpui::SystemWindowTabController>()
+                        .and_then(|controller| controller.tabs(id))
+                        .map(|tabs| {
+                            tabs.iter()
+                                .map(|tab| tab.title.to_string())
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default()
+                })
+                .unwrap_or_default()
+        };
+        let both = titles(cx);
+        checks.check(
+            &format!("same names show their folders ({both:?})"),
+            both.contains(&"README.md — docs".to_owned())
+                && both.contains(&"README.md — src".to_owned()),
+        );
+        let docs = cx.update(|cx| {
+            cx.windows().into_iter().find(|other| {
+                other
+                    .downcast::<DocumentView>()
+                    .and_then(|other| other.read(cx).ok())
+                    .and_then(|view| view.document_path())
+                    .is_some_and(|path| path.ends_with("docs/README.md"))
+            })
+        });
+        if let Some(docs) = docs {
+            dispatch(docs, cx, Box::new(CloseWindow));
+        }
+        pause(cx, 20).await;
+        let one = titles(cx);
+        checks.check(
+            &format!("closing one drops the other's folder ({one:?})"),
+            one.contains(&"README.md".to_owned()) && !one.iter().any(|title| title.contains('—')),
+        );
         checks.finish(cx);
     })
     .detach();

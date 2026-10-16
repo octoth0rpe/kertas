@@ -16,3 +16,4 @@ pub mod rendered;
 pub mod reveal;
 pub mod settings;
 pub mod tabs;
+pub mod titles;

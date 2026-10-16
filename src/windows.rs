@@ -17,6 +17,7 @@ use gpui::{
 };
 
 use kertas::settings::Layout;
+use kertas::titles;
 
 use crate::app_settings;
 use crate::document_view::{CloseWindow, DocumentView, New, Open, Quit};
@@ -83,6 +84,37 @@ fn frontmost_document_window(cx: &App) -> Option<WindowHandle<DocumentView>> {
         .into_iter()
         .chain(cx.window_stack().unwrap_or_default())
         .find_map(|window| window.downcast::<DocumentView>())
+}
+
+/// Gives every document window its title, adding the folder to files that
+/// share a name with another open file (#95). Call it when a window opens
+/// a file, saves to a new one, or closes.
+pub fn refresh_titles(cx: &mut App) {
+    let windows: Vec<WindowHandle<DocumentView>> = cx
+        .windows()
+        .into_iter()
+        .filter_map(|window| window.downcast::<DocumentView>())
+        .collect();
+    let paths: Vec<Option<PathBuf>> = windows
+        .iter()
+        .map(|window| {
+            window
+                .read(cx)
+                .ok()
+                .and_then(|view| view.document_path().map(Path::to_owned))
+        })
+        .collect();
+    let paths: Vec<Option<&Path>> = paths.iter().map(Option::as_deref).collect();
+    let hints = titles::folder_hints(&paths);
+    for (window, hint) in windows.into_iter().zip(hints) {
+        window
+            .update(cx, |view, window, cx| {
+                view.set_title_hint(hint, window, cx);
+                // Its tab strip shows the other tabs' titles.
+                cx.notify();
+            })
+            .ok();
+    }
 }
 
 /// Opens a new document window (a tab, by default) and sets it up.
