@@ -4,7 +4,7 @@ use std::path::Path;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, Context, Div, ImgResourceLoader, Rems, Role, SharedString, Stateful,
+    AnyElement, Context, Div, ImgResourceLoader, Pixels, Rems, Role, SharedString, Stateful,
     SystemWindowTabController, Window, div, list, prelude::*, px, relative, rems,
 };
 use kertas::blocks::BlockKind;
@@ -45,6 +45,10 @@ pub(super) fn column_width(width: TextWidth) -> Option<Rems> {
     }
 }
 
+/// The space between the window's sides and the text column, at its
+/// narrowest (`block_frame`'s padding).
+const SIDE_PADDING: Pixels = px(32.);
+
 /// A button in one of the bars at the top and bottom of the window,
 /// showing `label`. `name` is what it's called for VoiceOver. It's
 /// reachable with Tab when no block is being edited, and ringed when it
@@ -75,22 +79,24 @@ pub(super) fn bar_button(
 }
 
 impl DocumentView {
+    /// Where the text column is across a list `width` wide: how far its
+    /// left edge is from the list's, and how wide it is.
+    pub(super) fn text_column(&self, width: Pixels, rem: Pixels) -> (Pixels, Pixels) {
+        let available = width - SIDE_PADDING * 2.;
+        let column = column_width(self.text_settings.text_width)
+            .map_or(available, |column| column.to_pixels(rem).min(available));
+        (SIDE_PADDING + (available - column) / 2., column)
+    }
+
     /// Where item `index`'s text starts in the window: the top left of its
     /// text column, for the smoke test to click on.
     #[cfg(debug_assertions)]
     pub fn text_origin(&self, index: usize, window: &Window) -> Option<gpui::Point<gpui::Pixels>> {
         let bounds = self.open.as_ref()?.list_state.bounds_for_item(index)?;
-        // The frame's padding (see `block_frame`).
-        let padding = px(32.);
-        let available = bounds.size.width - padding * 2.;
-        let column = column_width(self.text_settings.text_width).map_or(available, |width| {
-            width.to_pixels(window.rem_size()).min(available)
-        });
-        let top = if index == 0 { padding } else { px(0.) };
-        Some(gpui::point(
-            bounds.left() + padding + (available - column) / 2.,
-            bounds.top() + top,
-        ))
+        let (left, _) = self.text_column(bounds.size.width, window.rem_size());
+        // The first item has the side padding above it too.
+        let top = if index == 0 { SIDE_PADDING } else { px(0.) };
+        Some(gpui::point(bounds.left() + left, bounds.top() + top))
     }
 
     /// A bar at the bottom of the window reporting problems in the settings

@@ -98,23 +98,31 @@ impl Heights {
     }
 
     /// Whether the window is at the document's top.
-    pub(super) fn at_top(&self) -> bool {
+    fn at_top(&self) -> bool {
         let top = self.list.logical_scroll_top();
         top.item_ix == 0 && top.offset_in_item <= px(0.)
     }
 
     /// How far the document goes on below the window, if the list has
     /// drawn its last item, so it knows.
-    pub(super) fn left_below(&self) -> Option<Pixels> {
+    fn left_below(&self) -> Option<Pixels> {
         let last = self.list.item_count().saturating_sub(1);
         let bounds = self.list.bounds_for_item(last)?;
         Some((bounds.bottom() - self.viewport().bottom()).max(px(0.)))
     }
 
     /// How the scrollbar places its thumb: exactly once every height is
-    /// known, from the estimate until then.
-    pub(super) fn scrollbar_mode(&self) -> ScrollbarMode {
-        if self.estimate.is_none() || self.all_known() {
+    /// known, from the estimate until then. A drag keeps the mode it
+    /// started with (`dragging`), even if the heights it brings into view
+    /// make them all known: GPUI froze the list's height when the drag
+    /// started (`scrollbar_drag_started`), and in an estimated document
+    /// that was only the height of what had been drawn, so placing the
+    /// thumb exactly mid-drag would throw the document back toward the
+    /// top.
+    pub(super) fn scrollbar_mode(&self, dragging: Option<ScrollbarMode>) -> ScrollbarMode {
+        if let Some(mode) = dragging {
+            mode
+        } else if self.estimate.is_none() || self.all_known() {
             ScrollbarMode::Exact
         } else {
             ScrollbarMode::Estimated
@@ -148,9 +156,11 @@ impl Heights {
     }
 
     /// How far down the document the window's top is, as `mode` counts
-    /// it.
+    /// it. At either end the list knows exactly, so the estimate gives way
+    /// to it there.
     pub(super) fn scroll_position(&self, mode: ScrollbarMode) -> Pixels {
         match (mode, &self.estimate) {
+            (ScrollbarMode::Estimated, Some(_)) if self.at_top() => px(0.),
             (ScrollbarMode::Estimated, Some(estimate)) => {
                 let top = self.list.logical_scroll_top();
                 let fraction = self
@@ -159,7 +169,13 @@ impl Heights {
                     .map(|bounds| bounds.size.height)
                     .filter(|&height| height > px(0.))
                     .map_or(0., |height| top.offset_in_item / height);
-                estimate.line * estimate.items.position(top.item_ix, fraction)
+                let position = estimate.line * estimate.items.position(top.item_ix, fraction);
+                // Near the end, the list has drawn the last item, so how
+                // far there is still to go is known.
+                match self.left_below() {
+                    Some(left) => position.max(self.scroll_range(mode).max(px(1.)) - left),
+                    None => position,
+                }
             }
             _ => -self.list.scroll_px_offset_for_scrollbar().y,
         }

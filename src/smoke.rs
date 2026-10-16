@@ -1147,6 +1147,49 @@ fn smoke_scrollbar(window: WindowHandle<DocumentView>, cx: &mut App) {
             matches!((before, after), (Some((a, _)), Some((b, _))) if b > a),
         );
 
+        // From the top, drag the thumb to the bottom a little at a time, so
+        // the list draws (and so measures) every item on the way, and hold
+        // it there: the document only ever moves down. A drag that starts
+        // estimated must stay so although every height becomes known: GPUI
+        // froze the list's height when it started, and that's only the
+        // height of what had been drawn.
+        dispatch(window, cx, Box::new(MoveDocumentStart));
+        pause(cx, 10).await;
+        let start = thumb(cx);
+        let estimated = window
+            .update(cx, |view, window, _| {
+                view.grab_thumb(window);
+                !view.scrollbar_exact(window)
+            })
+            .unwrap_or(false);
+        let mut offsets = Vec::new();
+        if let Some((top, height, track)) = start {
+            let steps = 400;
+            for step in 0..steps + 3 {
+                let to = top + (track - height - top) * (step.min(steps) as f32 / steps as f32);
+                window
+                    .update(cx, |view, window, cx| view.drag_thumb_to(to, window, cx))
+                    .ok();
+                pause(cx, 1).await;
+                offsets.extend(
+                    window
+                        .read_with(cx, |view, _| view.scroll_top())
+                        .ok()
+                        .flatten(),
+                );
+            }
+        }
+        window.update(cx, |view, _, cx| view.release_thumb(cx)).ok();
+        let back = offsets.windows(2).position(|pair| pair[1] < pair[0]);
+        checks.check(
+            &format!(
+                "dragging to the bottom never scrolls back (estimated {estimated}, back at step \
+                 {back:?}, ended at {:?})",
+                offsets.last()
+            ),
+            estimated && offsets.len() == 403 && back.is_none(),
+        );
+
         cx.update(|cx| crate::app_settings::set_or_report("scrollbar", false, cx));
         pause(cx, 10).await;
         checks.check("the setting hides it", thumb(cx).is_none());
