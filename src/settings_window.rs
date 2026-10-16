@@ -383,7 +383,7 @@ impl SettingsWindow {
                     })
                     .when(checked, |this| {
                         this.bg(theme.caret)
-                            .text_color(gpui::white())
+                            .text_color(theme.accent_text)
                             .text_size(px(10.))
                             .child("✓")
                     }),
@@ -652,6 +652,7 @@ impl Render for SettingsWindow {
         if let Some(index) = fonts_at {
             rows.insert(index, self.fonts(fonts).into_any_element());
         }
+        let accent_text = self.theme.accent_text;
         let done = self
             .control(div().id("done"), Role::DefaultButton, "Done")
             .px_4()
@@ -659,9 +660,9 @@ impl Render for SettingsWindow {
             .rounded_md()
             .border_1()
             .border_color(self.theme.caret)
-            .focus_visible(|style| style.border_color(gpui::white()))
+            .focus_visible(move |style| style.border_color(accent_text))
             .bg(self.theme.caret)
-            .text_color(gpui::white())
+            .text_color(accent_text)
             .on_click(|_, window, cx| window.dispatch_action(Box::new(CloseWindow), cx))
             .child("Done");
         div()

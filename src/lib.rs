@@ -20,4 +20,5 @@ pub mod reveal;
 pub mod scroll_estimate;
 pub mod settings;
 pub mod tabs;
+pub mod themes;
 pub mod titles;
