@@ -785,7 +785,9 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
 /// each, they can't be edited, and they close without asking.
 fn smoke_help(window: WindowHandle<DocumentView>, cx: &mut App) {
     use crate::builtin::Builtin;
-    use crate::menus::{OpenAbout, OpenHelp, OpenKeyboardShortcuts, OpenLicenses};
+    use crate::menus::{
+        OpenAbout, OpenHelp, OpenKeyboardShortcuts, OpenLicenses, OpenMarkdownSyntax,
+    };
 
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
@@ -843,15 +845,18 @@ fn smoke_help(window: WindowHandle<DocumentView>, cx: &mut App) {
         dispatch(window, cx, Box::new(OpenHelp));
         pause(cx, 20).await;
         checks.check("opening it again switches to it", window_count(cx) == 2);
+        dispatch(window, cx, Box::new(OpenMarkdownSyntax));
+        pause(cx, 20).await;
+        checks.check("Markdown Syntax opens", window_count(cx) == 3);
         dispatch(window, cx, Box::new(OpenKeyboardShortcuts));
         pause(cx, 20).await;
-        checks.check("Keyboard Shortcuts opens", window_count(cx) == 3);
+        checks.check("Keyboard Shortcuts opens", window_count(cx) == 4);
         dispatch(window, cx, Box::new(OpenAbout));
         pause(cx, 20).await;
-        checks.check("About Kertas opens", window_count(cx) == 4);
+        checks.check("About Kertas opens", window_count(cx) == 5);
         dispatch(window, cx, Box::new(OpenLicenses));
         pause(cx, 20).await;
-        checks.check("Licenses opens", window_count(cx) == 5);
+        checks.check("Licenses opens", window_count(cx) == 6);
 
         let windows = cx.update(|cx| cx.windows());
         for other in windows.into_iter().filter(|other| *other != *window) {
