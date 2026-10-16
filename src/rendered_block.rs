@@ -11,10 +11,10 @@ use gpui::{
     StyledText, Toggled, WeakEntity, Window, div, img, prelude::*, px, rems, svg,
 };
 use kertas::inline::{Image, InlineText, Link};
-use kertas::links;
 use kertas::rendered::{AlertKind, ColumnAlignment, ListItem, RenderedBlock, Table, Task};
 use kertas::settings::ListIndent;
 use kertas::tabs::ExpandedTabs;
+use kertas::{html_tags, links};
 
 use crate::assets::alert_icon;
 use crate::document_view::DocumentView;
@@ -260,6 +260,8 @@ fn render_content(block: &RenderedBlock, style: &TextStyle, depth: usize) -> Any
             })
             .into_any_element(),
         RenderedBlock::Table(table) => render_table(table, style),
+        // `<a id="x"></a>` only marks a link target (#96).
+        RenderedBlock::Html(source) if html_tags::only_targets(source) => div().into_any_element(),
         RenderedBlock::Html(source) | RenderedBlock::Raw(source) => {
             code_text(div(), &style.code_font)
                 .text_color(style.theme.muted_text)

@@ -9,6 +9,7 @@ pub mod document;
 pub mod editing;
 pub mod editor;
 pub mod history;
+pub mod html_tags;
 pub mod inline;
 pub mod links;
 pub mod model;

@@ -1,20 +1,35 @@
-//! Where `#name` links lead in a document (#91): its headings, named the
-//! way GitHub names them.
+//! Where `#name` links lead in a document: its headings, named the way
+//! GitHub names them (#91), and HTML tags' `id`s and `<a name>`s (#96).
 
 use std::collections::HashMap;
 
+use crate::html_tags;
+use crate::inline::InlineText;
 use crate::model::Model;
 use crate::rendered::RenderedBlock;
+
+/// The prefix GitHub adds to the `id`s in a rendered README. Links that
+/// include it still work.
+const GITHUB_PREFIX: &str = "user-content-";
 
 /// A heading's anchor, as GitHub makes it: lowercase, punctuation removed
 /// (letters, numbers, `_` and `-` are kept), and spaces turned into `-`.
 pub fn slug(heading: &str) -> String {
     heading
+        .trim()
         .chars()
         .filter(|&c| c.is_alphanumeric() || matches!(c, '_' | '-' | ' '))
         .flat_map(char::to_lowercase)
         .map(|c| if c == ' ' { '-' } else { c })
         .collect()
+}
+
+/// Something a `#name` link can lead to.
+enum Target {
+    /// A heading, by its text.
+    Heading(String),
+    /// An HTML tag's `id`, or an `<a name>`.
+    Html(String),
 }
 
 /// The anchors in `model`, in document order, with the index of the item
@@ -23,52 +38,81 @@ pub fn anchors(model: &Model) -> Vec<(String, usize)> {
     let mut seen: HashMap<String, usize> = HashMap::new();
     let mut anchors = Vec::new();
     for (index, item) in model.items.iter().enumerate() {
-        let mut headings = Vec::new();
-        collect_headings(&item.rendered, &mut headings);
-        for heading in headings {
-            let slug = slug(&heading);
-            let count = seen.entry(slug.clone()).or_default();
-            let anchor = match *count {
-                0 => slug,
-                n => format!("{slug}-{n}"),
+        let mut targets = Vec::new();
+        collect(&item.rendered, &mut targets);
+        for target in targets {
+            let anchor = match target {
+                Target::Heading(text) => {
+                    let slug = slug(&text);
+                    let count = seen.entry(slug.clone()).or_default();
+                    let anchor = match *count {
+                        0 => slug,
+                        n => format!("{slug}-{n}"),
+                    };
+                    *count += 1;
+                    anchor
+                }
+                Target::Html(id) => id,
             };
-            *count += 1;
             anchors.push((anchor, index));
         }
     }
     anchors
 }
 
-/// The index of the item holding the anchor `name`, if there is one. An
-/// exact match wins; otherwise case is ignored, so `#Setup` finds `setup`.
+/// The index of the item holding the anchor `name`, if there is one. The
+/// first match in the document wins. An exact match is preferred;
+/// otherwise case is ignored, so `#Setup` finds `setup`. GitHub's
+/// `user-content-` prefix is optional.
 pub fn find(model: &Model, name: &str) -> Option<usize> {
     let anchors = anchors(model);
-    anchors
-        .iter()
-        .find(|(anchor, _)| anchor == name)
-        .or_else(|| {
-            let name = name.to_lowercase();
-            anchors.iter().find(|(anchor, _)| *anchor == name)
-        })
-        .map(|(_, index)| *index)
+    let lookup = |name: &str| {
+        anchors
+            .iter()
+            .find(|(anchor, _)| anchor == name)
+            .or_else(|| {
+                anchors
+                    .iter()
+                    .find(|(anchor, _)| anchor.to_lowercase() == name.to_lowercase())
+            })
+            .map(|(_, index)| *index)
+    };
+    lookup(name).or_else(|| lookup(name.strip_prefix(GITHUB_PREFIX)?))
 }
 
-/// The text of every heading in `block`, including headings in quotes and
-/// lists.
-fn collect_headings(block: &RenderedBlock, out: &mut Vec<String>) {
+/// The link targets in `block`, in order, including those in quotes,
+/// lists and tables.
+fn collect(block: &RenderedBlock, out: &mut Vec<Target>) {
+    let inline = |text: &InlineText, out: &mut Vec<Target>| {
+        out.extend(text.anchors.iter().cloned().map(Target::Html));
+    };
     match block {
-        RenderedBlock::Heading { text, .. } => out.push(text.text.clone()),
+        RenderedBlock::Heading { text, .. } => {
+            out.push(Target::Heading(text.text.clone()));
+            inline(text, out);
+        }
+        RenderedBlock::Paragraph(text) => inline(text, out),
         RenderedBlock::List { items, .. } => {
             for child in items.iter().flat_map(|item| &item.children) {
-                collect_headings(child, out);
+                collect(child, out);
             }
         }
         RenderedBlock::BlockQuote(children) | RenderedBlock::Alert { children, .. } => {
             for child in children {
-                collect_headings(child, out);
+                collect(child, out);
             }
         }
-        _ => {}
+        RenderedBlock::Table(table) => {
+            for cell in table.header.iter().chain(table.rows.iter().flatten()) {
+                inline(cell, out);
+            }
+        }
+        RenderedBlock::Html(html) => out.extend(
+            html_tags::start_tags(html)
+                .iter()
+                .filter_map(|tag| tag.anchor().map(|id| Target::Html(id.to_owned()))),
+        ),
+        RenderedBlock::ThematicBreak | RenderedBlock::CodeBlock { .. } | RenderedBlock::Raw(_) => {}
     }
 }
 
@@ -120,5 +164,31 @@ mod tests {
         assert_eq!(find(&model, "Setup"), Some(2));
         assert_eq!(find(&model, "quoted"), Some(4));
         assert_eq!(find(&model, "missing"), None);
+    }
+
+    #[test]
+    fn html_anchors() {
+        let model = Model::new(
+            "# Intro\n\n<a id=\"install\"></a>\nInstall it.\n\n<div id=\"box\">\n\n| <span id=cell>x</span> |\n|---|\n\n- <a name=\"item\"></a>Item\n",
+        );
+        assert_eq!(find(&model, "install"), Some(1));
+        assert_eq!(find(&model, "box"), Some(2));
+        assert_eq!(find(&model, "cell"), Some(3));
+        assert_eq!(find(&model, "item"), Some(4));
+    }
+
+    #[test]
+    fn the_first_match_wins() {
+        let model = Model::new("<a id=\"setup\"></a>Early\n\n## Setup\n\n<a id=\"intro\"></a>\n");
+        assert_eq!(find(&model, "setup"), Some(0));
+        let model = Model::new("## Setup\n\n<a id=\"setup\"></a>Late\n");
+        assert_eq!(find(&model, "setup"), Some(0));
+    }
+
+    #[test]
+    fn the_github_prefix_is_optional() {
+        let model = Model::new("# Intro\n\n## Setup\n\n<a id=\"x\"></a>\n");
+        assert_eq!(find(&model, "user-content-setup"), Some(1));
+        assert_eq!(find(&model, "user-content-x"), Some(2));
     }
 }
