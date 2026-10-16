@@ -78,6 +78,18 @@ impl DocumentView {
     /// Once a frame is laid out: keeps the anchored item in place, then
     /// scrolls the caret into view if it moved off screen.
     pub(super) fn after_layout(&mut self, cx: &mut Context<Self>) {
+        // A footnote reference a back-link went to: its item is at the
+        // top, so bring its line there (#90).
+        if let Some(open) = &self.open {
+            let target = std::mem::take(&mut *open.reference.borrow_mut());
+            if let Some((layout, index)) = target.found
+                && let Some(position) = layout.position_for_index(index)
+            {
+                let viewport = open.list_state.viewport_bounds();
+                open.list_state
+                    .scroll_by(position.y - viewport.top() - px(16.));
+            }
+        }
         let mut shift = px(0.);
         if let Some(open) = &mut self.open
             && let Some((index, top)) = open.anchor.take()
@@ -436,7 +448,13 @@ impl DocumentView {
         let Some(open) = &mut self.open else {
             return;
         };
-        let first_visible = open.list_state.logical_scroll_top().item_ix;
+        // The footnotes after the items have no caret positions, so start
+        // from the last item.
+        let first_visible = open
+            .list_state
+            .logical_scroll_top()
+            .item_ix
+            .min(open.editor.model().items.len() - 1);
         let Some(offset) = open.editor.block_target(down, first_visible) else {
             return;
         };

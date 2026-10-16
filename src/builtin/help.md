@@ -200,3 +200,17 @@ fn main() {
 ```
 
 ---
+
+### Footnotes
+
+```markdown
+Kertas shows footnotes[^1] as GitHub does.
+
+[^1]: The note can go anywhere in the file.
+```
+
+Kertas shows footnotes[^1] as GitHub does.
+
+[^1]: The note can go anywhere in the file.
+
+Each note is drawn at the end of the document, numbered in the order the references appear. Click a number to jump to its note, and the ↩ after a note to jump back. Click a note to edit it where it is in the file.

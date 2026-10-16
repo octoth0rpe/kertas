@@ -27,12 +27,14 @@ use gpui::{
 };
 use kertas::document::{DiskChange, Document};
 use kertas::editor::{Editor, RevealTarget};
+use kertas::model::Splice;
 use kertas::reveal::StyledSource;
 use kertas::titles;
 
 use crate::app_settings::{self, AppSettings};
 use crate::builtin::Builtin;
 use crate::menus::OpenSettings;
+use crate::rendered_block::ReferenceSlot;
 use crate::revealed_block::RevealedLayout;
 use crate::text_style::TextSettings;
 use crate::theme::Theme;
@@ -225,6 +227,25 @@ struct OpenDocument {
     scroll_estimate: RefCell<Option<scrollbar::CachedEstimate>>,
     /// A drag of the scrollbar's thumb in progress.
     scrollbar_drag: Option<scrollbar::ScrollbarDrag>,
+    /// The footnote reference a note's back-link is scrolling to (#90).
+    reference: ReferenceSlot,
+}
+
+impl OpenDocument {
+    /// Updates the list after the model changes: the items `splice`
+    /// replaced, and the footnotes after them if they look different.
+    fn splice(&self, splice: &Splice) {
+        self.list_state.splice(splice.old.clone(), splice.new_count);
+        if let Some((old, new)) = splice.notes {
+            let start = self.editor.model().items.len();
+            if old == new {
+                // Keeping their heights while they're measured again.
+                self.list_state.remeasure_items(start..start + new);
+            } else {
+                self.list_state.splice(start..start + old, new);
+            }
+        }
+    }
 }
 
 /// An item shown as source, or with the caret in the gap next to it.
@@ -362,7 +383,8 @@ impl DocumentView {
     fn load(&mut self, document: Document, window: &mut Window, cx: &mut Context<Self>) {
         // Built-in documents are view-only.
         let editor = Editor::new(document, self.builtin.is_some());
-        let items = editor.model().items.len();
+        // The footnotes follow the items (#90).
+        let items = editor.model().items.len() + editor.model().notes.len();
         let list_state = ListState::new(items, ListAlignment::Top, px(1000.));
         // Short documents are measured up front, so the scrollbar is exact.
         let list_state = if items <= scrollbar::MEASURE_ALL_LIMIT {
@@ -383,6 +405,7 @@ impl DocumentView {
             autosave_paused: false,
             scroll_estimate: RefCell::default(),
             scrollbar_drag: None,
+            reference: ReferenceSlot::default(),
         });
         self.watch_file(window, cx);
         self.stop_blink();
@@ -517,6 +540,30 @@ impl DocumentView {
         self.open
             .as_ref()
             .map_or(0, |open| open.editor.model().item_at(offset))
+    }
+
+    /// The first footnote's row and how many there are, for the smoke
+    /// test.
+    #[cfg(debug_assertions)]
+    pub fn note_rows(&self) -> (usize, usize) {
+        self.open.as_ref().map_or((0, 0), |open| {
+            let model = open.editor.model();
+            (model.items.len(), model.notes.len())
+        })
+    }
+
+    /// Whether row `index` is at least partly inside the window, for the
+    /// smoke test.
+    #[cfg(debug_assertions)]
+    pub fn row_on_screen(&self, index: usize) -> bool {
+        self.open.as_ref().is_some_and(|open| {
+            let viewport = open.list_state.viewport_bounds();
+            open.list_state
+                .bounds_for_item(index)
+                .is_some_and(|bounds| {
+                    bounds.top() < viewport.bottom() && bounds.bottom() > viewport.top()
+                })
+        })
     }
 
     /// The list's scroll position, for the smoke test.

@@ -47,6 +47,9 @@ pub enum BlockKind {
     FrontMatter,
     /// A link reference definition, e.g. `[label]: https://example.com`.
     LinkReferenceDefinition,
+    /// A footnote's text, e.g. `[^label]: The note.` It's drawn with the
+    /// other notes at the end of the document, not where it is (#90).
+    FootnoteDefinition,
 }
 
 /// A top-level block and its byte range in the source.
@@ -57,13 +60,14 @@ pub struct Block {
 }
 
 /// The parser options Kertas uses everywhere: CommonMark plus the GFM
-/// extensions in M2 and GitHub's alerts. Front matter is handled
-/// separately; see the module docs.
+/// extensions in M2, GitHub's alerts and footnotes. Front matter is
+/// handled separately; see the module docs.
 pub fn parser_options() -> Options {
     Options::ENABLE_TABLES
         | Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_TASKLISTS
         | Options::ENABLE_GFM
+        | Options::ENABLE_FOOTNOTES
 }
 
 const BYTE_ORDER_MARK: char = '\u{FEFF}';
@@ -74,6 +78,8 @@ pub struct Blocks {
     blocks: Vec<Block>,
     /// The document's link reference definitions, wherever they are.
     definitions: Definitions,
+    /// Footnote references by label, with where each starts.
+    footnote_references: Vec<(String, usize)>,
 }
 
 impl Blocks {
@@ -103,9 +109,14 @@ impl Blocks {
 
         let mut depth = 0usize;
         let mut iter = Parser::new_ext(body, parser_options()).into_offset_iter();
+        let mut footnote_references = Vec::new();
 
         for (event, range) in iter.by_ref() {
             match event {
+                // Only references to notes that exist arrive as references.
+                Event::FootnoteReference(label) => {
+                    footnote_references.push((normalize_label(&label), shift(range).start));
+                }
                 Event::Start(tag) => {
                     if depth == 0
                         && let Some(kind) = block_kind(&tag)
@@ -126,7 +137,10 @@ impl Blocks {
             }
         }
 
-        let link_definitions = Definitions::from_parser(iter.reference_definitions());
+        let link_definitions = Definitions::from_parser(
+            iter.reference_definitions(),
+            footnote_references.iter().map(|(label, _)| label.as_str()),
+        );
         // Link reference definitions produce no events, so add them from the
         // parser's definition table. That table also includes definitions
         // nested inside lists and blockquotes; those are already part of
@@ -151,13 +165,20 @@ impl Blocks {
         Self {
             blocks,
             definitions: link_definitions,
+            footnote_references,
         }
     }
 
-    /// The document's link reference definitions, for rendering blocks on
-    /// their own.
+    /// The document's link reference definitions and footnote numbers, for
+    /// rendering blocks on their own.
     pub fn definitions(&self) -> &Definitions {
         &self.definitions
+    }
+
+    /// The document's footnote references, in order: each one's label
+    /// (normalized; see [`normalize_label`]) and where it starts.
+    pub fn footnote_references(&self) -> &[(String, usize)] {
+        &self.footnote_references
     }
 
     /// All blocks, in source order.
@@ -260,10 +281,21 @@ fn block_kind(tag: &Tag) -> Option<BlockKind> {
         },
         Tag::Table(_) => BlockKind::Table,
         Tag::HtmlBlock => BlockKind::HtmlBlock,
+        Tag::FootnoteDefinition(_) => BlockKind::FootnoteDefinition,
         // Other tags are inline, nested-only, or belong to extensions Kertas
         // doesn't enable.
         _ => return None,
     })
+}
+
+/// A link or footnote label as CommonMark matches it: case-insensitive,
+/// with runs of whitespace treated as one space.
+pub fn normalize_label(label: &str) -> String {
+    label
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 fn heading_level(level: HeadingLevel) -> u8 {
@@ -740,5 +772,36 @@ title: x
     #[test]
     fn index_at_in_empty_document() {
         assert_eq!(Blocks::parse("").index_at(0), None);
+    }
+
+    #[test]
+    fn footnote_definitions() {
+        assert_eq!(
+            parse(
+                "Text[^1].\n\n[^1]: The note,\n    continued.\n\n    Second paragraph.\n\nAfter.\n"
+            ),
+            [
+                (Paragraph, "Text[^1]."),
+                (
+                    FootnoteDefinition,
+                    "[^1]: The note,\n    continued.\n\n    Second paragraph."
+                ),
+                (Paragraph, "After."),
+            ]
+        );
+    }
+
+    #[test]
+    fn footnote_references_are_found_in_order() {
+        let text = "B[^b] A[^A]\n\n- b again[^B]\n\n[^a]: A.\n[^b]: B.\n\nNo note[^c].\n";
+        let blocks = Blocks::parse(text);
+        let references: Vec<(&str, &str)> = blocks
+            .footnote_references()
+            .iter()
+            .map(|(label, start)| (label.as_str(), &text[*start..*start + 4]))
+            .collect();
+        assert_eq!(references, [("b", "[^b]"), ("a", "[^A]"), ("b", "[^B]")]);
+        assert_eq!(blocks.definitions().footnote_number("a"), Some(2));
+        assert_eq!(blocks.definitions().footnote_number("c"), None);
     }
 }

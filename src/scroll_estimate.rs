@@ -15,7 +15,11 @@ use crate::rendered::heading_scale;
 /// line height).
 const BLOCK_SPACING: f32 = 0.625;
 
-/// The estimated height of every item in a document.
+/// Footnotes' text size, relative to body text.
+const NOTE_SCALE: f32 = 0.875;
+
+/// The estimated height of every item in a document, followed by its
+/// footnotes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScrollEstimate {
     /// Where each item starts, from the top of the document, followed by
@@ -28,11 +32,27 @@ impl ScrollEstimate {
     /// `chars_per_line` characters.
     pub fn new(model: &Model, chars_per_line: usize) -> Self {
         let chars_per_line = chars_per_line.max(1);
-        let mut starts = Vec::with_capacity(model.items.len() + 1);
+        let mut starts = Vec::with_capacity(model.items.len() + model.notes.len() + 1);
         let mut top = 0.;
         for item in &model.items {
             starts.push(top);
-            top += item_height(&model.text[item.block.clone()], item.kind, chars_per_line);
+            // Footnotes are drawn at the end instead (#90).
+            if item.kind != BlockKind::FootnoteDefinition {
+                top += item_height(&model.text[item.block.clone()], item.kind, chars_per_line);
+            }
+        }
+        // The notes, in smaller text, the first under a rule.
+        for (index, note) in model.notes.iter().enumerate() {
+            starts.push(top);
+            let item = &model.items[note.item];
+            top += item_height(
+                &model.text[item.block.clone()],
+                BlockKind::Paragraph,
+                chars_per_line,
+            ) * NOTE_SCALE;
+            if index == 0 {
+                top += 1.;
+            }
         }
         starts.push(top);
         Self { starts }
@@ -134,5 +154,16 @@ mod tests {
         assert_eq!(estimate.total(), 1.625);
         assert_eq!(estimate.locate(0.), (0, 0.));
         assert_eq!(estimate.locate(3.), (0, 1.));
+    }
+
+    #[test]
+    fn footnotes_are_counted_at_the_end() {
+        let model = Model::new("[^a]: A note.\n\nText[^a].\n");
+        let estimate = ScrollEstimate::new(&model, 80);
+        // The definition takes no room where it is.
+        assert_eq!(estimate.position(1, 0.), 0.);
+        // The note is a row after the items, in smaller text, under a rule.
+        assert_eq!(estimate.position(2, 0.), 1.625);
+        assert_eq!(estimate.total(), 1.625 + 1.625 * 0.875 + 1.);
     }
 }

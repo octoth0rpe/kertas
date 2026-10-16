@@ -12,8 +12,9 @@
 //!   saves, so the text can be checked.
 //! - `bench`: times 500 inserts in the middle of the document.
 //! - `tabs`, `settings`, `settings-window`, `help`, `reveal`, `clicks`,
-//!   `anchors`, `images`, `caret`, `reading`, `scrollbar`, `scrollbar-drag`,
-//!   `a11y`, `print`, `disk`, `autosave`, `quit`: see each function.
+//!   `anchors`, `footnotes`, `images`, `caret`, `reading`, `scrollbar`,
+//!   `scrollbar-drag`, `a11y`, `print`, `disk`, `autosave`, `quit`: see
+//!   each function.
 
 use std::cell::Cell;
 use std::path::Path;
@@ -45,6 +46,7 @@ pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
         "reveal" => smoke_reveal(window, cx),
         "clicks" => smoke_clicks(window, cx),
         "anchors" => smoke_anchors(window, cx),
+        "footnotes" => smoke_footnotes(window, cx),
         "images" => smoke_images(window, cx),
         "caret" => smoke_caret(window, cx),
         "reading" => smoke_reading(window, cx),
@@ -1584,6 +1586,102 @@ fn smoke_anchors(window: WindowHandle<DocumentView>, cx: &mut App) {
                 again == Some(61),
             );
         }
+        checks.finish(cx);
+    })
+    .detach();
+}
+
+/// `KERTAS_SMOKE=footnotes`, on `footnotes.md` (#90): the notes are drawn
+/// in rows after the document's blocks; clicking a reference scrolls to its
+/// note; a back-link scrolls to its reference, even deep in a long list;
+/// and clicking a note's text reveals its definition where it is.
+fn smoke_footnotes(window: WindowHandle<DocumentView>, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        let mut checks = Checks::default();
+        pause(cx, 10).await;
+        let (first, count) = window
+            .read_with(cx, |view, _| view.note_rows())
+            .unwrap_or_default();
+        // The heading, the paragraph with the first reference, 30 fillers,
+        // three definitions, the list and 30 more fillers.
+        checks.check(
+            &format!("three notes after 66 items (rows {first}+{count})"),
+            (first, count) == (66, 3),
+        );
+        let on_screen = |row: usize, cx: &mut AsyncApp| {
+            window
+                .read_with(cx, |view, _| view.row_on_screen(row))
+                .unwrap_or(false)
+        };
+        let caret = |cx: &mut AsyncApp| {
+            window
+                .read_with(cx, |view, _| view.reveal_state().1)
+                .ok()
+                .flatten()
+        };
+
+        // The paragraph starts with its reference.
+        let origin = window
+            .update(cx, |view, window, _| view.text_origin(1, window))
+            .ok()
+            .flatten();
+        if let Some(origin) = origin {
+            mouse_click(window, cx, origin + gpui::point(gpui::px(2.), gpui::px(12.))).await;
+        }
+        pause(cx, 10).await;
+        checks.check(
+            "clicking a reference scrolls to its note",
+            on_screen(first, cx) && !on_screen(1, cx) && caret(cx).is_none(),
+        );
+
+        window
+            .update(cx, |view, window, cx| {
+                view.follow_link("#fnref-list", window, cx)
+            })
+            .ok();
+        pause(cx, 10).await;
+        let top = window
+            .read_with(cx, |view, _| view.scroll_top())
+            .ok()
+            .flatten();
+        // The list's items are about 26 px high, and the reference is in
+        // its 36th.
+        checks.check(
+            &format!("a back-link scrolls to its reference in the list (top {top:?})"),
+            top.is_some_and(|(item, offset)| {
+                item == 35 && offset > gpui::px(700.) && offset < gpui::px(1100.)
+            }),
+        );
+
+        window
+            .update(cx, |view, window, cx| {
+                view.follow_link("#fn-list", window, cx)
+            })
+            .ok();
+        pause(cx, 10).await;
+        checks.check("#fn-list scrolls to the note", on_screen(first + 1, cx));
+
+        // The second note has no rule above it; click its text.
+        let origin = window
+            .update(cx, |view, window, _| view.text_origin(first + 1, window))
+            .ok()
+            .flatten();
+        if let Some(origin) = origin {
+            mouse_click(window, cx, origin + gpui::point(gpui::px(120.), gpui::px(10.))).await;
+        }
+        pause(cx, 15).await;
+        let head = caret(cx).map(|selection| selection.head);
+        let item = head.and_then(|head| window.read_with(cx, |view, _| view.item_at(head)).ok());
+        let shown = window
+            .read_with(cx, |view, _| view.caret_on_screen())
+            .ok()
+            .flatten();
+        checks.check(
+            &format!(
+                "clicking a note reveals its definition where it is (item {item:?}, on screen {shown:?})"
+            ),
+            item == Some(33) && shown == Some(true),
+        );
         checks.finish(cx);
     })
     .detach();

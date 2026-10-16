@@ -83,6 +83,43 @@ impl InlineText {
         })
     }
 
+    /// Adds back-links after the text: one `↩` per reference to the note
+    /// with `label`, the second and later numbered (`↩²`), as on GitHub
+    /// (#90). They take up no source, so a click on them places the caret
+    /// at the text's end.
+    pub fn push_back_links(&mut self, label: &str, references: usize) {
+        let end = self.segments.last().map_or(0, |segment| segment.source.end);
+        for reference in 1..=references {
+            if !self.text.is_empty() {
+                let start = self.text.len();
+                self.text.push(' ');
+                self.segments.push(Segment {
+                    display: start..self.text.len(),
+                    source: end..end,
+                    style: InlineStyle::default(),
+                });
+            }
+            let start = self.text.len();
+            self.text.push('↩');
+            if reference > 1 {
+                self.text.push_str(&superscript(reference));
+            }
+            let display = start..self.text.len();
+            self.segments.push(Segment {
+                display: display.clone(),
+                source: end..end,
+                style: InlineStyle {
+                    link: true,
+                    ..InlineStyle::default()
+                },
+            });
+            self.links.push(Link {
+                display,
+                destination: back_link_destination(label, reference),
+            });
+        }
+    }
+
     /// The part of the text in `range`, with its segments and links cut to
     /// fit and no images. Source ranges are unchanged, so offsets still map
     /// to the block's source.
@@ -166,14 +203,51 @@ impl InlineText {
 #[cfg(test)]
 pub(crate) fn render_inline(source: &str, definitions: &Definitions) -> InlineText {
     let mut builder = InlineBuilder::default();
-    for (event, range) in definitions.parse(source) {
+    let text = definitions.prepare(source);
+    for (event, range) in definitions.parse(&text, source.len()) {
         // Stop at the end of the paragraph or heading.
         if matches!(event, Event::End(TagEnd::Paragraph | TagEnd::Heading(_))) {
             break;
         }
+        if let Event::FootnoteReference(label) = &event
+            && let Some(number) = definitions.footnote_number(label)
+        {
+            builder.footnote_reference(label, number, range);
+            continue;
+        }
         builder.handle(&event, range);
     }
     builder.finish()
+}
+
+/// `number` in superscript digits, as a footnote reference shows it.
+pub fn superscript(number: usize) -> String {
+    number
+        .to_string()
+        .chars()
+        .map(|digit| match digit {
+            '1' => '¹',
+            '2' => '²',
+            '3' => '³',
+            digit => char::from_u32(0x2070 + digit.to_digit(10).unwrap_or(0)).unwrap_or(digit),
+        })
+        .collect()
+}
+
+/// Where a note's back-link to its `reference`th reference (counting from
+/// 1) leads: `fnref-label`, then `fnref-label-2` and so on, as on GitHub.
+pub fn back_link_destination(label: &str, reference: usize) -> String {
+    let label = crate::blocks::normalize_label(label);
+    match reference {
+        1 => format!("#fnref-{label}"),
+        n => format!("#fnref-{label}-{n}"),
+    }
+}
+
+/// Where a reference to the footnote `label` leads: the note, which has
+/// the anchor `fn-label`, as on GitHub.
+pub fn footnote_destination(label: &str) -> String {
+    format!("#fn-{}", crate::blocks::normalize_label(label))
 }
 
 /// Accumulates inline events into an [`InlineText`].
@@ -258,6 +332,15 @@ impl InlineBuilder {
             _ => return false,
         }
         true
+    }
+
+    /// A reference to footnote `number`, shown as the number in
+    /// superscript, which links to the note (#90).
+    pub(crate) fn footnote_reference(&mut self, label: &str, number: usize, range: Range<usize>) {
+        let start = self.output.text.len();
+        self.links.push((start, footnote_destination(label)));
+        self.push(&superscript(number), range, false);
+        self.handle(&Event::End(TagEnd::Link), 0..0);
     }
 
     /// An inline HTML tag, shown as its source, except for `<a id>` tags
@@ -879,7 +962,7 @@ mod image_tests {
         let blocks = crate::blocks::Blocks::parse(text);
         let source = &text[blocks.as_slice()[0].range.clone()];
         let mut builder = InlineBuilder::default();
-        for (event, range) in blocks.definitions().parse(source) {
+        for (event, range) in blocks.definitions().parse(source, source.len()) {
             if matches!(event, Event::End(TagEnd::Paragraph)) {
                 break;
             }
@@ -963,5 +1046,49 @@ mod anchor_tag_tests {
     fn a_self_closed_target_does_not_hide_a_later_closing_tag() {
         let inline = render(r#"<a id="x"/> <a href="/y">y</a>"#);
         assert_eq!(inline.text, r#" <a href="/y">y</a>"#);
+    }
+
+    #[test]
+    fn footnote_references_are_superscript_links() {
+        let text = "See[^a] and[^b], then[^a] again[^none].\n\n[^b]: B.\n[^a]: A.\n";
+        let blocks = crate::blocks::Blocks::parse(text);
+        let source = &text[blocks.as_slice()[0].range.clone()];
+        let inline = render_inline(source, blocks.definitions());
+        assert_eq!(inline.text, "See¹ and², then¹ again[^none].");
+        let destinations: Vec<&str> = inline
+            .links
+            .iter()
+            .map(|link| link.destination.as_str())
+            .collect();
+        assert_eq!(destinations, ["#fn-a", "#fn-b", "#fn-a"]);
+        // Clicking the number puts the caret at the reference.
+        let first = &inline.links[0];
+        assert_eq!(inline.source_offset(first.display.start), 3);
+    }
+
+    #[test]
+    fn superscript_numbers() {
+        assert_eq!(superscript(1), "¹");
+        assert_eq!(superscript(10), "¹⁰");
+        assert_eq!(superscript(234), "²³⁴");
+        assert_eq!(superscript(56789), "⁵⁶⁷⁸⁹");
+    }
+
+    #[test]
+    fn back_links_follow_the_text() {
+        let mut inline = render("A note.");
+        inline.push_back_links("Label", 2);
+        assert_eq!(inline.text, "A note. ↩ ↩²");
+        let destinations: Vec<&str> = inline
+            .links
+            .iter()
+            .map(|link| link.destination.as_str())
+            .collect();
+        assert_eq!(destinations, ["#fnref-label", "#fnref-label-2"]);
+        assert_eq!(inline.source_offset(inline.text.len() - 1), 7);
+
+        let mut empty = InlineText::default();
+        empty.push_back_links("x", 1);
+        assert_eq!(empty.text, "↩");
     }
 }

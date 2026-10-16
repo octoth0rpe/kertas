@@ -4,7 +4,7 @@
 use std::ops::Range;
 use std::rc::Rc;
 
-use crate::blocks::{BlockKind, Blocks, item_ranges};
+use crate::blocks::{BlockKind, Blocks, item_ranges, normalize_label};
 use crate::definitions::Definitions;
 use crate::rendered::{RenderedBlock, render_block};
 
@@ -36,6 +36,27 @@ pub struct Model {
     pub items: Vec<Item>,
     /// The document's link reference definitions.
     pub definitions: Rc<Definitions>,
+    /// The footnotes, as drawn at the end of the document (#90).
+    pub notes: Rc<Vec<Note>>,
+    /// The footnote references, in order: each one's label (normalized)
+    /// and where it starts.
+    pub footnote_references: Rc<Vec<(String, usize)>>,
+}
+
+/// A footnote, as drawn with the others at the end of the document.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Note {
+    /// Its number, or `None` if the footnote is never referenced.
+    pub number: Option<usize>,
+    /// Its label, as written.
+    pub label: String,
+    /// The item its definition is in.
+    pub item: usize,
+    /// Where that item's block starts, which its text maps into.
+    pub block_start: usize,
+    pub children: Vec<RenderedBlock>,
+    /// How many references there are to it, each with a back-link.
+    pub references: usize,
 }
 
 /// Which list items changed in an update: `old` (indices into the old
@@ -44,6 +65,9 @@ pub struct Model {
 pub struct Splice {
     pub old: Range<usize>,
     pub new_count: usize,
+    /// How the notes changed, if they did: how many there were, and how
+    /// many there are now.
+    pub notes: Option<(usize, usize)>,
 }
 
 impl Model {
@@ -152,7 +176,7 @@ impl Model {
             None => (0, 0),
         };
 
-        let items = (0..new_len)
+        let items: Vec<Item> = (0..new_len)
             .map(|index| {
                 let (block, kind) = block_info[index].clone();
                 let reused = reusable.and_then(|old| {
@@ -179,17 +203,83 @@ impl Model {
             })
             .collect();
 
+        let notes = notes(&items, &definitions, blocks.footnote_references());
         let old_len = old.map_or(0, |old| old.items.len());
+        let old_notes = old.map_or(0, |old| old.notes.len());
         let splice = Splice {
             old: prefix..old_len - suffix,
             new_count: new_len - prefix - suffix,
+            notes: old
+                .is_none_or(|old| !look_the_same(&old.notes, &notes))
+                .then_some((old_notes, notes.len())),
         };
         let model = Self {
             text: text.into(),
             items,
             definitions: Rc::new(definitions),
+            notes: Rc::new(notes),
+            footnote_references: Rc::new(blocks.footnote_references().to_vec()),
         };
         (model, splice)
+    }
+}
+
+/// Whether two sets of notes are drawn the same, wherever their
+/// definitions are.
+fn look_the_same(old: &[Note], new: &[Note]) -> bool {
+    old.len() == new.len()
+        && old.iter().zip(new).all(|(old, new)| {
+            old.number == new.number
+                && old.label == new.label
+                && old.references == new.references
+                && old.children == new.children
+        })
+}
+
+/// The footnotes defined in `items`: those referenced, by number, then
+/// the rest in the order they're defined. If a label is defined twice, the
+/// first definition is the one referenced.
+fn notes(items: &[Item], definitions: &Definitions, references: &[(String, usize)]) -> Vec<Note> {
+    let mut notes = Vec::new();
+    for (index, item) in items.iter().enumerate() {
+        collect_notes(&item.rendered, index, item.block.start, &mut notes);
+    }
+    let mut numbered = std::collections::HashSet::new();
+    for note in &mut notes {
+        let label = normalize_label(&note.label);
+        if numbered.insert(label.clone()) {
+            note.number = definitions.footnote_number(&label);
+            note.references = references.iter().filter(|(l, _)| *l == label).count();
+        }
+    }
+    // A stable sort, so unnumbered notes stay in source order.
+    notes.sort_by_key(|note| note.number.unwrap_or(usize::MAX));
+    notes
+}
+
+/// The footnote definitions in `block`, including those nested in lists
+/// and quotes, unnumbered.
+fn collect_notes(block: &RenderedBlock, item: usize, block_start: usize, out: &mut Vec<Note>) {
+    match block {
+        RenderedBlock::FootnoteDefinition { label, children } => out.push(Note {
+            number: None,
+            label: label.clone(),
+            item,
+            block_start,
+            children: children.clone(),
+            references: 0,
+        }),
+        RenderedBlock::List { items, .. } => {
+            for child in items.iter().flat_map(|list_item| &list_item.children) {
+                collect_notes(child, item, block_start, out);
+            }
+        }
+        RenderedBlock::BlockQuote(children) | RenderedBlock::Alert { children, .. } => {
+            for child in children {
+                collect_notes(child, item, block_start, out);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -236,7 +326,8 @@ mod tests {
             splice,
             Splice {
                 old: 1..2,
-                new_count: 1
+                new_count: 1,
+                notes: None
             }
         );
     }
@@ -248,7 +339,8 @@ mod tests {
             splice,
             Splice {
                 old: 0..1,
-                new_count: 2
+                new_count: 2,
+                notes: None
             }
         );
     }
@@ -260,7 +352,8 @@ mod tests {
             splice,
             Splice {
                 old: 0..2,
-                new_count: 1
+                new_count: 1,
+                notes: None
             }
         );
     }
@@ -272,7 +365,8 @@ mod tests {
             splice,
             Splice {
                 old: 0..1,
-                new_count: 1
+                new_count: 1,
+                notes: None
             }
         );
     }
@@ -284,7 +378,8 @@ mod tests {
             splice,
             Splice {
                 old: 0..2,
-                new_count: 2
+                new_count: 2,
+                notes: None
             }
         );
     }
@@ -300,7 +395,8 @@ mod tests {
             check_edit("A", ""),
             Splice {
                 old: 0..1,
-                new_count: 1
+                new_count: 1,
+                notes: None
             }
         );
         check_edit("", "A");
@@ -382,5 +478,58 @@ mod tests {
         // 2026-10-13); the bound leaves room for a slow or busy machine.
         assert!(elapsed.as_millis() < 100, "took {elapsed:?}");
         eprintln!("updated 10k-line model after one keystroke in {elapsed:?}");
+    }
+
+    #[test]
+    fn notes_are_numbered_then_unreferenced() {
+        let model =
+            Model::new("[^draft]: Not used.\n\nB[^b], A[^a], B[^b].\n\n[^a]: Ay.\n\n[^b]: Bee.\n");
+        let notes: Vec<(Option<usize>, &str, usize, usize)> = model
+            .notes
+            .iter()
+            .map(|note| (note.number, note.label.as_str(), note.item, note.references))
+            .collect();
+        assert_eq!(
+            notes,
+            [
+                (Some(1), "b", 3, 2),
+                (Some(2), "a", 2, 1),
+                (None, "draft", 0, 0)
+            ]
+        );
+        assert_eq!(
+            model.notes[0].block_start,
+            model.text.find("[^b]:").unwrap()
+        );
+    }
+
+    #[test]
+    fn a_label_defined_twice_numbers_the_first() {
+        let model = Model::new("X[^a]\n\n[^a]: One.\n\n[^A]: Two.\n");
+        let numbers: Vec<Option<usize>> = model.notes.iter().map(|note| note.number).collect();
+        assert_eq!(numbers, [Some(1), None]);
+    }
+
+    #[test]
+    fn notes_change_only_when_they_look_different() {
+        let before = "Intro.\n\nText[^a].\n\n[^a]: Note.\n";
+        // Typing above them moves the notes' definitions, but they look
+        // the same.
+        assert_eq!(check_edit(before, &format!("More. {before}")).notes, None);
+        assert_eq!(
+            check_edit(before, "Intro.\n\nText[^a].\n\n[^a]: Notes.\n").notes,
+            Some((1, 1))
+        );
+        assert_eq!(
+            check_edit(before, "Intro.\n\nText[^a].\n\n[^a]: Note.\n\n[^b]: B.\n").notes,
+            Some((1, 2))
+        );
+        // Numbers change, so everything is drawn again.
+        let splice = check_edit(
+            before,
+            "Intro[^b].\n\nText[^a].\n\n[^a]: Note.\n\n[^b]: B.\n",
+        );
+        assert_eq!(splice.old, 0..3);
+        assert_eq!(splice.notes, Some((1, 2)));
     }
 }

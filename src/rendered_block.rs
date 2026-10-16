@@ -8,9 +8,10 @@ use std::rc::Rc;
 use gpui::{
     AccessibleAction, AnyElement, App, ElementId, Font, FontWeight, Hsla, ImageSource,
     ImgResourceLoader, InteractiveText, MouseButton, Rems, Resource, Role, SharedString,
-    StyledText, Toggled, WeakEntity, Window, div, img, prelude::*, px, rems, svg,
+    StyledText, TextLayout, Toggled, WeakEntity, Window, div, img, prelude::*, px, rems, svg,
 };
 use kertas::inline::{Image, InlineText, Link};
+use kertas::model::Note;
 use kertas::rendered::{AlertKind, ColumnAlignment, ListItem, RenderedBlock, Table, Task};
 use kertas::settings::ListIndent;
 use kertas::tabs::ExpandedTabs;
@@ -72,10 +73,24 @@ pub struct ClickTarget {
     /// Images still loading, by their block's start, so the view can
     /// re-measure the block once each one arrives.
     pub loading_images: LoadingImages,
+    /// The footnote reference the view is scrolling to, if any.
+    pub reference: ReferenceSlot,
 }
 
 /// Images still loading, and where their blocks start.
 pub type LoadingImages = Rc<std::cell::RefCell<Vec<(usize, Resource)>>>;
+
+/// A footnote reference that a note's back-link is scrolling to (#90).
+#[derive(Default)]
+pub struct ReferenceTarget {
+    /// Where the reference starts in the document.
+    pub offset: Option<usize>,
+    /// Once it's drawn: the layout of the text it's in, and where it is in
+    /// that text.
+    pub found: Option<(TextLayout, usize)>,
+}
+
+pub type ReferenceSlot = Rc<std::cell::RefCell<ReferenceTarget>>;
 
 impl ClickTarget {
     /// Places the caret at `offset` in the block's source (shift-click
@@ -143,6 +158,12 @@ pub fn render_block(
     look: &Look,
     click: ClickTarget,
 ) -> AnyElement {
+    // Drawn with the other notes, at the end (#90).
+    if let RenderedBlock::FootnoteDefinition { .. } = block {
+        return div()
+            .when(first, |this| this.pt(px(32.)))
+            .into_any_element();
+    }
     let content = rendered_content(block, look, click.clone());
     block_frame(content, rendered_heading(block), first, click)
 }
@@ -266,6 +287,8 @@ fn render_content(block: &RenderedBlock, style: &TextStyle, depth: usize) -> Any
             })
             .into_any_element(),
         RenderedBlock::Table(table) => render_table(table, style),
+        // Drawn with the other notes, at the end (#90).
+        RenderedBlock::FootnoteDefinition { .. } => div().into_any_element(),
         // `<a id="x"></a>` only marks a link target (#96).
         RenderedBlock::Html(source) if html_tags::only_targets(source) => div().into_any_element(),
         RenderedBlock::Html(source) | RenderedBlock::Raw(source) => {
@@ -275,6 +298,93 @@ fn render_content(block: &RenderedBlock, style: &TextStyle, depth: usize) -> Any
                 .into_any_element()
         }
     }
+}
+
+/// The size of footnotes' text, relative to body text.
+const NOTE_SCALE: f32 = 0.875;
+
+/// The width of the footnotes' number column, in rems at their size:
+/// wide enough for the largest number.
+pub fn note_marker_column(list_indent: ListIndent, notes: &[Note]) -> f32 {
+    let markers: Vec<String> = notes
+        .iter()
+        .filter_map(|note| note.number.map(|number| format!("{number}.")))
+        .collect();
+    marker_column(list_indent, &markers)
+}
+
+/// A footnote, as one of the rows after the document's blocks (#90): its
+/// number and text, with a back-link to each reference. The first has a
+/// thin rule above it. A footnote that's never referenced shows its
+/// label instead of a number. `column` is the number column's width, from
+/// [`note_marker_column`].
+pub fn render_note(
+    note: &Note,
+    first: bool,
+    column: f32,
+    look: &Look,
+    click: ClickTarget,
+) -> AnyElement {
+    let style = TextStyle {
+        font: look.font.clone(),
+        color: look.theme.text,
+        theme: look.theme,
+        tab_width: look.tab_width,
+        list_indent: look.list_indent,
+        code_font: look.code_font.clone(),
+        nodes: Rc::default(),
+        click: click.clone(),
+    };
+    let mut children = note.children.clone();
+    if note.references > 0 {
+        match children.last_mut() {
+            Some(RenderedBlock::Paragraph(text)) => {
+                text.push_back_links(&note.label, note.references)
+            }
+            _ => {
+                let mut text = InlineText::default();
+                text.push_back_links(&note.label, note.references);
+                children.push(RenderedBlock::Paragraph(text));
+            }
+        }
+    }
+    let (marker, name) = match note.number {
+        Some(number) => (format!("{number}."), format!("Footnote {number}")),
+        None => (
+            format!("[^{}]", note.label),
+            format!("Footnote {}", note.label),
+        ),
+    };
+    let row = div()
+        .id(ElementId::named_usize("note", click.block_start))
+        .role(Role::Note)
+        .aria_label(name)
+        .flex()
+        .text_size(rems(NOTE_SCALE))
+        .child(
+            div()
+                .flex_none()
+                .min_w(rems(column))
+                .pr(rems(MARKER_GAP))
+                .text_right()
+                .when(note.number.is_none(), |this| {
+                    this.text_color(look.theme.muted_text)
+                })
+                .child(marker),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .child(render_children(&children, &style, 1)),
+        );
+    let content = div()
+        .when(first, |this| {
+            this.child(div().mt(px(16.)).mb(px(16.)).h(px(1.)).bg(look.theme.rule))
+        })
+        .child(row)
+        .into_any_element();
+    block_frame(content, None, false, click)
 }
 
 /// A GitHub alert: a colored bar, a title with an icon, and its contents.
@@ -668,6 +778,7 @@ pub(crate) fn natural_size(image: &gpui::RenderImage, destination: &str) -> (f32
 fn clickable_run(text: &InlineText, style: &TextStyle, accessible: bool) -> AnyElement {
     let styled = styled_text(text, style);
     let layout = styled.layout().clone();
+    find_reference(text, &layout, &style.click);
     let inline = text.clone();
     let click = style.click.clone();
     let (drag_layout, drag_inline, drag) = (layout.clone(), inline.clone(), click.clone());
@@ -720,6 +831,22 @@ fn clickable_run(text: &InlineText, style: &TextStyle, accessible: bool) -> AnyE
         })
         .child(content)
         .into_any_element()
+}
+
+/// Notes where the footnote reference the view is scrolling to is, if
+/// it's in `text`, which is drawn with `layout`.
+fn find_reference(text: &InlineText, layout: &TextLayout, click: &ClickTarget) {
+    let mut target = click.reference.borrow_mut();
+    let Some(offset) = target.offset else {
+        return;
+    };
+    let reference = text.links.iter().find(|link| {
+        link.destination.starts_with("#fn-")
+            && click.block_start + text.source_offset(link.display.start) == offset
+    });
+    if let Some(reference) = reference {
+        target.found = Some((layout.clone(), reference.display.start));
+    }
 }
 
 /// Plain text shown with tabs expanded. A click maps the clicked index back

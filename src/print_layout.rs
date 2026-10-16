@@ -146,7 +146,42 @@ impl PrintLayout {
         for item in &model.items {
             layout.block(&item.rendered, 0., RunStyle::default());
         }
+        layout.notes(model);
         layout
+    }
+
+    /// The footnotes, after a rule at the end of the document, numbered as
+    /// on screen (#90).
+    fn notes(&mut self, model: &Model) {
+        if model.notes.is_empty() {
+            return;
+        }
+        self.block(&RenderedBlock::ThematicBreak, 0., RunStyle::default());
+        for note in model.notes.iter() {
+            let marker = match note.number {
+                Some(number) => format!("{number}."),
+                None => format!("[^{}]", note.label),
+            };
+            self.item(&marker, &note.children, 0., RunStyle::default());
+        }
+    }
+
+    /// A list item's `children`, the first starting with its `marker`.
+    /// The marker starts the item's first paragraph.
+    fn item(&mut self, marker: &str, children: &[RenderedBlock], indent: f64, style: RunStyle) {
+        for (index, child) in children.iter().enumerate() {
+            if index == 0 {
+                let item_start = self.text.len();
+                self.push(&format!("{marker}  "), style);
+                let first_paragraph = self.paragraphs.len();
+                self.block(child, indent + self.list_indent, style);
+                if let Some(paragraph) = self.paragraphs.get_mut(first_paragraph) {
+                    paragraph.range.start = item_start;
+                }
+            } else {
+                self.block(child, indent + self.list_indent, style);
+            }
+        }
     }
 
     fn push(&mut self, text: &str, style: RunStyle) {
@@ -293,20 +328,7 @@ impl PrintLayout {
                         (None, Some(first)) => format!("{}.", first + number as u64),
                         (None, None) => "•".to_owned(),
                     };
-                    for (index, child) in item.children.iter().enumerate() {
-                        if index == 0 {
-                            // The marker starts the item's first paragraph.
-                            let item_start = self.text.len();
-                            self.push(&format!("{marker}  "), style);
-                            let first_paragraph = self.paragraphs.len();
-                            self.block(child, indent + self.list_indent, style);
-                            if let Some(paragraph) = self.paragraphs.get_mut(first_paragraph) {
-                                paragraph.range.start = item_start;
-                            }
-                        } else {
-                            self.block(child, indent + self.list_indent, style);
-                        }
-                    }
+                    self.item(&marker, &item.children, indent, style);
                 }
             }
             RenderedBlock::Alert { kind, children } => {
@@ -393,6 +415,8 @@ impl PrintLayout {
                 let after = self.text.len();
                 self.end_paragraph(after, paragraph);
             }
+            // Printed with the other notes, at the end.
+            RenderedBlock::FootnoteDefinition { .. } => {}
             // `<a id="x"></a>` only marks a link target, so prints nothing.
             RenderedBlock::Html(source) if html_tags::only_targets(source) => {}
             RenderedBlock::Html(source) | RenderedBlock::Raw(source) => {
@@ -627,5 +651,15 @@ mod tests {
         let style = style_of(&layout, "Quoted");
         assert_eq!(style.heading, Some(1));
         assert!(style.muted);
+    }
+
+    #[test]
+    fn footnotes_print_at_the_end() {
+        let layout = layout("[^b]: Bee.\n\nText[^a][^b].\n\n[^a]: Ay.\n\n[^c]: Sea.\n");
+        assert_eq!(
+            paragraphs(&layout),
+            ["Text¹².", " ", "1.  Ay.", "2.  Bee.", "[^c]  Sea."]
+        );
+        assert_eq!(layout.paragraphs[1].frame, Frame::Rule);
     }
 }
