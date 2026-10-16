@@ -2,7 +2,7 @@
 
 What's new in each version of Kertas, newest first.
 
-## Unreleased
+## 0.4.0 — 2026-10-16
 
 - **Color themes.** Choose Kertas, Solarized, Gruvbox or Catppuccin from **View → Theme** or **Kertas → Settings…**. Each has light and dark colors, and **View → Appearance** chooses which you see.
 - **Your own themes.** Theme files in the themes folder (**Open Themes Folder** in Settings) are listed with the built-in ones, and changes to them show as soon as you save. A theme with a built-in theme's name replaces it. **Help → Themes** lists every color, with an example to start from.
