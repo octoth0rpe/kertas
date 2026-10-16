@@ -10,6 +10,7 @@ use pulldown_cmark::{Alignment, BlockQuoteKind, CodeBlockKind, Event, HeadingLev
 use crate::blocks::{BlockKind, Blocks};
 use crate::definitions::Definitions;
 use crate::inline::{InlineBuilder, InlineText};
+use crate::links::is_web;
 
 /// Each heading level's text size, relative to body text, on screen and
 /// in print.
@@ -63,6 +64,44 @@ pub enum RenderedBlock {
         label: String,
         children: Vec<RenderedBlock>,
     },
+}
+
+impl RenderedBlock {
+    /// Whether any image in the block is from the web (#97).
+    pub fn has_web_image(&self) -> bool {
+        let mut found = false;
+        self.each_text(&mut |text| {
+            found = found || text.images.iter().any(|image| is_web(&image.destination));
+        });
+        found
+    }
+
+    /// Calls `f` with each run of inline text in the block, nested blocks
+    /// included.
+    pub fn each_text(&self, f: &mut dyn FnMut(&InlineText)) {
+        match self {
+            Self::Paragraph(text) | Self::Heading { text, .. } => f(text),
+            Self::CodeBlock { code, .. } => f(code),
+            Self::List { items, .. } => {
+                for child in items.iter().flat_map(|item| &item.children) {
+                    child.each_text(f);
+                }
+            }
+            Self::BlockQuote(children)
+            | Self::Alert { children, .. }
+            | Self::FootnoteDefinition { children, .. } => {
+                for child in children {
+                    child.each_text(f);
+                }
+            }
+            Self::Table(table) => {
+                for cell in table.header.iter().chain(table.rows.iter().flatten()) {
+                    f(cell);
+                }
+            }
+            Self::ThematicBreak | Self::Html(_) | Self::Raw(_) => {}
+        }
+    }
 }
 
 /// Which GitHub alert a blockquote is.

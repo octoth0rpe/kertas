@@ -20,7 +20,7 @@ use super::{
     Revealed, ScrollRequest, SelectBlockDown, SelectBlockUp, SelectDocumentEnd,
     SelectDocumentStart, SelectDown, SelectLeft, SelectLineEnd, SelectLineStart, SelectRight,
     SelectTab1, SelectTab2, SelectTab3, SelectTab4, SelectTab5, SelectTab6, SelectTab7, SelectTab8,
-    SelectTab9, SelectUp, SelectWordLeft, SelectWordRight, ZoomIn, ZoomOut,
+    SelectTab9, SelectUp, SelectWordLeft, SelectWordRight, WebImages, ZoomIn, ZoomOut,
 };
 use crate::app_settings::{self, AppSettings};
 use crate::rendered_block::{
@@ -151,6 +151,91 @@ impl DocumentView {
         )
     }
 
+    /// A bar at the top of the window asking whether to load the
+    /// document's web images (#97), if it has any and the user hasn't
+    /// answered.
+    fn render_web_images_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let open = self.open.as_ref()?;
+        if self.web_images != WebImages::Ask || !open.editor.model().web_images {
+            return None;
+        }
+        let message = "This document has images from the web.";
+        let theme = self.theme;
+        Some(
+            div()
+                .id("web-images")
+                .role(Role::Group)
+                .aria_label(message)
+                .flex()
+                .items_center()
+                .gap_2()
+                .px_3()
+                .py(px(6.))
+                .border_b_1()
+                .border_color(theme.rule)
+                .bg(theme.table_header_background)
+                .text_size(px(12.))
+                .line_height(px(16.))
+                .child(div().flex_1().child(message))
+                .child(
+                    bar_button(theme, "load-web-images", "Load Images", "Load Images").on_click(
+                        cx.listener(|this, _, window, cx| {
+                            this.answer_web_images(WebImages::Load, window, cx)
+                        }),
+                    ),
+                )
+                .child(
+                    bar_button(theme, "close-web-images", "×", "Don't load images")
+                        .px_1()
+                        .py_0()
+                        .border_color(gpui::transparent_black())
+                        .bg(gpui::transparent_black())
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.answer_web_images(WebImages::Declined, window, cx)
+                        })),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// Whether the bar is asking whether to load web images, for the smoke
+    /// test.
+    #[cfg(debug_assertions)]
+    pub fn web_images_asked(&self) -> bool {
+        self.open
+            .as_ref()
+            .is_some_and(|open| self.web_images == WebImages::Ask && open.editor.model().web_images)
+    }
+
+    /// Answers the web images bar as its buttons do, for the smoke test.
+    #[cfg(debug_assertions)]
+    pub fn answer_web_images_bar(
+        &mut self,
+        load: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let answer = if load {
+            WebImages::Load
+        } else {
+            WebImages::Declined
+        };
+        self.answer_web_images(answer, window, cx);
+    }
+
+    /// Loads the document's web images or not, as the user answered.
+    fn answer_web_images(
+        &mut self,
+        answer: WebImages,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.web_images = answer;
+        // The bar closes, so focus would be left on nothing.
+        self.focus_handle.focus(window, cx);
+        cx.notify();
+    }
+
     /// The document's blocks: each rendered, except the revealed ones,
     /// which show their source.
     fn render_document(
@@ -174,6 +259,7 @@ impl DocumentView {
         let editable = !open.editor.read_only();
         let document: Option<Rc<Path>> = open.editor.document().path().map(Rc::from);
         let loading_images = self.loading_images.clone();
+        let web_images = self.web_images == WebImages::Load;
         // What this frame scrolls to (see `ScrollRequest`).
         let viewport_height = open.list_state.viewport_bounds().size.height;
         let reference = match request {
@@ -195,6 +281,7 @@ impl DocumentView {
             editable,
             document: document.clone(),
             loading_images: loading_images.clone(),
+            web_images,
             reference,
         };
         let note_column = note_marker_column(look.list_indent, &model.notes);
@@ -526,6 +613,7 @@ impl Render for DocumentView {
         }
         let tab_strip = render_tab_strip(window, cx, self.theme, edited);
         let disk_bar = self.render_disk_change(cx);
+        let web_images_bar = self.render_web_images_bar(cx);
         let problems_bar = self.render_settings_problems(cx);
 
         let name = match self.builtin {
@@ -558,6 +646,7 @@ impl Render for DocumentView {
             .flex_col()
             .children(tab_strip)
             .children(disk_bar)
+            .children(web_images_bar)
             .child(
                 div()
                     .id("document")

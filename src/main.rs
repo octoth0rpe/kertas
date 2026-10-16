@@ -27,6 +27,8 @@ mod system_actions;
 mod tab_strip;
 mod text_style;
 mod theme;
+#[cfg(target_os = "macos")]
+mod web_images;
 mod windows;
 mod zoom;
 
@@ -56,6 +58,8 @@ fn main() -> std::process::ExitCode {
     app.run(move |cx: &mut App| {
         app_settings::init(cx);
         zoom::init(cx);
+        #[cfg(target_os = "macos")]
+        web_images::init(cx);
         #[cfg(target_os = "macos")]
         dock_icon::init();
         windows::register(cx);

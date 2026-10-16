@@ -41,6 +41,8 @@ pub struct Model {
     /// The footnote references, in order: each one's label (normalized)
     /// and where it starts.
     pub footnote_references: Rc<Vec<(String, usize)>>,
+    /// Whether any image in the document is from the web (#97).
+    pub web_images: bool,
 }
 
 /// A footnote, as drawn with the others at the end of the document.
@@ -213,7 +215,9 @@ impl Model {
                 .is_none_or(|old| !look_the_same(&old.notes, &notes))
                 .then_some((old_notes, notes.len())),
         };
+        let web_images = items.iter().any(|item| item.rendered.has_web_image());
         let model = Self {
+            web_images,
             text: text.into(),
             items,
             definitions: Rc::new(definitions),
@@ -531,5 +535,21 @@ mod tests {
         );
         assert_eq!(splice.old, 0..3);
         assert_eq!(splice.notes, Some((1, 2)));
+    }
+
+    #[test]
+    fn web_images_are_noticed_anywhere() {
+        assert!(!Model::new("![a](a.png) and [link](https://example.com)\n").web_images);
+        for text in [
+            "![a](https://example.com/a.png)\n",
+            "- item\n  > ![a](http://example.com/a.png)\n",
+            "| a |\n|---|\n| ![a](https://example.com/a.png) |\n",
+            "Text[^a].\n\n[^a]: ![a](https://example.com/a.png)\n",
+            "![a][r]\n\n[r]: https://example.com/a.png\n",
+        ] {
+            assert!(Model::new(text).web_images, "{text}");
+        }
+        let (model, _) = Model::new("Text.\n").updated("Text ![a](https://x.org/a.png).\n");
+        assert!(model.web_images);
     }
 }

@@ -63,17 +63,33 @@ pub fn resolve(destination: &str, document: Option<&Path>) -> LinkTarget {
     }
 }
 
-/// The local file an image's `destination` points to, resolved as
-/// [`resolve`] resolves links. `None` for web images (#92 shows local
-/// images only) and other URLs, and for relative paths in an untitled
-/// document. The file may not exist.
-pub fn image_path(destination: &str, document: Option<&Path>) -> Option<PathBuf> {
+/// Where an image is loaded from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImageLocation {
+    /// A local file, which may not exist.
+    File(PathBuf),
+    /// An `http` or `https` URL, loaded only if the user allows it (#97).
+    Web(String),
+}
+
+/// Where an image's `destination` points, resolved as [`resolve`]
+/// resolves links. `None` for URLs other than web ones, and for relative
+/// paths in an untitled document.
+pub fn image_location(destination: &str, document: Option<&Path>) -> Option<ImageLocation> {
     match resolve(destination, document) {
         LinkTarget::Markdown(path, _) | LinkTarget::File(path) | LinkTarget::Missing(path) => {
-            Some(path)
+            Some(ImageLocation::File(path))
         }
+        LinkTarget::Url(url) if is_web(&url) => Some(ImageLocation::Web(url)),
         LinkTarget::Url(_) | LinkTarget::SameDocument(_) | LinkTarget::NoFolder(_) => None,
     }
+}
+
+/// Whether `destination` is a web address: `http:` or `https:`.
+pub fn is_web(destination: &str) -> bool {
+    scheme(destination.trim()).is_some_and(|scheme| {
+        scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
+    })
 }
 
 /// A URL's scheme, like `https` in `https://…`: letters, digits, `+`, `-`
@@ -256,24 +272,32 @@ mod tests {
     }
 
     #[test]
-    fn image_paths() {
+    fn image_locations() {
         let folder = Folder::new("images");
         let document = folder.document();
         let document = Some(document.as_path());
+        let file = |path: PathBuf| Some(ImageLocation::File(path));
         assert_eq!(
-            image_path("../paper.pdf", document),
-            Some(folder.0.join("sub/../paper.pdf"))
+            image_location("../paper.pdf", document),
+            file(folder.0.join("sub/../paper.pdf"))
         );
         assert_eq!(
-            image_path("missing.png", document),
-            Some(folder.0.join("sub/missing.png"))
+            image_location("missing.png", document),
+            file(folder.0.join("sub/missing.png"))
         );
-        assert_eq!(image_path("https://example.com/a.png", document), None);
-        assert_eq!(image_path("a.png", None), None);
+        assert_eq!(image_location("a.png", None), None);
         assert_eq!(
-            image_path("/abs/a.png", None),
-            Some(PathBuf::from("/abs/a.png"))
+            image_location("/abs/a.png", None),
+            file(PathBuf::from("/abs/a.png"))
         );
+        for url in ["https://example.com/a.png", "HTTP://example.com/a.png"] {
+            assert_eq!(
+                image_location(url, document),
+                Some(ImageLocation::Web(url.to_owned()))
+            );
+        }
+        assert_eq!(image_location("ftp://example.com/a.png", document), None);
+        assert_eq!(image_location("data:image/png;base64,AAAA", document), None);
     }
 
     #[test]

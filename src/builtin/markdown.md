@@ -60,7 +60,9 @@ A link can have a title after its address, `[Markdown](https://commonmark.org "C
 ![A description of the picture](pictures/photo.png)
 ```
 
-The path is relative to the document's folder. The image is shown at its own size, or smaller to fit, and the description is shown instead if the file can't be found. Images from the web aren't loaded.
+The path is relative to the document's folder. The image is shown at its own size, or smaller to fit, and the description is shown instead if the file can't be found.
+
+Images from the web (`https://…`) aren't loaded until you ask: a bar at the top of the document offers **Load Images**. Kertas asks each time the document is opened. Until then, each image shows its description.
 
 ## Lists
 

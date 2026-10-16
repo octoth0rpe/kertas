@@ -2,7 +2,7 @@
 //! source offsets.
 
 use std::cell::Cell;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::rc::Rc;
 
 use gpui::{
@@ -12,6 +12,7 @@ use gpui::{
     rems, size, svg,
 };
 use kertas::inline::{Image, InlineText, Link};
+use kertas::links::ImageLocation;
 use kertas::model::Note;
 use kertas::rendered::{AlertKind, ColumnAlignment, ListItem, RenderedBlock, Table, Task};
 use kertas::settings::ListIndent;
@@ -74,6 +75,8 @@ pub struct ClickTarget {
     /// Images still loading, by their block's start, so the view can
     /// re-measure the block once each one arrives.
     pub loading_images: LoadingImages,
+    /// Whether web images are loaded (#97).
+    pub web_images: bool,
     /// The footnote reference the view is scrolling to, if any.
     pub reference: Option<ReferenceTarget>,
 }
@@ -676,9 +679,16 @@ struct DocumentImage {
 
 impl RenderOnce for DocumentImage {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let path: Option<PathBuf> =
-            links::image_path(&self.image.destination, self.click.document.as_deref());
-        let resource = path.map(|path| Resource::Path(path.into()));
+        let location =
+            links::image_location(&self.image.destination, self.click.document.as_deref());
+        let resource = match location {
+            Some(ImageLocation::File(path)) => Some(Resource::Path(path.into())),
+            // Until the user allows them, web images show as missing.
+            Some(ImageLocation::Web(url)) if self.click.web_images => {
+                Some(Resource::Uri(url.into()))
+            }
+            _ => None,
+        };
         let loaded = resource
             .as_ref()
             .map(|resource| window.use_asset::<ImgResourceLoader>(resource, cx));
@@ -712,7 +722,8 @@ impl RenderOnce for DocumentImage {
             }
             // Still loading: nothing yet, then the image.
             Some(None) => div().into_any_element(),
-            // Missing, unreadable, from the web, or no folder to find it in.
+            // Missing, unreadable, from the web and not allowed or not
+            // found, or no folder to find it in.
             _ => div()
                 .px_2()
                 .border_1()
@@ -760,7 +771,9 @@ impl RenderOnce for DocumentImage {
 pub(crate) fn natural_size(image: &gpui::RenderImage, destination: &str) -> (f32, f32) {
     let size = image.size(0);
     let (width, height) = (size.width.0 as f32, size.height.0 as f32);
-    let svg = Path::new(destination)
+    // A web image's address may have a query after its path.
+    let path = destination.split(['?', '#']).next().unwrap_or_default();
+    let svg = Path::new(path)
         .extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("svg"));
     if svg {
