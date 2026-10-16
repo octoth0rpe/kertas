@@ -40,13 +40,14 @@ The first build downloads GPUI from the Zed repository and takes a few minutes.
 Settings live in `~/Library/Application Support/kertas/config.toml`. The file is optional, and edits to it apply straight away:
 
 ```toml
-theme = "dark"       # "light", "dark" or "system" (the default)
+appearance = "dark"  # "light", "dark" or "system" (the default)
+theme = "Kertas"     # the color theme; Kertas is the default
 layout = "windows"   # "tabs" (the default) or "windows", from the next start
 text_width = "wide"  # "standard" (the default), "wide" or "full"
 font_size = 18       # 10 to 32; the default is 16
 ```
 
-The View menu changes `theme` and `text_width` too.
+The View menu changes `appearance`, `theme` and `text_width` too.
 
 ### Dependencies
 

@@ -1,13 +1,13 @@
 //! The colors windows are drawn in (A2), from a color theme.
 //!
-//! The `theme` setting picks light or dark mode, or follows the macOS
-//! appearance. The colors come from Kertas's theme file; see
-//! [`kertas::themes`].
+//! The `theme` setting picks a theme, and the `appearance` setting its
+//! light or dark colors, or follows the macOS appearance. Themes come from
+//! theme files; see [`kertas::themes`].
 
 use gpui::{App, Hsla, Window, WindowAppearance, rgba};
 use kertas::rendered::AlertKind;
-use kertas::settings::ThemeSetting;
-use kertas::themes::{self, Color, Palette};
+use kertas::settings::AppearanceSetting;
+use kertas::themes::{self, Appearance, Color, Palette};
 
 use crate::app_settings;
 
@@ -35,19 +35,30 @@ pub struct Theme {
 }
 
 impl Theme {
-    /// The theme for `window`, from the `theme` setting.
+    /// The colors for `window`: the `theme` setting's, in light or dark
+    /// mode as the `appearance` setting picks.
     pub fn current(window: &Window, cx: &App) -> Self {
-        match app_settings::get(cx).theme {
-            ThemeSetting::Light => Self::light(),
-            ThemeSetting::Dark => Self::dark(),
-            ThemeSetting::System => Self::for_appearance(window.appearance()),
-        }
+        let settings = app_settings::get(cx);
+        let appearance = match settings.appearance {
+            AppearanceSetting::Light => Appearance::Light,
+            AppearanceSetting::Dark => Appearance::Dark,
+            AppearanceSetting::System => appearance(window.appearance()),
+        };
+        // The setting only names a theme there is.
+        let theme = themes::builtin()
+            .iter()
+            .find(|theme| theme.name == settings.theme)
+            .unwrap_or_else(|| themes::kertas());
+        Self::from(theme.palette(appearance))
     }
 
+    /// Kertas's light colors, which printing uses.
     pub fn light() -> Self {
         Self::from(&themes::kertas().light)
     }
 
+    /// Kertas's dark colors, which the smoke tests check for.
+    #[cfg(debug_assertions)]
     pub fn dark() -> Self {
         Self::from(&themes::kertas().dark)
     }
@@ -56,13 +67,13 @@ impl Theme {
     pub fn alert(&self, kind: AlertKind) -> Hsla {
         self.alerts[kind as usize]
     }
+}
 
-    /// The theme matching a window's macOS appearance.
-    pub fn for_appearance(appearance: WindowAppearance) -> Self {
-        match appearance {
-            WindowAppearance::Light | WindowAppearance::VibrantLight => Self::light(),
-            WindowAppearance::Dark | WindowAppearance::VibrantDark => Self::dark(),
-        }
+/// Whether a window's macOS appearance is light or dark.
+fn appearance(appearance: WindowAppearance) -> Appearance {
+    match appearance {
+        WindowAppearance::Light | WindowAppearance::VibrantLight => Appearance::Light,
+        WindowAppearance::Dark | WindowAppearance::VibrantDark => Appearance::Dark,
     }
 }
 
@@ -154,19 +165,13 @@ mod tests {
     }
 
     #[test]
-    fn appearance_picks_theme() {
+    fn window_appearance_is_light_or_dark() {
+        assert_eq!(appearance(WindowAppearance::Light), Appearance::Light);
         assert_eq!(
-            Theme::for_appearance(WindowAppearance::Light),
-            Theme::light()
+            appearance(WindowAppearance::VibrantLight),
+            Appearance::Light
         );
-        assert_eq!(
-            Theme::for_appearance(WindowAppearance::VibrantLight),
-            Theme::light()
-        );
-        assert_eq!(Theme::for_appearance(WindowAppearance::Dark), Theme::dark());
-        assert_eq!(
-            Theme::for_appearance(WindowAppearance::VibrantDark),
-            Theme::dark()
-        );
+        assert_eq!(appearance(WindowAppearance::Dark), Appearance::Dark);
+        assert_eq!(appearance(WindowAppearance::VibrantDark), Appearance::Dark);
     }
 }

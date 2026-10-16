@@ -11,7 +11,8 @@ use gpui::{
     SharedString, Stateful, Subscription, Toggled, Window, WindowBounds, WindowHandle, WindowKind,
     WindowOptions, actions, anchored, deferred, div, prelude::*, px, size,
 };
-use kertas::settings::{Kind, SETTINGS, Setting, Settings};
+use kertas::settings::{DEFAULT_THEME, Kind, SETTINGS, Setting, Settings};
+use kertas::themes;
 
 use crate::app_settings::{self, AppSettings};
 use crate::document_view::{CloseWindow, DocumentView};
@@ -92,6 +93,15 @@ struct Choice {
     selected: bool,
 }
 
+/// An item in a pop-up list.
+struct PopupOption {
+    label: SharedString,
+    /// The setting's value when it's chosen, or `None` to remove the
+    /// setting so it takes its default.
+    value: Option<String>,
+    selected: bool,
+}
+
 /// About how tall the settings sheet is, before it fits itself to its
 /// rows.
 const INITIAL_HEIGHT: f32 = 604.;
@@ -137,8 +147,8 @@ pub struct SettingsWindow {
     theme: Theme,
     _settings_observer: Subscription,
     _appearance_observer: Subscription,
-    /// The font setting whose list of fonts is open.
-    font_menu: Option<&'static str>,
+    /// The setting whose pop-up list (of fonts or themes) is open.
+    open_menu: Option<&'static str>,
 }
 
 impl SettingsWindow {
@@ -152,7 +162,7 @@ impl SettingsWindow {
                 this.theme = Theme::current(window, cx);
                 cx.notify();
             }),
-            font_menu: None,
+            open_menu: None,
             _appearance_observer: cx.observe_window_appearance(window, |this, window, cx| {
                 this.theme = Theme::current(window, cx);
                 cx.notify();
@@ -223,15 +233,69 @@ impl SettingsWindow {
         current: Option<&str>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let mut options = vec![PopupOption {
+            label: default.into(),
+            value: None,
+            selected: current.is_none(),
+        }];
+        options.extend(
+            app_settings::installed_fonts(cx)
+                .iter()
+                .map(|font| PopupOption {
+                    label: font.clone().into(),
+                    selected: Some(font.as_str()) == current,
+                    value: Some(font.clone()),
+                }),
+        );
+        let shown = current.unwrap_or(default).to_owned();
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(setting.label)
+            .child(self.popup(setting, "font", shown, options, cx))
+    }
+
+    /// The theme's pop-up button, labelled, showing the theme. It opens a
+    /// list of the themes.
+    fn theme(
+        &self,
+        setting: &'static Setting,
+        current: &str,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let options = themes::builtin()
+            .iter()
+            .map(|theme| PopupOption {
+                label: theme.name.clone().into(),
+                // The default is set by not setting it.
+                value: (theme.name != DEFAULT_THEME).then(|| theme.name.clone()),
+                selected: theme.name == current,
+            })
+            .collect();
+        let popup = self.popup(setting, "theme", current.to_owned(), options, cx);
+        // Its own row, unlike a font's, so the label is the row's.
+        self.labelled(setting.label, popup).into_any_element()
+    }
+
+    /// A pop-up button for a setting that names a `noun` (a font or a
+    /// theme), showing `shown`. It opens a list of `options`.
+    fn popup(
+        &self,
+        setting: &'static Setting,
+        noun: &'static str,
+        shown: String,
+        options: Vec<PopupOption>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let theme = self.theme;
         let key = setting.key;
-        let open = self.font_menu == Some(key);
-        let shown = current.unwrap_or(default).to_owned();
+        let open = self.open_menu == Some(key);
         let button = self
             .control(
                 div().id(key),
                 Role::Button,
-                format!("{} font, {shown}", setting.label),
+                format!("{} {noun}, {shown}", setting.label),
             )
             .aria_expanded(open)
             .flex()
@@ -245,64 +309,51 @@ impl SettingsWindow {
             .bg(theme.code_background)
             .hover(|style| style.bg(theme.rule))
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.font_menu = if open { None } else { Some(key) };
+                this.open_menu = if open { None } else { Some(key) };
                 cx.notify();
             }))
             .child(shown)
             .child(div().text_color(theme.muted_text).child("▾"));
 
-        let item = |id: SharedString,
-                    label: SharedString,
-                    font: Option<String>,
-                    cx: &mut Context<Self>| {
-            let selected = font.as_deref() == current;
-            self.control(div().id(id), Role::MenuItemRadio, label.clone())
-                .aria_toggled(toggled(selected))
-                .flex()
-                .gap_2()
-                .px_3()
-                .py(px(2.))
-                .border_1()
-                .border_color(gpui::transparent_black())
-                .hover(|style| style.bg(theme.rule))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.font_menu = None;
-                    let font = font.clone();
-                    cx.defer(move |cx| match font {
-                        Some(font) => app_settings::set_or_report(key, font, cx),
-                        None => app_settings::remove_or_report(key, cx),
-                    });
-                    cx.notify();
-                }))
-                .child(div().w(px(12.)).child(if selected { "✓" } else { "" }))
-                .child(label)
+        let item = |option: PopupOption, cx: &mut Context<Self>| {
+            let PopupOption {
+                label,
+                value,
+                selected,
+            } = option;
+            self.control(
+                div().id(SharedString::from(format!("{key}-{label}"))),
+                Role::MenuItemRadio,
+                label.clone(),
+            )
+            .aria_toggled(toggled(selected))
+            .flex()
+            .gap_2()
+            .px_3()
+            .py(px(2.))
+            .border_1()
+            .border_color(gpui::transparent_black())
+            .hover(|style| style.bg(theme.rule))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.open_menu = None;
+                let value = value.clone();
+                cx.defer(move |cx| match value {
+                    Some(value) => app_settings::set_or_report(key, value, cx),
+                    None => app_settings::remove_or_report(key, cx),
+                });
+                cx.notify();
+            }))
+            .child(div().w(px(12.)).child(if selected { "✓" } else { "" }))
+            .child(label)
         };
         let menu = open.then(|| {
-            let mut items = vec![item(
-                format!("{key}-default").into(),
-                default.into(),
-                None,
-                cx,
-            )];
-            items.extend(
-                app_settings::installed_fonts(cx)
-                    .to_vec()
-                    .into_iter()
-                    .map(|font| {
-                        item(
-                            format!("{key}-{font}").into(),
-                            font.clone().into(),
-                            Some(font),
-                            cx,
-                        )
-                    }),
-            );
+            let items: Vec<_> = options.into_iter().map(|option| item(option, cx)).collect();
             deferred(
                 anchored().snap_to_window().child(
                     div()
-                        .id(SharedString::from(format!("{key}-fonts")))
+                        .id(SharedString::from(format!("{key}-{noun}s")))
                         .role(Role::Menu)
-                        .aria_label(format!("{} fonts", setting.label))
+                        .aria_label(format!("{} {noun}s", setting.label))
                         .occlude()
                         .mt_1()
                         .w(px(260.))
@@ -320,18 +371,12 @@ impl SettingsWindow {
             )
             .with_priority(1)
         });
-        let picker = div()
+        div()
             .flex()
             .flex_col()
             .items_start()
             .child(button)
-            .children(menu);
-        div()
-            .flex()
-            .items_center()
-            .gap_2()
-            .child(setting.label)
-            .child(picker)
+            .children(menu)
     }
 
     /// The fonts row: a pop-up button for each font setting, side by side.
@@ -587,6 +632,7 @@ impl SettingsWindow {
             Kind::Font { default, get, .. } => self
                 .font(setting, default, get(settings), cx)
                 .into_any_element(),
+            Kind::Theme { get, .. } => self.theme(setting, get(settings), cx),
             Kind::Bool { get, .. } => self.checkbox(setting, get(settings)).into_any_element(),
             Kind::OffOrInteger { on, get, .. } => {
                 let current = get(settings);
@@ -668,11 +714,11 @@ impl Render for SettingsWindow {
         div()
             .id("settings")
             .track_focus(&self.focus_handle)
-            // A click anywhere else closes the list of fonts.
+            // A click anywhere else closes the open pop-up list.
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
-                    if this.font_menu.take().is_some() {
+                    if this.open_menu.take().is_some() {
                         cx.notify();
                     }
                 }),
@@ -682,9 +728,9 @@ impl Render for SettingsWindow {
             .aria_label("Settings")
             .on_action(|_: &FocusNext, window, cx| window.focus_next(cx))
             .on_action(|_: &FocusPrevious, window, cx| window.focus_prev(cx))
-            // Esc closes the list of fonts, if it's open, then the window.
+            // Esc closes the open pop-up list, if any, then the window.
             .on_action(cx.listener(|this, _: &CloseWindow, window, cx| {
-                if this.font_menu.take().is_some() {
+                if this.open_menu.take().is_some() {
                     cx.notify();
                 } else {
                     window.remove_window();

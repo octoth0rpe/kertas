@@ -12,7 +12,8 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use gpui::{App, BorrowAppContext, Global, WindowAppearance};
-use kertas::settings::{self, FontCheck, Layout, Problem, Settings, ThemeSetting};
+use kertas::settings::{self, AppearanceSetting, Available, FontCheck, Layout, Problem, Settings};
+use kertas::themes;
 
 use crate::file_watch;
 
@@ -139,12 +140,13 @@ fn reload(cx: &mut App) {
     cx.set_global(state);
 }
 
-/// Makes the window chrome, dialogs and theme follow the theme setting.
+/// Makes the window chrome, dialogs and theme follow the appearance
+/// setting.
 fn apply_appearance(settings: &Settings, cx: &mut App) {
-    cx.set_window_appearance(match settings.theme {
-        ThemeSetting::Light => Some(WindowAppearance::Light),
-        ThemeSetting::Dark => Some(WindowAppearance::Dark),
-        ThemeSetting::System => None,
+    cx.set_window_appearance(match settings.appearance {
+        AppearanceSetting::Light => Some(WindowAppearance::Light),
+        AppearanceSetting::Dark => Some(WindowAppearance::Dark),
+        AppearanceSetting::System => None,
     });
 }
 
@@ -184,8 +186,12 @@ pub fn read_once(installed: &FontCheck) -> Settings {
 }
 
 fn read(path: &Path, installed: &FontCheck) -> (Settings, Vec<Problem>) {
+    let available = Available {
+        fonts: installed,
+        themes: &|name| themes::find(themes::builtin(), name),
+    };
     match fs::read_to_string(path) {
-        Ok(text) => settings::parse_checking_fonts(&text, installed),
+        Ok(text) => settings::parse_checking(&text, &available),
         // No file means all defaults (G2).
         Err(err) if err.kind() == io::ErrorKind::NotFound => (Settings::default(), vec![]),
         Err(err) => (Settings::default(), vec![file_problem(path, &err)]),
