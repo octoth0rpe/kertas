@@ -1,0 +1,45 @@
+# Solarized, by Ethan Schoonover: https://ethanschoonover.com/solarized/
+# MIT License, Copyright (c) 2011 Ethan Schoonover.
+#
+# Solarized's accent colors are lighter than WCAG AA allows for text, so
+# a few are darkened (light) or lightened (dark) just enough to reach
+# 4.5:1. Each says what it was.
+name = "Solarized"
+
+[light]
+background = "#fdf6e3"
+text = "#566b72"  # was #586e75
+muted_text = "#5f747c"  # was #657b83
+link = "#2076b2"  # was #268bd2
+code_background = "#eee8d5"
+rule = "#93a1a1"
+table_header_background = "#eee8d5"
+selection = "#2076b240"
+caret = "#2076b2"  # the link color; was #268bd2
+accent_text = "#fdf6e3"
+revealed_background = "#2076b20a"
+revealed_border = "#2076b240"
+alert_note = "#2076b2"  # was #268bd2
+alert_tip = "#687800"  # was #859900
+alert_important = "#6368c0"  # was #6c71c4
+alert_warning = "#8f6c00"  # was #b58900
+alert_caution = "#da2825"  # was #dc322f
+
+[dark]
+background = "#002b36"
+text = "#93a1a1"
+muted_text = "#839496"
+link = "#3094da"  # was #268bd2
+code_background = "#073642"
+rule = "#586e75"
+table_header_background = "#073642"
+selection = "#3094da4d"
+caret = "#3094da"  # the link color; was #268bd2
+accent_text = "#002b36"
+revealed_background = "#3094da0f"
+revealed_border = "#3094da47"
+alert_note = "#3094da"  # was #268bd2
+alert_tip = "#859900"
+alert_important = "#8488cd"  # was #6c71c4
+alert_warning = "#b58900"
+alert_caution = "#e56663"  # was #dc322f

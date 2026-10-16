@@ -298,3 +298,6 @@
 | zune-jpeg | 0.5.15 | MIT OR Apache-2.0 OR Zlib |
 | Rust standard library | | MIT OR Apache-2.0 |
 | Octicons (alert icons) | 19.15.0 | MIT |
+| Solarized (theme colors) | | MIT |
+| Gruvbox (theme colors) | | MIT |
+| Catppuccin (theme colors) | | MIT |

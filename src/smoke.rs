@@ -696,6 +696,28 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
             text == "# Mine\nappearance = \"dark\"  # at night\ntext_width = \"full\"\n",
         );
         checks.check("View menu appearance applies", dark);
+        let use_theme = |name: &str| {
+            Box::new(crate::menus::UseTheme {
+                name: name.to_owned().into(),
+            })
+        };
+        dispatch(window, cx, use_theme("Solarized"));
+        let solarized = wait_for(cx, APPLY, |cx| {
+            theme(cx).is_some_and(|theme| theme != Theme::dark())
+        })
+        .await;
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        checks.check(
+            "View menu theme applies",
+            solarized && text.contains("theme = \"Solarized\"\n"),
+        );
+        dispatch(window, cx, use_theme("Kertas"));
+        let kertas = wait_for(cx, APPLY, |cx| theme(cx) == Some(Theme::dark())).await;
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        checks.check(
+            "choosing Kertas removes the setting",
+            kertas && !text.contains("theme ="),
+        );
         dispatch(window, cx, Box::new(crate::menus::UseStandardWidth));
         settle(cx).await;
 

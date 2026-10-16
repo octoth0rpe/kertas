@@ -1,0 +1,44 @@
+# Catppuccin: Latte for light and Mocha for dark. https://catppuccin.com
+# MIT License, Copyright (c) 2021 Catppuccin.
+#
+# A few Latte colors are darkened just enough to reach WCAG AA's 4.5:1
+# for text. Each says what it was.
+name = "Catppuccin"
+
+[light]
+background = "#eff1f5"
+text = "#4c4f69"
+muted_text = "#6a6d82"  # was #6c6f85
+link = "#1761f5"  # was #1e66f5
+code_background = "#e6e9ef"
+rule = "#bcc0cc"
+table_header_background = "#e6e9ef"
+selection = "#1761f540"
+caret = "#1761f5"  # the link color; was #1e66f5
+accent_text = "#eff1f5"
+revealed_background = "#1761f50a"
+revealed_border = "#1761f540"
+alert_note = "#1761f5"  # was #1e66f5
+alert_tip = "#327c21"  # was #40a02b
+alert_important = "#8839ef"
+alert_warning = "#996114"  # was #df8e1d
+alert_caution = "#d20f39"
+
+[dark]
+background = "#1e1e2e"
+text = "#cdd6f4"
+muted_text = "#a6adc8"
+link = "#89b4fa"
+code_background = "#313244"
+rule = "#45475a"
+table_header_background = "#181825"
+selection = "#89b4fa4d"
+caret = "#89b4fa"
+accent_text = "#1e1e2e"
+revealed_background = "#89b4fa0f"
+revealed_border = "#89b4fa47"
+alert_note = "#89b4fa"
+alert_tip = "#a6e3a1"
+alert_important = "#cba6f7"
+alert_warning = "#f9e2af"
+alert_caution = "#f38ba8"
