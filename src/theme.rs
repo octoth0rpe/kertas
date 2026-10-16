@@ -45,7 +45,7 @@ impl Theme {
             AppearanceSetting::System => appearance(window.appearance()),
         };
         // The setting only names a theme there is.
-        let theme = themes::builtin()
+        let theme = app_settings::themes(cx)
             .iter()
             .find(|theme| theme.name == settings.theme)
             .unwrap_or_else(|| themes::kertas());

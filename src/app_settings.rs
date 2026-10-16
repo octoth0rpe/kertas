@@ -5,6 +5,9 @@
 //! `config.toml` in `$KERTAS_CONFIG_DIR` if that's set. macOS reports
 //! changes to it, so edits made in any editor apply live (G3). Views
 //! observe [`AppSettings`] to update.
+//!
+//! The user's color themes are files in `themes/` next to it, watched the
+//! same way.
 
 use std::fs;
 use std::io::{self, Write};
@@ -13,14 +16,17 @@ use std::time::SystemTime;
 
 use gpui::{App, BorrowAppContext, Global, WindowAppearance};
 use kertas::settings::{self, AppearanceSetting, Available, FontCheck, Layout, Problem, Settings};
-use kertas::themes;
+use kertas::themes::{self, FileProblem, Theme};
 
 use crate::file_watch;
 
-/// The current settings, and any problems reading them.
+/// The current settings and themes, and any problems reading them.
 pub struct AppSettings {
     pub settings: Settings,
     pub problems: Vec<Problem>,
+    /// The themes to choose from: the built-in ones and the user's.
+    pub themes: Vec<Theme>,
+    pub theme_problems: Vec<FileProblem>,
     path: PathBuf,
     /// The file's modification time and size when last read, to notice
     /// changes.
@@ -48,6 +54,12 @@ pub fn get(cx: &App) -> Settings {
     cx.try_global::<AppSettings>()
         .map(|state| state.settings.clone())
         .unwrap_or_default()
+}
+
+/// The themes to choose from: the built-in ones and the user's.
+pub fn themes(cx: &App) -> &[Theme] {
+    cx.try_global::<AppSettings>()
+        .map_or(themes::builtin(), |state| state.themes.as_slice())
 }
 
 /// The installed font families, sorted, for the font settings.
@@ -89,6 +101,25 @@ pub fn init(cx: &mut App) {
             }
         })
         .detach();
+        let mut changes = file_watch::watch_folder(themes_folder());
+        cx.spawn(async move |cx| {
+            while changes.changed().await {
+                cx.update(reload);
+            }
+        })
+        .detach();
+    }
+}
+
+/// Opens the folder of the user's themes in the Finder, creating it if
+/// needed.
+pub fn open_themes_folder(cx: &mut App) {
+    let folder = themes_folder();
+    match fs::create_dir_all(&folder) {
+        Ok(()) => cx.open_with_system(&folder),
+        Err(err) => cx.update_global::<AppSettings, _>(|state, _| {
+            state.problems.insert(0, file_problem(&folder, &err))
+        }),
     }
 }
 
@@ -150,14 +181,22 @@ fn apply_appearance(settings: &Settings, cx: &mut App) {
     });
 }
 
-fn settings_path() -> PathBuf {
-    let directory = match std::env::var_os("KERTAS_CONFIG_DIR") {
+fn config_folder() -> PathBuf {
+    match std::env::var_os("KERTAS_CONFIG_DIR") {
         Some(directory) => PathBuf::from(directory),
         None => std::env::home_dir()
             .unwrap_or_default()
             .join("Library/Application Support/kertas"),
-    };
-    directory.join("config.toml")
+    }
+}
+
+fn settings_path() -> PathBuf {
+    config_folder().join("config.toml")
+}
+
+/// The folder of the user's theme files.
+fn themes_folder() -> PathBuf {
+    config_folder().join("themes")
 }
 
 fn load(path: PathBuf, cx: &App) -> AppSettings {
@@ -169,10 +208,14 @@ fn load(path: PathBuf, cx: &App) -> AppSettings {
             .find(|font| font.eq_ignore_ascii_case(name))
             .cloned()
     };
-    let (settings, problems) = read(&path, &installed);
+    let (user, theme_problems) = themes::read_folder(&themes_folder());
+    let themes = themes::combine(themes::builtin(), user);
+    let (settings, problems) = read(&path, &installed, &themes);
     AppSettings {
         settings,
         problems,
+        themes,
+        theme_problems,
         path,
         stamp,
     }
@@ -182,13 +225,15 @@ fn load(path: PathBuf, cx: &App) -> AppSettings {
 /// Problems are ignored: the defaults stand in, as they do in the app.
 #[cfg(target_os = "macos")]
 pub fn read_once(installed: &FontCheck) -> Settings {
-    read(&settings_path(), installed).0
+    let user = themes::read_folder(&themes_folder()).0;
+    let themes = themes::combine(themes::builtin(), user);
+    read(&settings_path(), installed, &themes).0
 }
 
-fn read(path: &Path, installed: &FontCheck) -> (Settings, Vec<Problem>) {
+fn read(path: &Path, installed: &FontCheck, themes: &[Theme]) -> (Settings, Vec<Problem>) {
     let available = Available {
         fonts: installed,
-        themes: &|name| themes::find(themes::builtin(), name),
+        themes: &|name| themes::find(themes, name),
     };
     match fs::read_to_string(path) {
         Ok(text) => settings::parse_checking(&text, &available),

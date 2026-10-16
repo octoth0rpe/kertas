@@ -718,6 +718,93 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
             "choosing Kertas removes the setting",
             kertas && !text.contains("theme ="),
         );
+
+        // The user's themes, in themes/ next to the settings file, are
+        // listed, and adding, editing and removing them applies live.
+        let folder = path.with_file_name("themes");
+        let mine = folder.join("Mine.toml");
+        let kertas_file = include_str!("builtin/themes/kertas.toml");
+        let dark_background = format!(
+            "background = \"#{:06x}\"",
+            kertas::themes::kertas().dark.background.0 >> 8
+        );
+        let with_background = |name: &str, color: &str| {
+            kertas_file
+                .replacen("name = \"Kertas\"", &format!("name = \"{name}\""), 1)
+                .replacen(&dark_background, &format!("background = \"{color}\""), 1)
+        };
+        let background = |cx: &mut AsyncApp| theme(cx).map(|theme| theme.background);
+        let color = |value: u32| Some(gpui::Hsla::from(gpui::rgba(value)));
+        let listed = |cx: &mut AsyncApp, name: &'static str| {
+            cx.update(|cx| {
+                app_settings::themes(cx)
+                    .iter()
+                    .any(|theme| theme.name == name)
+            })
+        };
+        std::fs::create_dir_all(&folder).ok();
+        std::fs::write(&mine, with_background("Mine", "#102030")).ok();
+        checks.check(
+            "user theme is listed",
+            wait_for(cx, APPLY, |cx| listed(cx, "Mine")).await,
+        );
+        dispatch(window, cx, use_theme("Mine"));
+        checks.check(
+            "user theme applies",
+            wait_for(cx, APPLY, |cx| background(cx) == color(0x102030ff)).await,
+        );
+        std::fs::write(&mine, with_background("Mine", "#203040")).ok();
+        checks.check(
+            "editing a user theme applies live",
+            wait_for(cx, APPLY, |cx| background(cx) == color(0x203040ff)).await,
+        );
+        std::fs::write(
+            folder.join("Solarized.toml"),
+            with_background("solarized", "#304050"),
+        )
+        .ok();
+        wait_for(cx, APPLY, |cx| {
+            cx.update(|cx| {
+                app_settings::themes(cx)
+                    .iter()
+                    .any(|theme| theme.dark.background == kertas::themes::Color(0x304050ff))
+            })
+        })
+        .await;
+        dispatch(window, cx, use_theme("Solarized"));
+        checks.check(
+            "a user theme replaces the built-in one of its name",
+            wait_for(cx, APPLY, |cx| background(cx) == color(0x304050ff)).await,
+        );
+        dispatch(window, cx, use_theme("Mine"));
+        std::fs::write(folder.join("Bad.toml"), "[light]\n").ok();
+        checks.check(
+            "problems in theme files are reported, naming the file",
+            wait_for(cx, APPLY, |cx| {
+                cx.update(|cx| {
+                    cx.global::<AppSettings>()
+                        .theme_problems
+                        .iter()
+                        .any(|problem| problem.file == "Bad.toml")
+                })
+            })
+            .await,
+        );
+        std::fs::remove_file(&mine).ok();
+        checks.check(
+            "removing the chosen theme falls back to Kertas's",
+            wait_for(cx, APPLY, |cx| {
+                !listed(cx, "Mine") && theme(cx) == Some(Theme::dark()) && problems(cx) == 1
+            })
+            .await,
+        );
+        std::fs::remove_dir_all(&folder).ok();
+        cx.update(|cx| app_settings::remove_or_report("theme", cx));
+        wait_for(cx, APPLY, |cx| {
+            problems(cx) == 0
+                && cx.update(|cx| cx.global::<AppSettings>().theme_problems.is_empty())
+        })
+        .await;
         dispatch(window, cx, Box::new(crate::menus::UseStandardWidth));
         settle(cx).await;
 
