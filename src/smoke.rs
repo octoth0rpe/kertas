@@ -12,8 +12,8 @@
 //!   saves, so the text can be checked.
 //! - `bench`: times 500 inserts in the middle of the document.
 //! - `tabs`, `settings`, `settings-window`, `help`, `reveal`, `clicks`,
-//!   `anchors`, `images`, `caret`, `scrollbar`, `scrollbar-drag`, `a11y`,
-//!   `print`, `disk`, `autosave`, `quit`: see each function.
+//!   `anchors`, `images`, `caret`, `reading`, `scrollbar`, `scrollbar-drag`,
+//!   `a11y`, `print`, `disk`, `autosave`, `quit`: see each function.
 
 use std::cell::Cell;
 use std::path::Path;
@@ -47,6 +47,7 @@ pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
         "anchors" => smoke_anchors(window, cx),
         "images" => smoke_images(window, cx),
         "caret" => smoke_caret(window, cx),
+        "reading" => smoke_reading(window, cx),
         "scrollbar" => smoke_scrollbar(window, cx),
         "scrollbar-drag" => smoke_scrollbar_drag(window, cx),
         "a11y" => smoke_a11y(window, cx),
@@ -231,6 +232,8 @@ fn smoke_steps(window: WindowHandle<DocumentView>, mode: &str, cx: &mut App) {
 
 /// Moving around the whole document, by character, line and block.
 fn movement_steps(steps: &mut Vec<Step>) {
+    // With no caret, ↑ and ↓ only scroll; → starts editing (#99).
+    repeat(steps, &MoveRight, 1);
     repeat(steps, &MoveDocumentStart, 1);
     repeat(steps, &MoveDown, 200);
     repeat(steps, &MoveUp, 200);
@@ -248,8 +251,9 @@ fn movement_steps(steps: &mut Vec<Step>) {
 /// Writing at the end: paragraphs through the gap, a list, a quote and a
 /// code block with indentation.
 fn writing_steps(steps: &mut Vec<Step>) {
-    // The first key press only places the caret.
-    repeat(steps, &MoveDocumentEnd, 2);
+    // With no caret, ⌘↓ only scrolls; → starts editing (#99).
+    repeat(steps, &MoveRight, 1);
+    repeat(steps, &MoveDocumentEnd, 1);
     repeat(steps, &Newline, 2);
     repeat(steps, &MoveUp, 3);
     repeat(steps, &MoveDown, 3);
@@ -1084,11 +1088,9 @@ fn smoke_scrollbar(window: WindowHandle<DocumentView>, cx: &mut App) {
             tops.len() == 40 && steady && down && tops.last() > tops.first(),
         );
 
-        // With no caret, the first press only places it.
-        for _ in 0..2 {
-            dispatch(window, cx, Box::new(MoveDocumentEnd));
-            pause(cx, 20).await;
-        }
+        // With no caret, ⌘↓ scrolls to the end (#99).
+        dispatch(window, cx, Box::new(MoveDocumentEnd));
+        pause(cx, 20).await;
         let end = thumb(cx);
         checks.check(
             &format!("at the end the thumb is at the bottom ({end:?})"),
@@ -1206,6 +1208,101 @@ fn smoke_scrollbar_drag(window: WindowHandle<DocumentView>, cx: &mut App) {
         checks.check(
             &format!("after the drag the thumb stays at the bottom ({end:?})"),
             end.is_some_and(|(top, height, track)| (top + height - track).abs() < 1.),
+        );
+        checks.finish(cx);
+    })
+    .detach();
+}
+
+/// `KERTAS_SMOKE=reading`, on `anchors.md` (#99): with no caret, ↑ and ↓
+/// scroll a few lines and ⌘↑ and ⌘↓ scroll to the ends, without placing a
+/// caret; → starts editing the first block on screen, not the document's
+/// start; and after Escape, ↓ scrolls from wherever the window is.
+fn smoke_reading(window: WindowHandle<DocumentView>, cx: &mut App) {
+    use crate::document_view::PageDown;
+
+    cx.spawn(async move |cx| {
+        let mut checks = Checks::default();
+        pause(cx, 10).await;
+        let offset = |cx: &mut AsyncApp| {
+            window
+                .read_with(cx, |view, _| view.scroll_offset())
+                .unwrap_or(0.)
+        };
+        let caret = |cx: &mut AsyncApp| {
+            window
+                .read_with(cx, |view, _| view.has_caret())
+                .unwrap_or(true)
+        };
+        let press = async |action: Box<dyn Action>, cx: &mut AsyncApp| {
+            dispatch(window, cx, action);
+            pause(cx, 5).await;
+        };
+        checks.check("a newly opened document has no caret", !caret(cx));
+        for _ in 0..2 {
+            press(Box::new(PageDown), cx).await;
+        }
+        let start = offset(cx);
+
+        press(Box::new(MoveDown), cx).await;
+        let down = offset(cx);
+        checks.check(
+            &format!("↓ scrolls a few lines ({start} -> {down})"),
+            (down - start - 40.).abs() < 1. && !caret(cx),
+        );
+        press(Box::new(MoveUp), cx).await;
+        let up = offset(cx);
+        checks.check(
+            &format!("↑ scrolls back ({down} -> {up})"),
+            (up - start).abs() < 1. && !caret(cx),
+        );
+
+        press(Box::new(MoveDocumentEnd), cx).await;
+        let end = window
+            .update(cx, |view, window, cx| view.scrollbar_thumb(window, cx))
+            .ok()
+            .flatten();
+        checks.check(
+            &format!("⌘↓ scrolls to the end ({end:?})"),
+            end.is_some_and(|(top, height, track)| (top + height - track).abs() < 1.) && !caret(cx),
+        );
+        press(Box::new(MoveDocumentStart), cx).await;
+        checks.check("⌘↑ scrolls to the top", offset(cx) == 0. && !caret(cx));
+
+        for _ in 0..2 {
+            press(Box::new(PageDown), cx).await;
+        }
+        let first = window
+            .read_with(cx, |view, _| view.scroll_top().map(|(item, _)| item))
+            .ok()
+            .flatten();
+        press(Box::new(MoveRight), cx).await;
+        pause(cx, 5).await;
+        let (_, selection) = window
+            .read_with(cx, |view, _| view.reveal_state())
+            .unwrap_or_default();
+        let placed = window
+            .read_with(cx, |view, _| {
+                selection.map(|selection| view.item_at(selection.head))
+            })
+            .ok()
+            .flatten();
+        checks.check(
+            &format!("→ starts editing the first block on screen (item {placed:?}, top {first:?})"),
+            placed.is_some() && placed == first,
+        );
+
+        // Escape, scroll away from the block, then ↓.
+        press(Box::new(Unreveal), cx).await;
+        for _ in 0..3 {
+            press(Box::new(PageDown), cx).await;
+        }
+        let before = offset(cx);
+        press(Box::new(MoveDown), cx).await;
+        let after = offset(cx);
+        checks.check(
+            &format!("after Escape, ↓ scrolls from where the window is ({before} -> {after})"),
+            (after - before - 40.).abs() < 1. && !caret(cx),
         );
         checks.finish(cx);
     })

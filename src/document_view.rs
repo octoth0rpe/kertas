@@ -510,6 +510,15 @@ impl DocumentView {
         Some(bounds.top() < viewport.bottom() && bounds.bottom() > viewport.top())
     }
 
+    /// The index of the item holding document `offset`, for the smoke
+    /// test.
+    #[cfg(debug_assertions)]
+    pub fn item_at(&self, offset: usize) -> usize {
+        self.open
+            .as_ref()
+            .map_or(0, |open| open.editor.model().item_at(offset))
+    }
+
     /// The list's scroll position, for the smoke test.
     #[cfg(debug_assertions)]
     pub fn scroll_top(&self) -> Option<(usize, Pixels)> {
@@ -524,14 +533,6 @@ impl DocumentView {
             .as_ref()
             .map(|open| open.editor.text().to_owned())
             .unwrap_or_default()
-    }
-
-    /// Whether there's a caret, for the smoke test.
-    #[cfg(debug_assertions)]
-    pub fn has_caret(&self) -> bool {
-        self.open
-            .as_ref()
-            .is_some_and(|open| open.editor.selection().is_some())
     }
 
     /// The list indent the document is laid out with, for the smoke test.

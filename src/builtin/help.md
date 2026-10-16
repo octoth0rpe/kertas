@@ -10,6 +10,8 @@ Click any block, such as a paragraph, heading, list or table, to edit it. That b
 - **⌥↓** and **⌥↑** move to the next or previous block.
 - Clicking in the margins also finishes editing.
 
+When nothing is being edited, **↑** and **↓** scroll, and **⌘↑** and **⌘↓** go to the top or bottom. **⌥↓**, **←** or **→** starts editing the first block on screen.
+
 Clicking a link follows it. Links to Markdown files open in Kertas, and other links open in their own apps: web pages in your browser, for example. To edit a link, click elsewhere in its block, or move to it with **⌥↓** and **⌥↑**.
 
 Clicking a task's checkbox (☐) ticks or unticks it. Click the task's text to edit it.
