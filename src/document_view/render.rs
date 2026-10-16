@@ -1,5 +1,8 @@
 //! Drawing the document view, its actions, and the settings problems bar.
 
+use std::path::Path;
+use std::rc::Rc;
+
 use gpui::{
     AnyElement, Context, Div, Rems, Role, SharedString, Stateful, SystemWindowTabController,
     Window, div, list, prelude::*, px, relative, rems,
@@ -156,6 +159,7 @@ impl DocumentView {
         let focus_handle = self.focus_handle.clone();
         let hint = app_settings::get(cx).editing_hint;
         let editable = !open.editor.read_only();
+        let document: Option<Rc<Path>> = open.editor.document().path().map(Rc::from);
         list(open.list_state.clone(), move |index, _, _| {
             let item = &model.items[index];
             match revealed
@@ -206,6 +210,7 @@ impl DocumentView {
                                 block_start: item.block.start,
                                 column_width,
                                 editable,
+                                document: document.clone(),
                             },
                             input,
                         ),
@@ -217,6 +222,7 @@ impl DocumentView {
                                 block_start: range.start,
                                 column_width,
                                 editable,
+                                document: document.clone(),
                             },
                             input,
                         ),
@@ -231,6 +237,7 @@ impl DocumentView {
                         block_start: item.block.start,
                         column_width,
                         editable,
+                        document: document.clone(),
                     },
                 ),
             }

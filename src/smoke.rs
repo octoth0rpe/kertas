@@ -12,8 +12,8 @@
 //!   saves, so the text can be checked.
 //! - `bench`: times 500 inserts in the middle of the document.
 //! - `tabs`, `settings`, `settings-window`, `help`, `reveal`, `clicks`,
-//!   `anchors`, `a11y`, `print`, `disk`, `autosave`, `quit`: see each
-//!   function.
+//!   `anchors`, `images`, `a11y`, `print`, `disk`, `autosave`, `quit`: see
+//!   each function.
 
 use std::cell::Cell;
 use std::path::Path;
@@ -45,6 +45,7 @@ pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
         "reveal" => smoke_reveal(window, cx),
         "clicks" => smoke_clicks(window, cx),
         "anchors" => smoke_anchors(window, cx),
+        "images" => smoke_images(window, cx),
         "a11y" => smoke_a11y(window, cx),
         "print" => smoke_print(window, cx),
         "disk" => smoke_disk(window, cx),
@@ -1028,6 +1029,64 @@ fn smoke_reveal(window: WindowHandle<DocumentView>, cx: &mut App) {
     .detach();
 }
 
+/// `KERTAS_SMOKE=images`, on `showcase.md` with its `images` folder (#92):
+/// the showcase's PNG and SVG load at their natural sizes, the missing one
+/// doesn't, and the images are reported to VoiceOver by their alt text.
+fn smoke_images(window: WindowHandle<DocumentView>, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        let mut checks = Checks::default();
+        pause(cx, 10).await;
+        let Some(folder) = window
+            .read_with(cx, |view, _| {
+                view.document_path()
+                    .and_then(Path::parent)
+                    .map(Path::to_owned)
+            })
+            .ok()
+            .flatten()
+        else {
+            checks.check("the document has a file", false);
+            return checks.finish(cx);
+        };
+        window
+            .update(cx, |view, _, cx| view.go_to_anchor("images", cx))
+            .ok();
+        for (name, expected) in [
+            ("gradient.png", Some((480, 160))),
+            ("badge.svg", Some((96, 20))),
+            ("missing.png", None),
+        ] {
+            let resource = gpui::Resource::Path(folder.join("images").join(name).into());
+            let mut loaded = None;
+            wait_until(cx, |cx| {
+                loaded = cx.update(|cx| cx.fetch_asset::<gpui::ImgResourceLoader>(&resource));
+                loaded.is_some()
+            })
+            .await;
+            let size = match &loaded {
+                Some(Ok(image)) => {
+                    let (width, height) = crate::rendered_block::natural_size(image, name);
+                    Some((width as i32, height as i32))
+                }
+                _ => None,
+            };
+            checks.check(
+                &format!("{name} loads as {expected:?} ({size:?})"),
+                size == expected,
+            );
+        }
+        let tree = a11y_tree(window.into(), cx).await;
+        for label in ["A blue gradient", "tests: pass", "no such image"] {
+            checks.check(
+                &format!("the {label:?} image is reported"),
+                tree.contains("\"Image\"") && tree.contains(label),
+            );
+        }
+        checks.finish(cx);
+    })
+    .detach();
+}
+
 /// `KERTAS_SMOKE=anchors`, on `anchors.md` (#91): clicking a `#setup`
 /// link scrolls its heading to the top; a link to a missing heading stays
 /// put; and clicking `other.md#deep-dive` opens other.md scrolled to that
@@ -1459,10 +1518,20 @@ fn smoke_print(window: WindowHandle<DocumentView>, cx: &mut App) {
         let path =
             std::path::PathBuf::from(std::env::var_os("KERTAS_PRINT_PDF").unwrap_or_default());
         let model = window.read_with(cx, |view, _| view.model()).ok().flatten();
+        let document = window
+            .read_with(cx, |view, _| view.document_path().map(Path::to_owned))
+            .ok()
+            .flatten();
         let printed = cx.update(|cx| {
             let mtm = objc2::MainThreadMarker::new()?;
             let settings = crate::app_settings::get(cx);
-            Some(crate::print::save_pdf(&*model?, &settings, &path, mtm))
+            Some(crate::print::save_pdf(
+                &*model?,
+                document.as_deref(),
+                &settings,
+                &path,
+                mtm,
+            ))
         });
         let size = std::fs::metadata(&path).map_or(0, |metadata| metadata.len());
         checks.check(

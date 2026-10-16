@@ -63,6 +63,19 @@ pub fn resolve(destination: &str, document: Option<&Path>) -> LinkTarget {
     }
 }
 
+/// The local file an image's `destination` points to, resolved as
+/// [`resolve`] resolves links. `None` for web images (#92 shows local
+/// images only) and other URLs, and for relative paths in an untitled
+/// document. The file may not exist.
+pub fn image_path(destination: &str, document: Option<&Path>) -> Option<PathBuf> {
+    match resolve(destination, document) {
+        LinkTarget::Markdown(path, _) | LinkTarget::File(path) | LinkTarget::Missing(path) => {
+            Some(path)
+        }
+        LinkTarget::Url(_) | LinkTarget::SameDocument(_) | LinkTarget::NoFolder(_) => None,
+    }
+}
+
 /// A URL's scheme, like `https` in `https://…`: letters, digits, `+`, `-`
 /// and `.`, starting with a letter, followed by a colon.
 fn scheme(destination: &str) -> Option<&str> {
@@ -240,6 +253,27 @@ mod tests {
         );
         assert_eq!(resolve("", None), LinkTarget::SameDocument(None));
         assert_eq!(resolve("#", None), LinkTarget::SameDocument(None));
+    }
+
+    #[test]
+    fn image_paths() {
+        let folder = Folder::new("images");
+        let document = folder.document();
+        let document = Some(document.as_path());
+        assert_eq!(
+            image_path("../paper.pdf", document),
+            Some(folder.0.join("sub/../paper.pdf"))
+        );
+        assert_eq!(
+            image_path("missing.png", document),
+            Some(folder.0.join("sub/missing.png"))
+        );
+        assert_eq!(image_path("https://example.com/a.png", document), None);
+        assert_eq!(image_path("a.png", None), None);
+        assert_eq!(
+            image_path("/abs/a.png", None),
+            Some(PathBuf::from("/abs/a.png"))
+        );
     }
 
     #[test]

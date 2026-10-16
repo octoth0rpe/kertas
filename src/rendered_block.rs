@@ -2,14 +2,16 @@
 //! source offsets.
 
 use std::cell::Cell;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gpui::{
-    AccessibleAction, AnyElement, App, ElementId, Font, FontWeight, Hsla, InteractiveText,
-    MouseButton, Rems, Role, SharedString, StyledText, Toggled, WeakEntity, Window, div,
-    prelude::*, px, rems, svg,
+    AccessibleAction, AnyElement, App, ElementId, Font, FontWeight, Hsla, ImageSource,
+    ImgResourceLoader, InteractiveText, MouseButton, Rems, Resource, Role, SharedString,
+    StyledText, Toggled, WeakEntity, Window, div, img, prelude::*, px, rems, svg,
 };
-use kertas::inline::InlineText;
+use kertas::inline::{Image, InlineText, Link};
+use kertas::links;
 use kertas::rendered::{AlertKind, ColumnAlignment, ListItem, RenderedBlock, Table, Task};
 use kertas::settings::ListIndent;
 use kertas::tabs::ExpandedTabs;
@@ -65,6 +67,8 @@ pub struct ClickTarget {
     pub column_width: Option<Rems>,
     /// Whether the document can be edited, so checkboxes can be toggled.
     pub editable: bool,
+    /// The document's file, which images' relative paths start from.
+    pub document: Option<Rc<Path>>,
 }
 
 impl ClickTarget {
@@ -494,6 +498,155 @@ fn heading_top_space(level: u8) -> f32 {
 /// pointer is a hand over links. The text is reported to VoiceOver as a
 /// label if `accessible` is set.
 fn clickable_text(text: &InlineText, style: &TextStyle, accessible: bool) -> AnyElement {
+    if text.images.is_empty() {
+        clickable_run(text, style, accessible)
+    } else {
+        text_with_images(text, style, accessible)
+    }
+}
+
+/// Text with images in it (#92): the text between the images, and the
+/// images, wrapping like words.
+fn text_with_images(text: &InlineText, style: &TextStyle, accessible: bool) -> AnyElement {
+    let mut pieces = Vec::new();
+    let mut position = 0;
+    for image in &text.images {
+        if image.display.start > position {
+            let run = text.slice(position..image.display.start);
+            pieces.push(clickable_run(&run, style, accessible));
+        }
+        pieces.push(
+            DocumentImage {
+                image: image.clone(),
+                alt: text.text[image.display.clone()].to_owned(),
+                link: text.link_around(image).cloned(),
+                source: text.source_offset(image.display.start),
+                theme: style.theme,
+                click: style.click.clone(),
+                id: style.node_id("image"),
+            }
+            .into_any_element(),
+        );
+        position = image.display.end;
+    }
+    if position < text.text.len() {
+        let run = text.slice(position..text.text.len());
+        pieces.push(clickable_run(&run, style, accessible));
+    }
+    div()
+        .flex()
+        .flex_wrap()
+        .items_end()
+        .children(pieces)
+        .into_any_element()
+}
+
+/// An image in the document, drawn at its natural size (scaled with zoom),
+/// never wider than the space it's in. If it can't be shown, its alt text
+/// is shown in a frame instead.
+#[derive(IntoElement)]
+struct DocumentImage {
+    image: Image,
+    alt: String,
+    /// The link around the image, which a click follows.
+    link: Option<Link>,
+    /// Where the image starts in the block's source.
+    source: usize,
+    theme: crate::theme::Theme,
+    click: ClickTarget,
+    id: ElementId,
+}
+
+impl RenderOnce for DocumentImage {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let path: Option<PathBuf> =
+            links::image_path(&self.image.destination, self.click.document.as_deref());
+        let loaded = path
+            .map(|path| window.use_asset::<ImgResourceLoader>(&Resource::Path(path.into()), cx));
+        let scale = crate::zoom::image_scale(cx);
+        let (click, follow, link, source) = (
+            self.click.clone(),
+            self.click.clone(),
+            self.link.clone(),
+            self.source,
+        );
+        let content = match loaded {
+            Some(Some(Ok(image))) => {
+                let (width, height) = natural_size(&image, &self.image.destination);
+                div()
+                    .w(px(width * scale))
+                    .max_w_full()
+                    .when(width > 0. && height > 0., |this| {
+                        this.aspect_ratio(width / height)
+                    })
+                    .child(img(ImageSource::Render(image)).size_full())
+                    .into_any_element()
+            }
+            // Still loading: nothing yet, then the image.
+            Some(None) => div().into_any_element(),
+            // Missing, unreadable, from the web, or no folder to find it in.
+            _ => div()
+                .px_2()
+                .border_1()
+                .border_color(self.theme.rule)
+                .rounded_sm()
+                .text_color(self.theme.muted_text)
+                .child(if self.alt.is_empty() {
+                    "Image".to_owned()
+                } else {
+                    self.alt.clone()
+                })
+                .into_any_element(),
+        };
+        div()
+            .id(self.id)
+            .role(Role::Image)
+            .aria_label(if self.alt.is_empty() {
+                SharedString::from("Image")
+            } else {
+                SharedString::from(self.alt.clone())
+            })
+            .max_w_full()
+            .when(link.is_some(), |this| this.cursor_pointer())
+            .on_mouse_down(MouseButton::Left, move |event, window, cx| {
+                // A plain click on a linked image leaves the block
+                // rendered, as on a link.
+                if link.is_none() || event.modifiers.modified() {
+                    click.report(source, event.modifiers.shift, window, cx);
+                }
+                cx.stop_propagation();
+            })
+            .on_click(move |event, window, cx| {
+                if let Some(link) = &self.link
+                    && !event.modifiers().modified()
+                {
+                    follow.follow_link(&link.destination, window, cx);
+                }
+            })
+            .child(content)
+    }
+}
+
+/// An image's size as the web would show it, in pixels. SVGs are drawn at
+/// twice their size, so they stay sharp on Retina screens.
+pub(crate) fn natural_size(image: &gpui::RenderImage, destination: &str) -> (f32, f32) {
+    let size = image.size(0);
+    let (width, height) = (size.width.0 as f32, size.height.0 as f32);
+    let svg = Path::new(destination)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("svg"));
+    if svg {
+        (
+            width / gpui::SMOOTH_SVG_SCALE_FACTOR,
+            height / gpui::SMOOTH_SVG_SCALE_FACTOR,
+        )
+    } else {
+        (width, height)
+    }
+}
+
+/// A run of text with no images: styled, with clickable links.
+fn clickable_run(text: &InlineText, style: &TextStyle, accessible: bool) -> AnyElement {
     let styled = styled_text(text, style);
     let layout = styled.layout().clone();
     let inline = text.clone();

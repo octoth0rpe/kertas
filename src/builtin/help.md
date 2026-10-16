@@ -110,6 +110,14 @@ https://commonmark.org
 
 https://commonmark.org
 
+### Images
+
+```markdown
+![A description of the picture](pictures/photo.png)
+```
+
+The path is relative to the document's folder. The image is shown at its own size, or smaller to fit, and the description is shown instead if the file can't be found. Images from the web aren't loaded.
+
 ### Lists
 
 ```markdown

@@ -29,7 +29,14 @@ impl DocumentView {
                 None => open.editor.document().display_name(),
             };
             let settings = crate::app_settings::get(cx);
-            crate::print::print(open.editor.model(), &settings, &title, &ns_window, mtm);
+            crate::print::print(
+                open.editor.model(),
+                open.editor.document().path(),
+                &settings,
+                &title,
+                &ns_window,
+                mtm,
+            );
         }
         #[cfg(not(target_os = "macos"))]
         let _ = (window, cx);
