@@ -8,6 +8,8 @@ use std::ops::Range;
 
 use pulldown_cmark::{Event, LinkType, Tag, TagEnd};
 
+use crate::autolinks;
+
 #[cfg(test)]
 use crate::definitions::Definitions;
 
@@ -197,8 +199,90 @@ impl InlineBuilder {
         });
     }
 
-    pub(crate) fn finish(self) -> InlineText {
+    /// The finished text, with bare URLs and email addresses in plain
+    /// text made into links (#93).
+    pub(crate) fn finish(mut self) -> InlineText {
+        self.add_autolinks();
+        self.output.links.sort_by_key(|link| link.display.start);
         self.output
+    }
+
+    /// The finished text with no links added, for code blocks.
+    pub(crate) fn finish_code(self) -> InlineText {
+        self.output
+    }
+
+    /// Finds bare links in each run of text that isn't code or already a
+    /// link, and makes them links. The source is unchanged.
+    fn add_autolinks(&mut self) {
+        let plain = |segment: &Segment| !segment.style.code && !segment.style.link;
+        let mut found = Vec::new();
+        let mut index = 0;
+        let segments = &self.output.segments;
+        while index < segments.len() {
+            if !plain(&segments[index]) {
+                index += 1;
+                continue;
+            }
+            let start = segments[index].display.start;
+            while index < segments.len() && plain(&segments[index]) {
+                index += 1;
+            }
+            let end = segments[index - 1].display.end;
+            found.extend(
+                autolinks::find(&self.output.text[start..end])
+                    .into_iter()
+                    .map(|link| {
+                        (
+                            start + link.range.start..start + link.range.end,
+                            link.destination,
+                        )
+                    }),
+            );
+        }
+        for (display, destination) in found {
+            self.split_at(display.start);
+            self.split_at(display.end);
+            for segment in &mut self.output.segments {
+                if display.start <= segment.display.start && segment.display.end <= display.end {
+                    segment.style.link = true;
+                }
+            }
+            self.output.links.push(Link {
+                display,
+                destination,
+            });
+        }
+    }
+
+    /// Splits the segment that `index` falls inside, so a segment starts
+    /// there.
+    fn split_at(&mut self, index: usize) {
+        let Some(position) = self
+            .output
+            .segments
+            .iter()
+            .position(|segment| segment.display.start < index && index < segment.display.end)
+        else {
+            return;
+        };
+        let segment = &mut self.output.segments[position];
+        let offset = index - segment.display.start;
+        // Exact when the text matches its source byte for byte; otherwise
+        // (e.g. an escape) the source stays with the first part.
+        let source_split = if segment.display.len() == segment.source.len() {
+            segment.source.start + offset
+        } else {
+            segment.source.end
+        };
+        let second = Segment {
+            display: index..segment.display.end,
+            source: source_split..segment.source.end,
+            style: segment.style,
+        };
+        segment.display.end = index;
+        segment.source.end = source_split;
+        self.output.segments.insert(position + 1, second);
     }
 }
 
@@ -509,5 +593,113 @@ mod tests {
         let inline = render_inline("*a <b>c</b>*", &Definitions::default());
         assert_eq!(inline.text, "a <b>c</b>");
         assert!(inline.segments.iter().all(|segment| segment.style.emphasis));
+    }
+}
+
+#[cfg(test)]
+mod autolink_tests {
+    use super::*;
+    use crate::blocks::Blocks;
+    use crate::rendered::{RenderedBlock, render_blocks};
+
+    fn render(source: &str) -> InlineText {
+        render_inline(source, &Definitions::default())
+    }
+
+    /// Each link's text and destination.
+    fn links(inline: &InlineText) -> Vec<(&str, &str)> {
+        inline
+            .links
+            .iter()
+            .map(|link| {
+                (
+                    &inline.text[link.display.clone()],
+                    link.destination.as_str(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn bare_urls_become_links() {
+        let inline = render("See https://example.com, www.example.org and me@example.com.");
+        assert_eq!(
+            links(&inline),
+            [
+                ("https://example.com", "https://example.com"),
+                ("www.example.org", "https://www.example.org"),
+                ("me@example.com", "mailto:me@example.com"),
+            ]
+        );
+        let link = |text: &str| {
+            inline
+                .segments
+                .iter()
+                .find(|segment| &inline.text[segment.display.clone()] == text)
+                .is_some_and(|segment| segment.style.link)
+        };
+        assert!(link("https://example.com"));
+        assert!(!link("See "));
+        assert!(!link(", "));
+        assert!(inline.link_at(6).is_some());
+    }
+
+    #[test]
+    fn source_is_unchanged_and_still_maps() {
+        let source = "a **https://example.com/x** b";
+        let inline = render(source);
+        assert_eq!(inline.text, "a https://example.com/x b");
+        assert_eq!(
+            links(&inline),
+            [("https://example.com/x", "https://example.com/x")]
+        );
+        // The `x` maps back to its place in the source.
+        let x = inline.text.find("/x").unwrap() + 1;
+        assert_eq!(&source[inline.source_offset(x)..][..1], "x");
+    }
+
+    #[test]
+    fn code_and_existing_links_are_left_alone() {
+        let inline = render("`https://a.com` [https://b.com](https://c.com) <https://d.com>");
+        assert_eq!(
+            links(&inline),
+            [
+                ("https://b.com", "https://c.com"),
+                ("https://d.com", "https://d.com"),
+            ]
+        );
+        let text = "```\nhttps://example.com\n```\n";
+        let blocks = render_blocks(text, &Blocks::parse(text));
+        let [RenderedBlock::CodeBlock { code, .. }] = blocks.as_slice() else {
+            panic!("{blocks:?}");
+        };
+        assert!(code.links.is_empty());
+        assert!(code.segments.iter().all(|segment| !segment.style.link));
+    }
+
+    #[test]
+    fn text_after_code_can_start_a_link() {
+        let inline = render("`x`https://example.com");
+        assert_eq!(
+            links(&inline),
+            [("https://example.com", "https://example.com")]
+        );
+    }
+
+    #[test]
+    fn links_inside_tables_and_lists() {
+        let text = "- www.example.com\n\n| https://example.com |\n|---|\n";
+        let blocks = render_blocks(text, &Blocks::parse(text));
+        let RenderedBlock::List { items, .. } = &blocks[0] else {
+            panic!()
+        };
+        let RenderedBlock::Paragraph(item) = &items[0].children[0] else {
+            panic!()
+        };
+        assert_eq!(item.links.len(), 1);
+        let RenderedBlock::Table(table) = &blocks[1] else {
+            panic!()
+        };
+        assert_eq!(table.header[0].links.len(), 1);
     }
 }
