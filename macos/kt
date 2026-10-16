@@ -4,11 +4,15 @@
 #   kt notes.md todo.md   # open (or switch to) these files
 #   kt new-idea.md        # a file that doesn't exist yet: saving creates it
 #   kt                    # bring Kertas to the front
+#   kt --convert in.md out.pdf
+#                         # save in.md as a PDF, as File > Print prints it
 #
 # This script lives inside Kertas.app. Kertas's settings install it as
 # /usr/local/bin/kt, a link to this file, so it always opens the Kertas.app
 # it came from. It hands files to Kertas as kertas:// links, which reach a
 # running Kertas or launch it, and work for files that don't exist yet.
+# --convert instead runs Kertas's executable directly, without a window, so
+# kt can wait for the PDF and report errors (with a non-zero exit).
 set -eu
 
 # Kertas.app is three levels up from Contents/Resources/kt.
@@ -30,6 +34,10 @@ urlencode() {
     done
     printf '%s' "$out"
 }
+
+if [ "${1:-}" = "--convert" ]; then
+    exec "$app/Contents/MacOS/Kertas" "$@"
+fi
 
 if [ $# -eq 0 ]; then
     exec "${KERTAS_OPEN:-open}" -a "$app" "kertas://activate"

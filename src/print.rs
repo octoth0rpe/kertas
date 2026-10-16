@@ -60,9 +60,8 @@ pub fn print(
     }
 }
 
-/// Prints `model` to a PDF at `path` without any panels, for the smoke
-/// test.
-#[cfg(debug_assertions)]
+/// Prints `model` to a PDF at `path` without any panels, for `kt
+/// --convert` and the smoke test. Returns whether it worked.
 pub fn save_pdf(
     model: &Model,
     document: Option<&std::path::Path>,
@@ -123,7 +122,34 @@ fn operation(
     NSPrintOperation::printOperationWithView_printInfo(&view, &info)
 }
 
-/// The layout as an attributed string, in black on white, in the fonts
+/// The colours a document prints in.
+struct Palette {
+    text: Retained<NSColor>,
+    muted: Retained<NSColor>,
+    link: Retained<NSColor>,
+    theme: Theme,
+    code_background: Retained<NSColor>,
+    header_background: Retained<NSColor>,
+    rule: Retained<NSColor>,
+}
+
+impl Palette {
+    /// Black on white.
+    fn light() -> Self {
+        let grey = |white: f64| NSColor::colorWithWhite_alpha(white, 1.);
+        Self {
+            text: NSColor::blackColor(),
+            muted: grey(0.35),
+            link: NSColor::colorWithSRGBRed_green_blue_alpha(0.035, 0.41, 0.85, 1.),
+            theme: Theme::light(),
+            code_background: grey(0.94),
+            header_background: grey(0.96),
+            rule: grey(0.75),
+        }
+    }
+}
+
+/// The layout as an attributed string, in the light palette, in the fonts
 /// `settings` choose, with images no wider than `width`.
 fn attributed(
     layout: &PrintLayout,
@@ -131,6 +157,7 @@ fn attributed(
     width: f64,
     mtm: MainThreadMarker,
 ) -> Retained<NSMutableAttributedString> {
+    let palette = Palette::light();
     let text = &layout.text;
     // Attributed string ranges are in UTF-16 code units. Map every byte
     // offset in one pass; converting each range from scratch would be
@@ -156,8 +183,7 @@ fn attributed(
         unsafe { string.addAttribute_value_range(key, value, range) };
     };
     let fonts = NSFontManager::sharedFontManager(mtm);
-    let grey = |white: f64| NSColor::colorWithWhite_alpha(white, 1.);
-    let code_background = grey(0.94);
+    let code_background = &palette.code_background;
 
     for run in &layout.runs {
         let range = range(&run.range);
@@ -193,9 +219,9 @@ fn attributed(
             font = fonts.convertFont_toHaveTrait(&font, NSFontTraitMask::ItalicFontMask);
         }
         let color = if style.link {
-            NSColor::colorWithSRGBRed_green_blue_alpha(0.035, 0.41, 0.85, 1.)
+            palette.link.clone()
         } else if let Some(kind) = style.alert {
-            let rgba = gpui::Rgba::from(Theme::light().alert(kind));
+            let rgba = gpui::Rgba::from(palette.theme.alert(kind));
             NSColor::colorWithSRGBRed_green_blue_alpha(
                 rgba.r.into(),
                 rgba.g.into(),
@@ -203,9 +229,9 @@ fn attributed(
                 1.,
             )
         } else if style.muted {
-            grey(0.35)
+            palette.muted.clone()
         } else {
-            NSColor::blackColor()
+            palette.text.clone()
         };
         // SAFETY (here and below): reading AppKit's attribute-name constants,
         // which are set before any code runs.
@@ -252,7 +278,7 @@ fn attributed(
             Frame::None => None,
             Frame::Code => {
                 let block = NSTextBlock::new();
-                block.setBackgroundColor(Some(&code_background));
+                block.setBackgroundColor(Some(code_background));
                 block.setWidth_type_forLayer(
                     6.,
                     NSTextBlockValueType::AbsoluteValueType,
@@ -269,7 +295,7 @@ fn attributed(
                     NSTextBlockLayer::Border,
                     NSRectEdge::MaxY,
                 );
-                block.setBorderColor(Some(&grey(0.75)));
+                block.setBorderColor(Some(&palette.rule));
                 full_width(&block);
                 Some(block)
             }
@@ -298,9 +324,9 @@ fn attributed(
                     NSTextBlockValueType::AbsoluteValueType,
                     NSTextBlockLayer::Border,
                 );
-                cell.setBorderColor(Some(&grey(0.75)));
+                cell.setBorderColor(Some(&palette.rule));
                 if header {
-                    cell.setBackgroundColor(Some(&grey(0.96)));
+                    cell.setBackgroundColor(Some(&palette.header_background));
                 }
                 Some(Retained::into_super(cell))
             }
@@ -331,7 +357,7 @@ fn attributed(
             unsafe {
                 add(
                     NSBackgroundColorAttributeName,
-                    &code_background,
+                    code_background,
                     range(&run.range),
                 )
             };

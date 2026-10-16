@@ -45,6 +45,8 @@ Each document opens in its own tab. **⌘1** to **⌘9** go straight to a tab. T
 
 **Kertas → Install Command Line Tool…** installs the `kt` command. Then `kt notes.md` opens a file in Kertas. A file that doesn't exist yet opens as a new document, and saving creates it.
 
+`kt --convert notes.md notes.pdf` saves a file as a PDF without opening it, laid out as **File → Print…** prints it with your settings.
+
 ## Appearance
 
 **View → Appearance** chooses Light, Dark or Match System. **View → Text Width** chooses how wide the text is: Standard, Wide, or the whole window.
