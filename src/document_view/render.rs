@@ -369,6 +369,8 @@ impl DocumentView {
                 gpui::MouseButton::Left,
                 cx.listener(|this, _, _, _| this.end_drag()),
             )
+            .capture_key_down(cx.listener(|this, event, _, _| this.line_scroll_key_down(event)))
+            .on_key_up(cx.listener(|this, event, _, _| this.line_scroll_key_up(event)))
             .on_action(cx.listener(|this, _: &MoveLeft, _, cx| {
                 this.move_by(Motion::Grapheme, false, false, cx)
             }))

@@ -1335,9 +1335,10 @@ fn smoke_scrollbar_drag(window: WindowHandle<DocumentView>, cx: &mut App) {
     .detach();
 }
 
-/// `KERTAS_SMOKE=reading`, on `anchors.md` (#99): with no caret, ↑ and ↓
-/// scroll a few lines and ⌘↑ and ⌘↓ scroll to the ends, without placing a
-/// caret; → starts editing the first block on screen, not the document's
+/// `KERTAS_SMOKE=reading`, on `anchors.md` (#99, #100): with no caret, ↑
+/// and ↓ glide a few lines, holding ↓ scrolls without steps and stops
+/// soon after it's let go, the wheel takes over, and ↓ at the end stays
+/// there; ⌘↑ and ⌘↓ scroll to the ends, without placing a caret; → starts editing the first block on screen, not the document's
 /// start; and after Escape, ↓ scrolls from wherever the window is.
 fn smoke_reading(window: WindowHandle<DocumentView>, cx: &mut App) {
     use crate::document_view::PageDown;
@@ -1365,17 +1366,124 @@ fn smoke_reading(window: WindowHandle<DocumentView>, cx: &mut App) {
         }
         let start = offset(cx);
 
-        press(Box::new(MoveDown), cx).await;
+        // The keys themselves, since a key repeating is told from a new
+        // press by the key going up (#100).
+        let key = |cx: &mut AsyncApp, name: &str, held: bool| {
+            let event = gpui::PlatformInput::KeyDown(gpui::KeyDownEvent {
+                keystroke: gpui::Keystroke::parse(name).unwrap(),
+                is_held: held,
+                prefer_character_input: false,
+            });
+            gpui::AnyWindowHandle::from(window)
+                .update(cx, |_, window, cx| {
+                    window.dispatch_event(event, cx);
+                })
+                .ok();
+        };
+        let key_up = |cx: &mut AsyncApp, name: &str| {
+            let event = gpui::PlatformInput::KeyUp(gpui::KeyUpEvent {
+                keystroke: gpui::Keystroke::parse(name).unwrap(),
+            });
+            gpui::AnyWindowHandle::from(window)
+                .update(cx, |_, window, cx| {
+                    window.dispatch_event(event, cx);
+                })
+                .ok();
+        };
+        let scrolling = |cx: &mut AsyncApp| {
+            window
+                .read_with(cx, |view, _| view.line_scrolling())
+                .unwrap_or(false)
+        };
+        let settle = async |cx: &mut AsyncApp| {
+            wait_until(cx, |cx| !scrolling(cx)).await;
+            pause(cx, 2).await;
+        };
+
+        // A press glides: part of the way after a frame, all of it once
+        // it settles.
+        key(cx, "down", false);
+        key_up(cx, "down");
+        let first = after_frames(window, cx, 1, |view| view.scroll_offset())
+            .await
+            .unwrap_or(0.);
+        settle(cx).await;
         let down = offset(cx);
         checks.check(
-            &format!("↓ scrolls a few lines ({start} -> {down})"),
-            (down - start - 40.).abs() < 1. && !caret(cx),
+            &format!("↓ glides a few lines ({start} -> {first} -> {down})"),
+            first > start && first < start + 39. && (down - start - 40.).abs() < 1. && !caret(cx),
         );
-        press(Box::new(MoveUp), cx).await;
+        key(cx, "up", false);
+        key_up(cx, "up");
+        settle(cx).await;
         let up = offset(cx);
         checks.check(
             &format!("↑ scrolls back ({down} -> {up})"),
             (up - start).abs() < 1. && !caret(cx),
+        );
+
+        // Holding ↓: the key repeats every other frame. Every frame moves
+        // the document, none by a whole step; letting go stops it soon.
+        key(cx, "down", false);
+        let mut offsets = vec![offset(cx)];
+        for frame in 0..60 {
+            if frame % 2 == 1 {
+                key(cx, "down", true);
+            }
+            offsets.extend(after_frames(window, cx, 1, |view| view.scroll_offset()).await);
+        }
+        let moves: Vec<f32> = offsets.windows(2).map(|pair| pair[1] - pair[0]).collect();
+        let still = moves.iter().filter(|&&moved| moved <= 0.).count();
+        let biggest = moves.iter().copied().fold(0., f32::max);
+        checks.check(
+            &format!(
+                "holding ↓ scrolls without steps (frames still {still}, biggest move {biggest:.1})"
+            ),
+            moves.len() == 60 && still == 0 && biggest < 80.,
+        );
+        let held = offset(cx);
+        key_up(cx, "down");
+        let stopped = wait_for(cx, Duration::from_millis(500), |cx| !scrolling(cx)).await;
+        let glide = offset(cx) - held;
+        checks.check(
+            &format!("letting go stops it promptly (glided {glide:.1})"),
+            stopped && glide < 80.,
+        );
+
+        // The wheel takes over from a held key at once.
+        key(cx, "down", false);
+        for _ in 0..6 {
+            key(cx, "down", true);
+            pause(cx, 2).await;
+        }
+        gpui::AnyWindowHandle::from(window)
+            .update(cx, |_, window, cx| {
+                let size = window.viewport_size();
+                window.dispatch_event(
+                    gpui::PlatformInput::ScrollWheel(gpui::ScrollWheelEvent {
+                        position: gpui::point(size.width / 2., size.height / 2.),
+                        delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(100.))),
+                        modifiers: gpui::Modifiers::default(),
+                        touch_phase: gpui::TouchPhase::Moved,
+                    }),
+                    cx,
+                );
+            })
+            .ok();
+        pause(cx, 3).await;
+        let wheeled = !scrolling(cx);
+        key_up(cx, "down");
+        checks.check("the wheel takes over from ↓", wheeled);
+
+        // At the end, ↓ doesn't go past it.
+        press(Box::new(MoveDocumentEnd), cx).await;
+        let bottom = offset(cx);
+        key(cx, "down", false);
+        key_up(cx, "down");
+        settle(cx).await;
+        checks.check(
+            &format!("↓ at the end stays there ({bottom} -> {})", offset(cx)),
+            (offset(cx) - bottom).abs() < 1.,
         );
 
         press(Box::new(MoveDocumentEnd), cx).await;
@@ -1420,6 +1528,7 @@ fn smoke_reading(window: WindowHandle<DocumentView>, cx: &mut App) {
         }
         let before = offset(cx);
         press(Box::new(MoveDown), cx).await;
+        settle(cx).await;
         let after = offset(cx);
         checks.check(
             &format!("after Escape, ↓ scrolls from where the window is ({before} -> {after})"),

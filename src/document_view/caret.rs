@@ -7,9 +7,6 @@ use gpui::{Context, ListOffset, Pixels, Window, point, px};
 use kertas::editor::{Motion, RevealTarget, Selection};
 use kertas::reveal::styled_source;
 
-/// How far ↑ and ↓ scroll with no caret, about as far as in Safari.
-const LINE_SCROLL: f32 = 40.;
-
 use crate::revealed_block::{CaretPlace, RevealedLayout};
 
 use super::heights::Heights;
@@ -121,6 +118,7 @@ impl DocumentView {
     }
 
     pub(super) fn set_selection(&mut self, selection: Selection, cx: &mut Context<Self>) {
+        self.stop_line_scroll();
         let Some(open) = &mut self.open else {
             return;
         };
@@ -269,7 +267,7 @@ impl DocumentView {
             if extend {
                 self.place_caret_on_screen(cx);
             } else {
-                self.scroll_lines(down, cx);
+                self.scroll_lines(down, window, cx);
             }
             return;
         }
@@ -396,16 +394,6 @@ impl DocumentView {
         self.open
             .as_ref()
             .is_some_and(|open| open.editor.selection().is_some())
-    }
-
-    /// Scrolls a few lines, for ↑ and ↓ with no caret.
-    fn scroll_lines(&mut self, down: bool, cx: &mut Context<Self>) {
-        let Some(open) = &self.open else {
-            return;
-        };
-        let step = px(LINE_SCROLL);
-        open.list_state.scroll_by(if down { step } else { -step });
-        cx.notify();
     }
 
     /// Scrolls to the top or bottom, for ⌘↑ and ⌘↓ with no caret.
