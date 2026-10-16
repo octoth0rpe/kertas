@@ -12,8 +12,9 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, Bounds, Context, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Role,
-    ScrollWheelEvent, Window, canvas, div, fill, point, prelude::*, px, size,
+    AnyElement, Bounds, Context, DispatchPhase, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Role, ScrollWheelEvent, Window, canvas, div, fill, point, prelude::*, px,
+    size,
 };
 use kertas::scroll_estimate::ScrollEstimate;
 
@@ -33,8 +34,6 @@ const LINE_HEIGHT: f32 = 1.6;
 /// Roughly how wide a character of body text is, relative to the text
 /// size, for estimating where lines wrap.
 const CHAR_WIDTH: f32 = 0.5;
-/// The list's padding on each side of the text, in pixels.
-const SIDE_PADDING: f32 = 32.;
 
 /// The estimate for one version of the document at one line width.
 pub(super) struct CachedEstimate {
@@ -50,8 +49,7 @@ pub(super) struct ScrollbarDrag {
     grab: Pixels,
     /// Where the thumb's top is now, in the track.
     thumb_top: Pixels,
-    /// Kept for the whole drag, so the thumb doesn't change scale under
-    /// the pointer.
+    /// The mode the drag started with, which it keeps.
     mode: ScrollbarMode,
 }
 
@@ -89,17 +87,10 @@ impl Placement {
         if height <= px(0.) || heights.scroll_range(ScrollbarMode::Exact) <= px(0.) {
             return None;
         }
-        // A drag keeps the mode it started with, so the thumb doesn't
-        // change scale under the pointer.
-        let mode = self
-            .drag
-            .map_or_else(|| heights.scrollbar_mode(), |drag| drag.mode);
+        let mode = heights.scrollbar_mode(self.drag.map(|drag| drag.mode));
         let range = heights.scroll_range(mode);
         let total = range + height;
-        let mut through = (heights.scroll_position(mode) / range.max(px(1.))).clamp(0., 1.);
-        if mode == ScrollbarMode::Estimated {
-            through = self.correct_estimate(range, through);
-        }
+        let through = (heights.scroll_position(mode) / range.max(px(1.))).clamp(0., 1.);
         let shown = (height / total.max(height)).min(1.);
         let thumb = (height * shown).max(px(MIN_THUMB)).min(height);
         let room = height - thumb;
@@ -114,22 +105,6 @@ impl Placement {
             height: thumb,
             mode,
         })
-    }
-
-    /// Corrects how far through the document the estimate puts the window,
-    /// at the ends, where the list knows better.
-    fn correct_estimate(&self, range: Pixels, mut through: f32) -> f32 {
-        let heights = &self.heights;
-        let range = range.max(px(1.));
-        // Near the end, the last item has been drawn, so how far there is
-        // still to go is known exactly; trust it over the estimate.
-        if let Some(remaining) = heights.left_below() {
-            through = through.max(1. - (remaining / range).min(1.));
-        }
-        if heights.at_top() {
-            through = 0.;
-        }
-        through
     }
 
     /// Scrolls so the thumb's top is at `thumb_top` in the track.
@@ -149,11 +124,7 @@ impl DocumentView {
     fn scroll_estimate(&self, open: &OpenDocument, window: &Window) -> Rc<ScrollEstimate> {
         let rem = window.rem_size();
         let viewport = open.list_state.viewport_bounds();
-        let available = viewport.size.width - px(2. * SIDE_PADDING);
-        let width = match super::render::column_width(self.text_settings.text_width) {
-            Some(column) => column.to_pixels(rem).min(available),
-            None => available,
-        };
+        let (_, width) = self.text_column(viewport.size.width, rem);
         let chars_per_line = (width / (rem * CHAR_WIDTH)).max(1.) as usize;
         let model = Rc::as_ptr(open.editor.model()) as usize;
         let mut cache = open.scroll_estimate.borrow_mut();
@@ -217,7 +188,7 @@ impl DocumentView {
     }
 
     /// Follows the pointer while the thumb is dragged.
-    pub(super) fn scrollbar_mouse_move(
+    fn scrollbar_mouse_move(
         &mut self,
         event: &MouseMoveEvent,
         window: &mut Window,
@@ -284,6 +255,8 @@ impl DocumentView {
                 0.35
             });
         let list_state = open.list_state.clone();
+        let dragging = open.scrollbar_drag.is_some();
+        let view = cx.entity().downgrade();
         div()
             .id("scrollbar")
             .role(Role::ScrollBar)
@@ -304,6 +277,34 @@ impl DocumentView {
                 canvas(
                     |_, _, _| {},
                     move |_, (), window, _| {
+                        // While the thumb is dragged, follow the pointer
+                        // wherever it goes, even off the window (which an
+                        // element's own mouse listeners don't hear), and
+                        // end the drag wherever the button goes up.
+                        if dragging {
+                            let moved = view.clone();
+                            window.on_mouse_event(
+                                move |event: &MouseMoveEvent, phase, window, cx| {
+                                    if phase == DispatchPhase::Capture {
+                                        moved
+                                            .update(cx, |this, cx| {
+                                                this.scrollbar_mouse_move(event, window, cx)
+                                            })
+                                            .ok();
+                                    }
+                                },
+                            );
+                            let released = view.clone();
+                            window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
+                                if phase == DispatchPhase::Capture
+                                    && event.button == MouseButton::Left
+                                {
+                                    released
+                                        .update(cx, |this, cx| this.end_scrollbar_drag(cx))
+                                        .ok();
+                                }
+                            });
+                        }
                         let Some(thumb) = placement.thumb() else {
                             return;
                         };
@@ -382,6 +383,14 @@ impl DocumentView {
     pub fn drag_thumb_to(&mut self, top: f32, window: &Window, cx: &mut Context<Self>) {
         self.drag_thumb(px(top), window);
         cx.notify();
+    }
+
+    /// Whether the thumb is being dragged, for the smoke test.
+    #[cfg(debug_assertions)]
+    pub fn scrollbar_dragging(&self) -> bool {
+        self.open
+            .as_ref()
+            .is_some_and(|open| open.scrollbar_drag.is_some())
     }
 
     /// Lets go of the thumb, for the smoke test.

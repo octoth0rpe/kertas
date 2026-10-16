@@ -1147,6 +1147,49 @@ fn smoke_scrollbar(window: WindowHandle<DocumentView>, cx: &mut App) {
             matches!((before, after), (Some((a, _)), Some((b, _))) if b > a),
         );
 
+        // From the top, drag the thumb to the bottom a little at a time, so
+        // the list draws (and so measures) every item on the way, and hold
+        // it there: the document only ever moves down. A drag that starts
+        // estimated must stay so although every height becomes known: GPUI
+        // froze the list's height when it started, and that's only the
+        // height of what had been drawn.
+        dispatch(window, cx, Box::new(MoveDocumentStart));
+        pause(cx, 10).await;
+        let start = thumb(cx);
+        let estimated = window
+            .update(cx, |view, window, _| {
+                view.grab_thumb(window);
+                !view.scrollbar_exact(window)
+            })
+            .unwrap_or(false);
+        let mut offsets = Vec::new();
+        if let Some((top, height, track)) = start {
+            let steps = 400;
+            for step in 0..steps + 3 {
+                let to = top + (track - height - top) * (step.min(steps) as f32 / steps as f32);
+                window
+                    .update(cx, |view, window, cx| view.drag_thumb_to(to, window, cx))
+                    .ok();
+                pause(cx, 1).await;
+                offsets.extend(
+                    window
+                        .read_with(cx, |view, _| view.scroll_top())
+                        .ok()
+                        .flatten(),
+                );
+            }
+        }
+        window.update(cx, |view, _, cx| view.release_thumb(cx)).ok();
+        let back = offsets.windows(2).position(|pair| pair[1] < pair[0]);
+        checks.check(
+            &format!(
+                "dragging to the bottom never scrolls back (estimated {estimated}, back at step \
+                 {back:?}, ended at {:?})",
+                offsets.last()
+            ),
+            estimated && offsets.len() == 403 && back.is_none(),
+        );
+
         cx.update(|cx| crate::app_settings::set_or_report("scrollbar", false, cx));
         pause(cx, 10).await;
         checks.check("the setting hides it", thumb(cx).is_none());
@@ -1216,6 +1259,77 @@ fn smoke_scrollbar_drag(window: WindowHandle<DocumentView>, cx: &mut App) {
             &format!("after the drag the thumb stays at the bottom ({end:?})"),
             end.is_some_and(|(top, height, track)| (top + height - track).abs() < 1.),
         );
+
+        // With the mouse: press on the thumb, then drag up with the pointer
+        // off the window's right edge, and let go out there. The drag
+        // follows the pointer wherever it is, and ends.
+        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
+        let bar = window
+            .read_with(cx, |view, _| view.scrollbar_track())
+            .ok()
+            .flatten();
+        if let (Some(bar), Some((top, height, _))) = (bar, end) {
+            let send = |cx: &mut AsyncApp, event: gpui::PlatformInput| {
+                gpui::AnyWindowHandle::from(window)
+                    .update(cx, |_, window, cx| {
+                        window.dispatch_event(event, cx);
+                    })
+                    .ok();
+            };
+            let on_thumb = gpui::point(bar.center().x, bar.top() + gpui::px(top + height / 2.));
+            send(
+                cx,
+                gpui::PlatformInput::MouseMove(MouseMoveEvent {
+                    position: on_thumb,
+                    pressed_button: None,
+                    modifiers: Modifiers::default(),
+                }),
+            );
+            pause(cx, 2).await;
+            send(
+                cx,
+                gpui::PlatformInput::MouseDown(MouseDownEvent {
+                    button: MouseButton::Left,
+                    position: on_thumb,
+                    modifiers: Modifiers::default(),
+                    click_count: 1,
+                    first_mouse: false,
+                }),
+            );
+            pause(cx, 2).await;
+            let before = offset(cx);
+            let outside = gpui::point(bar.right() + gpui::px(40.), bar.center().y);
+            send(
+                cx,
+                gpui::PlatformInput::MouseMove(MouseMoveEvent {
+                    position: outside,
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Modifiers::default(),
+                }),
+            );
+            pause(cx, 3).await;
+            let after = offset(cx);
+            checks.check(
+                &format!("dragging outside the window still scrolls ({before} -> {after})"),
+                after < before - 100.,
+            );
+            send(
+                cx,
+                gpui::PlatformInput::MouseUp(MouseUpEvent {
+                    button: MouseButton::Left,
+                    position: outside,
+                    modifiers: Modifiers::default(),
+                    click_count: 1,
+                }),
+            );
+            pause(cx, 3).await;
+            let dragging = window
+                .read_with(cx, |view, _| view.scrollbar_dragging())
+                .unwrap_or(true);
+            checks.check("letting go outside the window ends the drag", !dragging);
+        } else {
+            checks.check("the thumb can be found to drag with the mouse", false);
+        }
         checks.finish(cx);
     })
     .detach();
