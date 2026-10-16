@@ -14,6 +14,7 @@ mod disk;
 mod files;
 mod heights;
 mod input;
+mod line_scroll;
 mod render;
 mod scrollbar;
 
@@ -286,6 +287,8 @@ pub struct DocumentView {
     text_settings: TextSettings,
     /// Whether the blinking caret is currently drawn.
     caret_visible: bool,
+    /// A scroll from ↑ or ↓ in progress, with no caret.
+    line_scroll: Option<line_scroll::LineScroll>,
     /// Bumped to stop the current blink loop.
     blink_epoch: usize,
     /// Whether the mouse button went down in the document and is still
@@ -367,6 +370,7 @@ impl DocumentView {
             theme: Theme::current(window, cx),
             text_settings: TextSettings::from(&app_settings::get(cx)),
             caret_visible: true,
+            line_scroll: None,
             dragging: false,
             pressed_task: None,
             blink_epoch: 0,
