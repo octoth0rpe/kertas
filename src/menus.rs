@@ -5,7 +5,7 @@
 
 use gpui::{Action, App, Menu, MenuItem, NoAction, SharedString, actions};
 use kertas::settings::{AppearanceSetting, DEFAULT_THEME, Settings, TextWidth};
-use kertas::themes;
+use kertas::themes::Theme;
 
 use crate::app_settings::{self, AppSettings};
 use crate::builtin::{self, Builtin};
@@ -97,10 +97,10 @@ pub fn init(cx: &mut App) {
 
 /// Rebuilds the menus, to show the current settings and system state.
 pub fn refresh(cx: &mut App) {
-    cx.set_menus(menus(app_settings::get(cx)));
+    cx.set_menus(menus(app_settings::get(cx), app_settings::themes(cx)));
 }
 
-fn menus(settings: Settings) -> Vec<Menu> {
+fn menus(settings: Settings, themes: &[Theme]) -> Vec<Menu> {
     let appearance = |value: AppearanceSetting| settings.appearance == value;
     let width = |value: TextWidth| settings.text_width == value;
     let mut kertas = vec![
@@ -141,7 +141,7 @@ fn menus(settings: Settings) -> Vec<Menu> {
                 section("Theme"),
             ]
             .into_iter()
-            .chain(themes::builtin().iter().map(|theme| {
+            .chain(themes.iter().map(|theme| {
                 let name = SharedString::from(theme.name.clone());
                 MenuItem::action(name.clone(), UseTheme { name })
                     .checked(theme.name == settings.theme)

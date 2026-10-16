@@ -100,16 +100,19 @@ impl DocumentView {
     }
 
     /// A bar at the bottom of the window reporting problems in the settings
-    /// file (G4), until the user closes it.
+    /// file (G4) and theme files, until the user closes it.
     fn render_settings_problems(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.settings_problems_dismissed {
             return None;
         }
-        let problems = &cx.try_global::<AppSettings>()?.problems;
-        let first = problems.first()?;
-        let mut message = format!("Settings file, {first}");
-        if problems.len() > 1 {
-            message.push_str(&format!(" (and {} more)", problems.len() - 1));
+        let state = cx.try_global::<AppSettings>()?;
+        let count = state.problems.len() + state.theme_problems.len();
+        let mut message = match state.problems.first() {
+            Some(first) => format!("Settings file, {first}"),
+            None => state.theme_problems.first()?.to_string(),
+        };
+        if count > 1 {
+            message.push_str(&format!(" (and {} more)", count - 1));
         }
         let theme = self.theme;
         Some(

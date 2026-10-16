@@ -12,7 +12,6 @@ use gpui::{
     WindowOptions, actions, anchored, deferred, div, prelude::*, px, size,
 };
 use kertas::settings::{DEFAULT_THEME, Kind, SETTINGS, Setting, Settings};
-use kertas::themes;
 
 use crate::app_settings::{self, AppSettings};
 use crate::document_view::{CloseWindow, DocumentView};
@@ -264,7 +263,7 @@ impl SettingsWindow {
         current: &str,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let options = themes::builtin()
+        let options = app_settings::themes(cx)
             .iter()
             .map(|theme| PopupOption {
                 label: theme.name.clone().into(),
@@ -273,9 +272,24 @@ impl SettingsWindow {
                 selected: theme.name == current,
             })
             .collect();
+        let folder = self
+            .button(
+                "open-themes-folder",
+                "Open Themes Folder",
+                "Open Themes Folder",
+                cx,
+                |_, cx| cx.defer(app_settings::open_themes_folder),
+            )
+            .into_any_element();
         let popup = self.popup(setting, "theme", current.to_owned(), options, cx);
+        let content = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(popup)
+            .child(folder);
         // Its own row, unlike a font's, so the label is the row's.
-        self.labelled(setting.label, popup).into_any_element()
+        self.labelled(setting.label, content).into_any_element()
     }
 
     /// A pop-up button for a setting that names a `noun` (a font or a

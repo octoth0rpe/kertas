@@ -2,7 +2,8 @@
 //!
 //! Editors often save by writing a new file and renaming it over the old
 //! one, so this watches both the file and its directory, and starts again
-//! after every change to follow the file that's there now.
+//! after every change to follow the file that's there now. A folder is
+//! watched the same way: the folder, its parent, and every file in it.
 
 use std::ffi::CString;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
@@ -69,16 +70,54 @@ impl Drop for Watch {
     }
 }
 
+/// The events that mean a file may have changed.
+const FILE_EVENTS: u32 = libc::NOTE_WRITE
+    | libc::NOTE_EXTEND
+    | libc::NOTE_ATTRIB
+    | libc::NOTE_DELETE
+    | libc::NOTE_RENAME;
+
 /// Reports whenever the file at `path` may have changed: written,
 /// replaced, created or deleted. Its directory must exist. Watching stops
 /// when the [`Watch`] is dropped.
 pub fn watch(path: PathBuf) -> Watch {
+    let directory = path.parent().unwrap_or(Path::new("/")).to_owned();
+    start(move || {
+        vec![
+            (directory.clone(), libc::NOTE_WRITE),
+            (path.clone(), FILE_EVENTS),
+        ]
+    })
+}
+
+/// Reports whenever a file in `folder` may have changed, or one was added
+/// or removed, or the folder itself was created or deleted. Its parent
+/// must exist. Watching stops when the [`Watch`] is dropped.
+pub fn watch_folder(folder: PathBuf) -> Watch {
+    let parent = folder.parent().unwrap_or(Path::new("/")).to_owned();
+    start(move || {
+        let mut watched = vec![
+            (parent.clone(), libc::NOTE_WRITE),
+            (
+                folder.clone(),
+                libc::NOTE_WRITE | libc::NOTE_DELETE | libc::NOTE_RENAME,
+            ),
+        ];
+        let files = std::fs::read_dir(&folder).into_iter().flatten().flatten();
+        watched.extend(files.map(|entry| (entry.path(), FILE_EVENTS)));
+        watched
+    })
+}
+
+/// Starts a thread reporting changes to the paths `watched` gives, with
+/// the events to watch each for. It's asked again after every change.
+fn start(watched: impl Fn() -> Vec<(PathBuf, u32)> + Send + 'static) -> Watch {
     let (changed, changes) = mpsc::unbounded();
     let queue = stop_queue().map(Arc::new);
     if let Some(queue) = queue.clone() {
         std::thread::Builder::new()
             .name("kertas-file-watch".into())
-            .spawn(move || watch_until_stopped(&path, queue.as_raw_fd(), &changed))
+            .spawn(move || watch_until_stopped(&watched, queue.as_raw_fd(), &changed))
             .ok();
     }
     Watch { changes, queue }
@@ -116,22 +155,18 @@ fn stop_queue() -> Option<OwnedFd> {
     (added == 0).then_some(queue)
 }
 
-/// Sends on `changed` after each change to `path`, until the [`STOP`]
-/// event arrives or the receiver is gone.
-fn watch_until_stopped(path: &Path, queue: i32, changed: &mpsc::UnboundedSender<()>) {
-    let directory = path.parent().unwrap_or(Path::new("/")).to_owned();
+/// Sends on `changed` after each change to the paths `watched` gives,
+/// until the [`STOP`] event arrives or the receiver is gone.
+fn watch_until_stopped(
+    watched: &dyn Fn() -> Vec<(PathBuf, u32)>,
+    queue: i32,
+    changed: &mpsc::UnboundedSender<()>,
+) {
     loop {
-        let watched = [
-            (open_for_events(&directory), libc::NOTE_WRITE),
-            (
-                open_for_events(path),
-                libc::NOTE_WRITE
-                    | libc::NOTE_EXTEND
-                    | libc::NOTE_ATTRIB
-                    | libc::NOTE_DELETE
-                    | libc::NOTE_RENAME,
-            ),
-        ];
+        let watched: Vec<_> = watched()
+            .into_iter()
+            .map(|(path, flags)| (open_for_events(&path), flags))
+            .collect();
         let changes: Vec<libc::kevent> = watched
             .iter()
             .filter_map(|&(fd, flags)| fd.map(|fd| vnode_event(fd, flags)))
@@ -229,6 +264,27 @@ mod tests {
         assert!(changed(&mut changes), "replaced");
         std::fs::write(&path, "d").unwrap();
         assert!(changed(&mut changes), "written after being replaced");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn reports_changes_in_a_folder() {
+        let dir = std::env::temp_dir().join(format!("kertas-folder-watch-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        let folder = dir.join("themes");
+        let mut changes = watch_folder(folder.clone());
+        std::thread::sleep(Duration::from_millis(100));
+
+        std::fs::create_dir(&folder).unwrap();
+        assert!(changed(&mut changes), "folder created");
+        let path = folder.join("Mine.toml");
+        std::fs::write(&path, "a").unwrap();
+        assert!(changed(&mut changes), "file added");
+        std::fs::write(&path, "b").unwrap();
+        assert!(changed(&mut changes), "file written");
+        std::fs::remove_file(&path).unwrap();
+        assert!(changed(&mut changes), "file removed");
         std::fs::remove_dir_all(&dir).ok();
     }
 

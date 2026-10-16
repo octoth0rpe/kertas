@@ -20,7 +20,12 @@
 //! Like the settings file, problems in it never stop Kertas: a missing or
 //! bad color, or a missing half, falls back to Kertas's colors and is
 //! reported with its line. Only a theme without a usable name is rejected.
+//!
+//! The user's own themes are theme files in a folder (see [`read_folder`]),
+//! listed with the built-in ones by [`combine`].
 
+use std::fmt;
+use std::path::Path;
 use std::sync::OnceLock;
 
 use toml_edit::{Document, Item, Table};
@@ -158,6 +163,116 @@ pub fn builtin() -> &'static [Theme] {
             .map(|text| parse(text).expect("built-in themes are valid").0)
             .collect()
     })
+}
+
+/// A problem in one of the user's theme files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileProblem {
+    /// The file's name, e.g. `Mine.toml`.
+    pub file: String,
+    pub problem: Problem,
+}
+
+impl fmt::Display for FileProblem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Theme file {}, {}", self.file, self.problem)
+    }
+}
+
+/// Reads the user's themes from the `.toml` files in `folder`, in file
+/// name order, with any problems in them. No folder means no themes. A
+/// theme called the same as one in an earlier file is left out.
+pub fn read_folder(folder: &Path) -> (Vec<Theme>, Vec<FileProblem>) {
+    let mut files: Vec<_> = match std::fs::read_dir(folder) {
+        Ok(entries) => entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "toml")
+            })
+            .filter(|path| path.is_file())
+            .collect(),
+        Err(_) => return (vec![], vec![]),
+    };
+    files.sort();
+    let mut themes: Vec<(Theme, String)> = Vec::new();
+    let mut problems = Vec::new();
+    for path in files {
+        let file = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        let mut report = |problem| {
+            problems.push(FileProblem {
+                file: file.clone(),
+                problem,
+            })
+        };
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(err) => {
+                report(Problem {
+                    line: None,
+                    message: format!("couldn't read it: {err}"),
+                });
+                continue;
+            }
+        };
+        match parse(&text) {
+            Ok((theme, reported)) => {
+                reported.into_iter().for_each(&mut report);
+                match themes
+                    .iter()
+                    .find(|(other, _)| other.name.eq_ignore_ascii_case(&theme.name))
+                {
+                    Some((_, earlier)) => report(Problem {
+                        line: None,
+                        message: format!(
+                            "{earlier} is also called \"{}\"; using that one",
+                            theme.name
+                        ),
+                    }),
+                    None => themes.push((theme, file.clone())),
+                }
+            }
+            Err(reported) => {
+                reported.into_iter().for_each(&mut report);
+            }
+        }
+    }
+    (
+        themes.into_iter().map(|(theme, _)| theme).collect(),
+        problems,
+    )
+}
+
+/// The themes to choose from: the built-in ones, each replaced by the
+/// user's theme of the same name if there is one, then the rest of the
+/// user's, by name.
+pub fn combine(builtin: &[Theme], user: Vec<Theme>) -> Vec<Theme> {
+    let mut user = user;
+    let mut themes: Vec<Theme> = builtin
+        .iter()
+        .map(|theme| {
+            match user
+                .iter()
+                .position(|mine| mine.name.eq_ignore_ascii_case(&theme.name))
+            {
+                // Spelled as the built-in one is, so settings naming it
+                // still match.
+                Some(index) => Theme {
+                    name: theme.name.clone(),
+                    ..user.remove(index)
+                },
+                None => theme.clone(),
+            }
+        })
+        .collect();
+    user.sort_by_key(|theme| theme.name.to_lowercase());
+    themes.extend(user);
+    themes
 }
 
 /// The name of the theme in `themes` called `name`, ignoring case, as
@@ -411,6 +526,60 @@ mod tests {
         assert_eq!(problems(&text), ["line 41: unknown color `dark.hue`"]);
         let text = format!("font = \"Charter\"\n{KERTAS}");
         assert_eq!(problems(&text), ["line 1: unknown key `font`"]);
+    }
+
+    #[test]
+    fn reads_the_users_themes() {
+        let folder =
+            std::env::temp_dir().join(format!("kertas-user-themes-{}", std::process::id()));
+        std::fs::remove_dir_all(&folder).ok();
+        assert_eq!(read_folder(&folder), (vec![], vec![]));
+        std::fs::create_dir_all(&folder).unwrap();
+        let light = KERTAS.split("[dark]").next().unwrap();
+        std::fs::write(folder.join("b.toml"), light.replace("Kertas", "Night")).unwrap();
+        std::fs::write(folder.join("a.toml"), KERTAS.replace("Kertas", "night")).unwrap();
+        std::fs::write(folder.join("c.toml"), "[light]\n").unwrap();
+        std::fs::write(folder.join("notes.txt"), "not a theme").unwrap();
+        let (themes, problems) = read_folder(&folder);
+        let names: Vec<_> = themes.iter().map(|theme| theme.name.as_str()).collect();
+        assert_eq!(names, ["night"]);
+        let problems: Vec<_> = problems.iter().map(ToString::to_string).collect();
+        assert_eq!(
+            problems,
+            [
+                "Theme file b.toml, `[dark]` is missing; using Kertas's dark colors",
+                "Theme file b.toml, a.toml is also called \"Night\"; using that one",
+                "Theme file c.toml, `name` is missing",
+            ]
+        );
+        std::fs::remove_dir_all(&folder).ok();
+    }
+
+    #[test]
+    fn user_themes_replace_builtin_ones() {
+        let mine = |name: &str| Theme {
+            name: name.into(),
+            light: Palette::BLACK,
+            dark: Palette::BLACK,
+        };
+        let themes = combine(
+            builtin(),
+            vec![mine("zebra"), mine("gruvbox"), mine("Apple")],
+        );
+        let names: Vec<_> = themes.iter().map(|theme| theme.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "Kertas",
+                "Solarized",
+                "Gruvbox",
+                "Catppuccin",
+                "Apple",
+                "zebra"
+            ]
+        );
+        assert_eq!(themes[2].light, Palette::BLACK);
+        assert_eq!(themes[1], builtin()[1]);
     }
 
     #[test]
