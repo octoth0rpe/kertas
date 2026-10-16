@@ -11,6 +11,7 @@ use kertas::blocks::BlockKind;
 use kertas::editor::{Motion, RevealTarget};
 use kertas::settings::TextWidth;
 
+use super::heights::Heights;
 use super::{
     Backspace, Delete, DeleteWordLeft, DeleteWordRight, DocumentView, IndentLines, IndentTab,
     InsertTab, LineBreak, MoveBlockDown, MoveBlockUp, MoveDocumentEnd, MoveDocumentStart, MoveDown,
@@ -291,12 +292,9 @@ impl DocumentView {
         };
         let caret_on_screen = open.editor.selection().is_some_and(|selection| {
             let index = open.editor.model().item_at(selection.head);
-            let viewport = open.list_state.viewport_bounds();
-            open.list_state
-                .bounds_for_item(index)
-                .is_some_and(|bounds| {
-                    bounds.top() < viewport.bottom() && bounds.bottom() > viewport.top()
-                })
+            Heights::measured(&open.list_state)
+                .on_screen(index)
+                .is_some()
         });
         let mut remeasured = false;
         self.loading_images

@@ -12,6 +12,7 @@ mod autosave;
 mod caret;
 mod disk;
 mod files;
+mod heights;
 mod input;
 mod render;
 mod scrollbar;
@@ -392,7 +393,7 @@ impl DocumentView {
         let items = editor.model().items.len() + editor.model().notes.len();
         let list_state = ListState::new(items, ListAlignment::Top, px(1000.));
         // Short documents are measured up front, so the scrollbar is exact.
-        let list_state = if items <= scrollbar::MEASURE_ALL_LIMIT {
+        let list_state = if items <= heights::MEASURE_ALL_LIMIT {
             list_state.measure_all()
         } else {
             list_state
@@ -560,12 +561,9 @@ impl DocumentView {
     #[cfg(debug_assertions)]
     pub fn row_on_screen(&self, index: usize) -> bool {
         self.open.as_ref().is_some_and(|open| {
-            let viewport = open.list_state.viewport_bounds();
-            open.list_state
-                .bounds_for_item(index)
-                .is_some_and(|bounds| {
-                    bounds.top() < viewport.bottom() && bounds.bottom() > viewport.top()
-                })
+            heights::Heights::measured(&open.list_state)
+                .on_screen(index)
+                .is_some()
         })
     }
 
