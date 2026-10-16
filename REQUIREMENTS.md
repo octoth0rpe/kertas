@@ -75,7 +75,7 @@ Deliberately **not** supported:
 | ID | Requirement | Priority |
 |----|-------------|----------|
 | A1 | Clean, readable default typography with a constrained line width. | MUST |
-| A2 | Light and dark themes, following the OS setting by default. | MUST |
+| A2 | Light and dark themes, following the OS setting by default. A color theme gives colors for both; Kertas has built-in themes, and users can add their own as TOML files in a `themes` folder next to the config file, applied live, replacing a built-in theme of the same name. Help → Themes documents every color. | MUST |
 | A3 | Adjustable font size / zoom. | SHOULD |
 | A4 | Optional outline / table of contents built from headings. | LATER |
 
@@ -119,7 +119,7 @@ Deliberately **not** supported:
 | Setting | Values | Default | Priority |
 |---------|--------|---------|----------|
 | Appearance | `light`, `dark`, `system` | `system` (A2) | MUST |
-| Theme | a theme's name | `Kertas` (A2) | MUST |
+| Theme | a built-in or user theme's name | `Kertas` (A2) | MUST |
 | Document layout | `tabs`, `windows` | `tabs` | MUST |
 | Font size / zoom | number | TBD | SHOULD |
 | Body font | font family | the system font | SHOULD |

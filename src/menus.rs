@@ -27,6 +27,7 @@ actions!(
         OpenHelp,
         OpenMarkdownSyntax,
         OpenKeyboardShortcuts,
+        OpenThemes,
         OpenLicenses,
         OpenAbout,
         OpenSettings,
@@ -90,6 +91,7 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &OpenKeyboardShortcuts, cx| {
         cx.defer(|cx| builtin::open(Builtin::KeyboardShortcuts, cx))
     });
+    cx.on_action(|_: &OpenThemes, cx| cx.defer(|cx| builtin::open(Builtin::Themes, cx)));
 
     refresh(cx);
     cx.observe_global::<AppSettings>(refresh).detach();
@@ -167,6 +169,7 @@ fn menus(settings: Settings, themes: &[Theme]) -> Vec<Menu> {
             MenuItem::action("Kertas Help", OpenHelp),
             MenuItem::action("Markdown Syntax", OpenMarkdownSyntax),
             MenuItem::action("Keyboard Shortcuts", OpenKeyboardShortcuts),
+            MenuItem::action("Themes", OpenThemes),
             MenuItem::separator(),
             MenuItem::action("Licenses", OpenLicenses),
         ]),
