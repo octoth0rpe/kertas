@@ -7,6 +7,9 @@ use gpui::{Context, ListOffset, Pixels, Window, point, px};
 use kertas::editor::{Motion, RevealTarget, Selection};
 use kertas::reveal::styled_source;
 
+/// How far ↑ and ↓ scroll with no caret, about as far as in Safari.
+const LINE_SCROLL: f32 = 40.;
+
 use crate::revealed_block::RevealedLayout;
 
 use super::{
@@ -234,6 +237,13 @@ impl DocumentView {
         extend: bool,
         cx: &mut Context<Self>,
     ) {
+        if !self.has_caret() {
+            match motion {
+                Motion::Document if !extend => self.scroll_to_end(forward, cx),
+                _ => self.place_caret_on_screen(cx),
+            }
+            return;
+        }
         let Some(open) = &mut self.open else {
             return;
         };
@@ -260,6 +270,14 @@ impl DocumentView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.has_caret() {
+            if extend {
+                self.place_caret_on_screen(cx);
+            } else {
+                self.scroll_lines(down, cx);
+            }
+            return;
+        }
         let Some(caret) = self.caret() else {
             return;
         };
@@ -352,6 +370,10 @@ impl DocumentView {
     }
 
     pub(super) fn move_to_line_edge(&mut self, end: bool, extend: bool, cx: &mut Context<Self>) {
+        if !self.has_caret() {
+            self.place_caret_on_screen(cx);
+            return;
+        }
         let Some(target) = self.line_edge(end).or(self.caret()) else {
             return;
         };
@@ -368,6 +390,44 @@ impl DocumentView {
         open.editor.break_group();
         let selection = open.editor.all();
         self.set_selection(selection, cx);
+    }
+
+    // With no caret, keys read the document, as in Preview or Safari (#99):
+    // ↑, ↓, ⌘↑ and ⌘↓ scroll, and keys that mean editing start at the
+    // first block on screen rather than wherever the caret last was.
+
+    /// Whether there's a caret: whether a block is being edited.
+    pub fn has_caret(&self) -> bool {
+        self.open
+            .as_ref()
+            .is_some_and(|open| open.editor.selection().is_some())
+    }
+
+    /// Scrolls a few lines, for ↑ and ↓ with no caret.
+    fn scroll_lines(&mut self, down: bool, cx: &mut Context<Self>) {
+        let Some(open) = &self.open else {
+            return;
+        };
+        let step = px(LINE_SCROLL);
+        open.list_state.scroll_by(if down { step } else { -step });
+        cx.notify();
+    }
+
+    /// Scrolls to the top or bottom, for ⌘↑ and ⌘↓ with no caret.
+    fn scroll_to_end(&mut self, end: bool, cx: &mut Context<Self>) {
+        let Some(open) = &self.open else {
+            return;
+        };
+        open.list_state.scroll_to(ListOffset {
+            item_ix: if end { open.list_state.item_count() } else { 0 },
+            offset_in_item: px(0.),
+        });
+        cx.notify();
+    }
+
+    /// Starts editing at the first block on screen, as Option-↓ does.
+    fn place_caret_on_screen(&mut self, cx: &mut Context<Self>) {
+        self.move_to_block(true, false, cx);
     }
 
     /// Moves the caret to the start of the next or previous block's text.
