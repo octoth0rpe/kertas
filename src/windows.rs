@@ -190,6 +190,19 @@ pub fn open_window(
 /// Opens `path`: switches to its window if it's already open, reuses the
 /// current window if it's empty, or opens a new tab.
 pub fn open_path(path: PathBuf, cx: &mut App) {
+    open_path_at(path, None, cx);
+}
+
+/// Opens `path` as [`open_path`] does, then scrolls to the heading named
+/// `anchor`, if there is one (`other.md#setup`).
+pub fn open_path_at(path: PathBuf, anchor: Option<String>, cx: &mut App) {
+    let go_to_anchor = move |view: &mut DocumentView, cx: &mut Context<DocumentView>| {
+        if let Some(anchor) = &anchor
+            && view.document_path().is_some()
+        {
+            view.go_to_anchor(anchor, cx);
+        }
+    };
     let windows: Vec<WindowHandle<DocumentView>> = cx
         .windows()
         .into_iter()
@@ -205,7 +218,10 @@ pub fn open_path(path: PathBuf, cx: &mut App) {
     });
     if let Some(window) = already_open {
         window
-            .update(cx, |_, window, _| window.activate_window())
+            .update(cx, |view, window, cx| {
+                window.activate_window();
+                go_to_anchor(view, cx);
+            })
             .ok();
         return;
     }
@@ -222,11 +238,17 @@ pub fn open_path(path: PathBuf, cx: &mut App) {
     match pristine_window {
         Some(window) => {
             window
-                .update(cx, |view, window, cx| view.open_path(path, window, cx))
+                .update(cx, |view, window, cx| {
+                    view.open_path(path, window, cx);
+                    go_to_anchor(view, cx);
+                })
                 .ok();
         }
         None => {
-            open_window(cx, |view, window, cx| view.open_path(path, window, cx));
+            open_window(cx, |view, window, cx| {
+                view.open_path(path, window, cx);
+                go_to_anchor(view, cx);
+            });
         }
     }
 }

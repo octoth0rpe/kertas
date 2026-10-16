@@ -1,5 +1,6 @@
 //! Core of the Kertas Markdown editor.
 
+pub mod anchors;
 pub mod autolinks;
 pub mod blocks;
 pub mod buffer;

@@ -76,6 +76,7 @@ run settings-window showcase.md
 run help showcase.md
 run reveal showcase.md
 run clicks clicks.md
+run anchors anchors.md
 run a11y a11y.md
 run print showcase.md KERTAS_PRINT_PDF="$work/print/out.pdf"
 run disk showcase.md
