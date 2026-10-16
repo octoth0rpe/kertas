@@ -365,13 +365,9 @@ impl DocumentView {
             .on_action(cx.listener(Self::unreveal))
             .on_action(cx.listener(|this, _: &PageUp, _, cx| this.scroll_page(false, cx)))
             .on_action(cx.listener(|this, _: &PageDown, _, cx| this.scroll_page(true, cx)))
-            .on_mouse_move(cx.listener(Self::scrollbar_mouse_move))
             .on_mouse_up(
                 gpui::MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    this.end_scrollbar_drag(cx);
-                    this.end_drag();
-                }),
+                cx.listener(|this, _, _, _| this.end_drag()),
             )
             .on_action(cx.listener(|this, _: &MoveLeft, _, cx| {
                 this.move_by(Motion::Grapheme, false, false, cx)

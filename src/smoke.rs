@@ -1259,6 +1259,77 @@ fn smoke_scrollbar_drag(window: WindowHandle<DocumentView>, cx: &mut App) {
             &format!("after the drag the thumb stays at the bottom ({end:?})"),
             end.is_some_and(|(top, height, track)| (top + height - track).abs() < 1.),
         );
+
+        // With the mouse: press on the thumb, then drag up with the pointer
+        // off the window's right edge, and let go out there. The drag
+        // follows the pointer wherever it is, and ends.
+        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
+        let bar = window
+            .read_with(cx, |view, _| view.scrollbar_track())
+            .ok()
+            .flatten();
+        if let (Some(bar), Some((top, height, _))) = (bar, end) {
+            let send = |cx: &mut AsyncApp, event: gpui::PlatformInput| {
+                gpui::AnyWindowHandle::from(window)
+                    .update(cx, |_, window, cx| {
+                        window.dispatch_event(event, cx);
+                    })
+                    .ok();
+            };
+            let on_thumb = gpui::point(bar.center().x, bar.top() + gpui::px(top + height / 2.));
+            send(
+                cx,
+                gpui::PlatformInput::MouseMove(MouseMoveEvent {
+                    position: on_thumb,
+                    pressed_button: None,
+                    modifiers: Modifiers::default(),
+                }),
+            );
+            pause(cx, 2).await;
+            send(
+                cx,
+                gpui::PlatformInput::MouseDown(MouseDownEvent {
+                    button: MouseButton::Left,
+                    position: on_thumb,
+                    modifiers: Modifiers::default(),
+                    click_count: 1,
+                    first_mouse: false,
+                }),
+            );
+            pause(cx, 2).await;
+            let before = offset(cx);
+            let outside = gpui::point(bar.right() + gpui::px(40.), bar.center().y);
+            send(
+                cx,
+                gpui::PlatformInput::MouseMove(MouseMoveEvent {
+                    position: outside,
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Modifiers::default(),
+                }),
+            );
+            pause(cx, 3).await;
+            let after = offset(cx);
+            checks.check(
+                &format!("dragging outside the window still scrolls ({before} -> {after})"),
+                after < before - 100.,
+            );
+            send(
+                cx,
+                gpui::PlatformInput::MouseUp(MouseUpEvent {
+                    button: MouseButton::Left,
+                    position: outside,
+                    modifiers: Modifiers::default(),
+                    click_count: 1,
+                }),
+            );
+            pause(cx, 3).await;
+            let dragging = window
+                .read_with(cx, |view, _| view.scrollbar_dragging())
+                .unwrap_or(true);
+            checks.check("letting go outside the window ends the drag", !dragging);
+        } else {
+            checks.check("the thumb can be found to drag with the mouse", false);
+        }
         checks.finish(cx);
     })
     .detach();

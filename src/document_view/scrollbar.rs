@@ -12,8 +12,9 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, Bounds, Context, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Role,
-    ScrollWheelEvent, Window, canvas, div, fill, point, prelude::*, px, size,
+    AnyElement, Bounds, Context, DispatchPhase, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Role, ScrollWheelEvent, Window, canvas, div, fill, point, prelude::*, px,
+    size,
 };
 use kertas::scroll_estimate::ScrollEstimate;
 
@@ -187,7 +188,7 @@ impl DocumentView {
     }
 
     /// Follows the pointer while the thumb is dragged.
-    pub(super) fn scrollbar_mouse_move(
+    fn scrollbar_mouse_move(
         &mut self,
         event: &MouseMoveEvent,
         window: &mut Window,
@@ -254,6 +255,8 @@ impl DocumentView {
                 0.35
             });
         let list_state = open.list_state.clone();
+        let dragging = open.scrollbar_drag.is_some();
+        let view = cx.entity().downgrade();
         div()
             .id("scrollbar")
             .role(Role::ScrollBar)
@@ -274,6 +277,34 @@ impl DocumentView {
                 canvas(
                     |_, _, _| {},
                     move |_, (), window, _| {
+                        // While the thumb is dragged, follow the pointer
+                        // wherever it goes, even off the window (which an
+                        // element's own mouse listeners don't hear), and
+                        // end the drag wherever the button goes up.
+                        if dragging {
+                            let moved = view.clone();
+                            window.on_mouse_event(
+                                move |event: &MouseMoveEvent, phase, window, cx| {
+                                    if phase == DispatchPhase::Capture {
+                                        moved
+                                            .update(cx, |this, cx| {
+                                                this.scrollbar_mouse_move(event, window, cx)
+                                            })
+                                            .ok();
+                                    }
+                                },
+                            );
+                            let released = view.clone();
+                            window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
+                                if phase == DispatchPhase::Capture
+                                    && event.button == MouseButton::Left
+                                {
+                                    released
+                                        .update(cx, |this, cx| this.end_scrollbar_drag(cx))
+                                        .ok();
+                                }
+                            });
+                        }
                         let Some(thumb) = placement.thumb() else {
                             return;
                         };
@@ -352,6 +383,14 @@ impl DocumentView {
     pub fn drag_thumb_to(&mut self, top: f32, window: &Window, cx: &mut Context<Self>) {
         self.drag_thumb(px(top), window);
         cx.notify();
+    }
+
+    /// Whether the thumb is being dragged, for the smoke test.
+    #[cfg(debug_assertions)]
+    pub fn scrollbar_dragging(&self) -> bool {
+        self.open
+            .as_ref()
+            .is_some_and(|open| open.scrollbar_drag.is_some())
     }
 
     /// Lets go of the thumb, for the smoke test.
