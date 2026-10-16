@@ -7,7 +7,8 @@ starts a new line.
 
 ## Second-level heading
 
-Reference links work too: see [the docs][docs].
+Reference links work too: see [the docs][docs]. So do bare URLs like
+https://example.com/bare, www.example.com and hello@example.com.
 
 ### Third-level heading
 

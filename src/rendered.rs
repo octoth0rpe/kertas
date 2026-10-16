@@ -351,7 +351,7 @@ impl TreeBuilder {
             }
             Frame::CodeBlock { language, code } => self.push_block(RenderedBlock::CodeBlock {
                 language,
-                code: code.finish(),
+                code: code.finish_code(),
             }),
             Frame::Html(html) => self.push_block(RenderedBlock::Html(html)),
             Frame::Table { table, .. } => self.push_block(RenderedBlock::Table(table)),

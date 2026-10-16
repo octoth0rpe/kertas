@@ -100,6 +100,14 @@ Each example shows the Markdown, then how it looks.
 
 [Markdown](https://commonmark.org)
 
+Web addresses and email addresses become links by themselves, as on GitHub:
+
+```markdown
+https://commonmark.org
+```
+
+https://commonmark.org
+
 ### Lists
 
 ```markdown
