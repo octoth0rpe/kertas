@@ -10,6 +10,7 @@
 use std::ops::Range;
 
 use crate::theme::Theme;
+use kertas::links::ImageLocation;
 use kertas::model::Model;
 use kertas::print_layout::{Alignment, Frame, PrintLayout};
 use kertas::rendered::heading_scale;
@@ -27,7 +28,7 @@ use objc2_app_kit::{
 };
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::{
-    NSArray, NSCopying, NSMutableAttributedString, NSNumber, NSRange, NSRectEdge, NSString,
+    NSArray, NSCopying, NSData, NSMutableAttributedString, NSNumber, NSRange, NSRectEdge, NSString,
 };
 
 /// Body text size, in points.
@@ -38,16 +39,18 @@ const CODE: f64 = 9.5;
 const MARGIN: f64 = 54.;
 
 /// Shows the print panel for `model` as a sheet on `window`, laid out with
-/// `settings`.
+/// `settings`. Web images print if `web_images` is set and they've been
+/// loaded (#97).
 pub fn print(
     model: &Model,
     document: Option<&std::path::Path>,
+    web_images: bool,
     settings: &Settings,
     title: &str,
     window: &NSWindow,
     mtm: MainThreadMarker,
 ) {
-    let operation = operation(model, document, settings, mtm);
+    let operation = operation(model, document, web_images, settings, mtm);
     operation.setJobTitle(Some(&NSString::from_str(title)));
     // SAFETY: no delegate or callback, so nothing to keep alive.
     unsafe {
@@ -73,7 +76,7 @@ pub fn save_pdf(
     use objc2_app_kit::{NSPrintJobSavingURL, NSPrintSaveJob};
     use objc2_foundation::NSURL;
 
-    let operation = operation(model, document, settings, mtm);
+    let operation = operation(model, document, false, settings, mtm);
     let info = operation.printInfo();
     // SAFETY: `NSPrintSaveJob` is an AppKit constant, set before any code
     // runs.
@@ -93,6 +96,7 @@ pub fn save_pdf(
 fn operation(
     model: &Model,
     document: Option<&std::path::Path>,
+    web_images: bool,
     settings: &Settings,
     mtm: MainThreadMarker,
 ) -> Retained<NSPrintOperation> {
@@ -108,7 +112,18 @@ fn operation(
     // TextKit 1, so tables and code boxes print.
     let view = NSTextView::initUsingTextLayoutManager(mtm.alloc(), false);
     view.setFrameSize(CGSize::new(paper.width - 2. * MARGIN, paper.height));
-    let layout = PrintLayout::new(model, document, settings.tab_width, settings.list_indent);
+    let web_images = if web_images {
+        crate::web_images::fetched_in(model)
+    } else {
+        Default::default()
+    };
+    let layout = PrintLayout::new(
+        model,
+        document,
+        web_images,
+        settings.tab_width,
+        settings.list_indent,
+    );
     let text = attributed(&layout, settings, paper.width - 2. * MARGIN, mtm);
     // SAFETY: the view was just created with a text storage.
     unsafe {
@@ -366,10 +381,16 @@ fn attributed(
 
     // Images at their natural size, shrunk to fit the page.
     for image in &layout.images {
-        let Some(picture) = NSImage::initWithContentsOfFile(
-            NSImage::alloc(),
-            &NSString::from_str(&image.path.to_string_lossy()),
-        ) else {
+        let picture = match &image.location {
+            ImageLocation::File(path) => NSImage::initWithContentsOfFile(
+                NSImage::alloc(),
+                &NSString::from_str(&path.to_string_lossy()),
+            ),
+            ImageLocation::Web(url) => crate::web_images::fetched_image(url).and_then(|bytes| {
+                NSImage::initWithData(NSImage::alloc(), &NSData::with_bytes(&bytes))
+            }),
+        };
+        let Some(picture) = picture else {
             continue;
         };
         let size = picture.size();

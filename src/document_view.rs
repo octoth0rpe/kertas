@@ -269,6 +269,17 @@ enum LineGoal {
     Last,
 }
 
+/// Whether a document's web images are loaded (#97).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WebImages {
+    /// Not yet: the bar asks, if the document has any.
+    Ask,
+    /// The user closed the bar, so they aren't.
+    Declined,
+    /// The user chose Load Images.
+    Load,
+}
+
 pub struct DocumentView {
     focus_handle: FocusHandle,
     open: Option<OpenDocument>,
@@ -278,6 +289,9 @@ pub struct DocumentView {
     /// Images still loading in the document, whose blocks need measuring
     /// again once they arrive.
     loading_images: crate::rendered_block::LoadingImages,
+    /// Whether the document's web images are loaded (#97). It's asked
+    /// each time a document is opened, and never remembered.
+    web_images: WebImages,
     /// The folder shown after the file's name in the title, if another
     /// open file has the same name.
     title_hint: Option<String>,
@@ -367,6 +381,7 @@ impl DocumentView {
             builtin: None,
             title_hint: None,
             loading_images: Rc::default(),
+            web_images: WebImages::Ask,
             theme: Theme::current(window, cx),
             text_settings: TextSettings::from(&app_settings::get(cx)),
             caret_visible: true,
@@ -393,6 +408,7 @@ impl DocumentView {
     fn load(&mut self, document: Document, window: &mut Window, cx: &mut Context<Self>) {
         // Built-in documents are view-only.
         let editor = Editor::new(document, self.builtin.is_some());
+        self.web_images = WebImages::Ask;
         // The footnotes follow the items (#90).
         let items = editor.model().items.len() + editor.model().notes.len();
         let list_state = ListState::new(items, ListAlignment::Top, px(1000.));

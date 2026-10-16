@@ -28,7 +28,7 @@ objc2-app-kit = { version = "0.3", default-features = false, features = ["std", 
 # Printing (src/print.rs) lays text out in points.
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes"] }
 objc2-uniform-type-identifiers = { version = "0.3", default-features = false, features = ["std", "UTType"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSArray", "NSAttributedString", "NSBundle", "NSData", "NSDictionary", "NSDistributedNotificationCenter", "NSError", "NSGeometry", "NSNotification", "NSOperation", "NSRange", "NSString", "NSURL", "NSUserDefaults", "NSValue"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSArray", "NSAttributedString", "NSBundle", "NSData", "NSDictionary", "NSDistributedNotificationCenter", "NSError", "NSGeometry", "NSNotification", "NSOperation", "NSRange", "NSString", "NSURL", "NSURLResponse", "NSURLSession", "NSUserDefaults", "NSValue"] }
 block2 = "0.6"
 libc = "0.2"
 raw-window-handle = "0.6"

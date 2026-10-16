@@ -32,6 +32,7 @@ impl DocumentView {
             crate::print::print(
                 open.editor.model(),
                 open.editor.document().path(),
+                self.web_images == super::WebImages::Load,
                 &settings,
                 &title,
                 &ns_window,

@@ -13,7 +13,8 @@
 //! - `bench`: times 500 inserts in the middle of the document.
 //! - `tabs`, `settings`, `settings-window`, `help`, `reveal`, `clicks`,
 //!   `anchors`, `footnotes`, `images`, `caret`, `reading`, `scrollbar`,
-//!   `scrollbar-drag`, `a11y`, `print`, `disk`, `autosave`, `quit`: see
+//!   `scrollbar-drag`, `a11y`, `print`, `disk`, `autosave`, `quit`,
+//!   `web-images`: see
 //!   each function.
 
 use std::cell::Cell;
@@ -48,6 +49,7 @@ pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
         "anchors" => smoke_anchors(window, cx),
         "footnotes" => smoke_footnotes(window, cx),
         "images" => smoke_images(window, cx),
+        "web-images" => smoke_web_images(window, cx),
         "caret" => smoke_caret(window, cx),
         "reading" => smoke_reading(window, cx),
         "scrollbar" => smoke_scrollbar(window, cx),
@@ -1651,6 +1653,144 @@ fn smoke_images(window: WindowHandle<DocumentView>, cx: &mut App) {
                 tree.contains("\"Image\"") && tree.contains(label),
             );
         }
+        checks.finish(cx);
+    })
+    .detach();
+}
+
+/// `KERTAS_SMOKE=web-images`, on `showcase.md` with its `images` folder
+/// (#97): a document with a web image, served from a local server, asks
+/// before loading it; Load Images loads it and the bar goes away;
+/// reopening the document asks again, and closing the bar leaves the
+/// image unloaded. A document with no web images doesn't ask.
+fn smoke_web_images(window: WindowHandle<DocumentView>, cx: &mut App) {
+    use std::io::{Read, Write};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    cx.spawn(async move |cx| {
+        let mut checks = Checks::default();
+        pause(cx, 10).await;
+        checks.check(
+            "a document with no web images doesn't ask",
+            window
+                .read_with(cx, |view, _| !view.web_images_asked())
+                .unwrap_or(false),
+        );
+        let Some(folder) = window
+            .read_with(cx, |view, _| {
+                view.document_path()
+                    .and_then(Path::parent)
+                    .map(Path::to_owned)
+            })
+            .ok()
+            .flatten()
+        else {
+            checks.check("the document has a file", false);
+            return checks.finish(cx);
+        };
+        // A web server with one image, counting the requests for it.
+        let png = std::fs::read(folder.join("images/gradient.png")).unwrap_or_default();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("local server");
+        let port = listener.local_addr().expect("server address").port();
+        let requests = Arc::new(AtomicUsize::new(0));
+        let served = requests.clone();
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let mut request = Vec::new();
+                let mut buffer = [0; 1024];
+                while !request.ends_with(b"\r\n\r\n") {
+                    match stream.read(&mut buffer) {
+                        Ok(0) | Err(_) => break,
+                        Ok(count) => request.extend_from_slice(&buffer[..count]),
+                    }
+                }
+                served.fetch_add(1, Ordering::SeqCst);
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n",
+                    png.len()
+                );
+                stream.write_all(header.as_bytes()).ok();
+                stream.write_all(&png).ok();
+            }
+        });
+        let url = format!("http://127.0.0.1:{port}/gradient.png");
+        let web = folder.join("web.md");
+        std::fs::write(&web, format!("# Web\n\n![A web gradient]({url})\n")).ok();
+        let open = |cx: &mut AsyncApp| {
+            window
+                .update(cx, |view, window, cx| {
+                    view.open_path(web.clone(), window, cx)
+                })
+                .ok();
+        };
+        let asked = |cx: &mut AsyncApp| {
+            window
+                .read_with(cx, |view, _| view.web_images_asked())
+                .unwrap_or(false)
+        };
+
+        open(cx);
+        checks.check("the bar asks", wait_until(cx, |cx| asked(cx)).await);
+        let tree = a11y_tree(window.into(), cx).await;
+        checks.check(
+            "VoiceOver reads the bar and its buttons",
+            [
+                "This document has images from the web.",
+                "Load Images",
+                "Don't load images",
+            ]
+            .iter()
+            .all(|label| tree.contains(label)),
+        );
+        pause(cx, 10).await;
+        checks.check(
+            "nothing is fetched before Load Images",
+            requests.load(Ordering::SeqCst) == 0,
+        );
+
+        window
+            .update(cx, |view, window, cx| {
+                view.answer_web_images_bar(true, window, cx)
+            })
+            .ok();
+        checks.check("Load Images closes the bar", !asked(cx));
+        let resource = gpui::Resource::Uri(url.clone().into());
+        let mut loaded = None;
+        wait_until(cx, |cx| {
+            loaded = cx.update(|cx| cx.fetch_asset::<gpui::ImgResourceLoader>(&resource));
+            loaded.is_some()
+        })
+        .await;
+        let size = match &loaded {
+            Some(Ok(image)) => {
+                let (width, height) = crate::rendered_block::natural_size(image, &url);
+                Some((width as i32, height as i32))
+            }
+            _ => None,
+        };
+        checks.check(
+            &format!("the web image loads ({size:?})"),
+            size == Some((480, 160)) && requests.load(Ordering::SeqCst) == 1,
+        );
+        checks.check(
+            "the fetched image is kept for printing",
+            crate::web_images::fetched_image(&url).is_some(),
+        );
+
+        open(cx);
+        checks.check(
+            "reopening the document asks again",
+            wait_until(cx, |cx| asked(cx)).await,
+        );
+        window
+            .update(cx, |view, window, cx| {
+                view.answer_web_images_bar(false, window, cx)
+            })
+            .ok();
+        checks.check("closing the bar closes it", !asked(cx));
+        std::fs::remove_file(&web).ok();
         checks.finish(cx);
     })
     .detach();

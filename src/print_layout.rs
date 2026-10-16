@@ -7,15 +7,17 @@
 //! and HTML blocks, are U+2028 (line separator), so each block stays one
 //! paragraph.
 
+use std::collections::HashSet;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
+use crate::html_tags;
 use crate::inline::InlineText;
+use crate::links::{self, ImageLocation};
 use crate::model::Model;
 use crate::rendered::{AlertKind, ColumnAlignment, RenderedBlock};
 use crate::settings::ListIndent;
 use crate::tabs::expand;
-use crate::{html_tags, links};
 
 /// A line break within a paragraph.
 pub const LINE_SEPARATOR: char = '\u{2028}';
@@ -42,6 +44,9 @@ pub struct PrintLayout {
     pub images: Vec<PrintImage>,
     /// The document's file, which images' relative paths start from.
     document: Option<PathBuf>,
+    /// The web images that have been loaded, which print. Others print
+    /// their alt text, as on screen (#97).
+    web_images: HashSet<String>,
     /// How many spaces a tab in code is printed as.
     tab_width: u32,
     /// How far each list level is indented, in points.
@@ -115,7 +120,7 @@ pub enum Frame {
 pub struct PrintImage {
     /// The byte range of its U+FFFC in `PrintLayout::text`.
     pub range: Range<usize>,
-    pub path: PathBuf,
+    pub location: ImageLocation,
 }
 
 /// What an image is replaced with in the text.
@@ -130,15 +135,17 @@ impl PrintLayout {
     /// Lays out every block in `model` for printing, with each tab in
     /// code shown as `tab_width` spaces, and lists indented by
     /// `list_indent`. Images' relative paths start from `document`'s
-    /// folder.
+    /// folder. Of the web images, only `web_images` print.
     pub fn new(
         model: &Model,
         document: Option<&Path>,
+        web_images: HashSet<String>,
         tab_width: u32,
         list_indent: ListIndent,
     ) -> Self {
         let mut layout = Self {
             document: document.map(Path::to_owned),
+            web_images,
             tab_width,
             list_indent: INDENT * f64::from(list_indent.scale()),
             ..Self::default()
@@ -227,20 +234,24 @@ impl PrintLayout {
     }
 
     /// Text with images: the text between them, and each image, or its alt
-    /// text if its file can't be found.
+    /// text if its file can't be found or it's from the web and hasn't
+    /// been loaded.
     fn inline_with_images(&mut self, text: &InlineText, base: RunStyle) {
         let mut position = 0;
         for image in &text.images {
             self.inline(&text.slice(position..image.display.start), base);
-            let path = links::image_path(&image.destination, self.document.as_deref())
-                .filter(|path| path.is_file());
-            match path {
-                Some(path) => {
+            let location = links::image_location(&image.destination, self.document.as_deref())
+                .filter(|location| match location {
+                    ImageLocation::File(path) => path.is_file(),
+                    ImageLocation::Web(url) => self.web_images.contains(url),
+                });
+            match location {
+                Some(location) => {
                     let start = self.text.len();
                     self.push(&OBJECT_REPLACEMENT.to_string(), base);
                     self.images.push(PrintImage {
                         range: start..self.text.len(),
-                        path,
+                        location,
                     });
                 }
                 None => {
@@ -445,7 +456,13 @@ mod tests {
     use super::*;
 
     fn layout(text: &str) -> PrintLayout {
-        PrintLayout::new(&Model::new(text), None, 4, ListIndent::Standard)
+        PrintLayout::new(
+            &Model::new(text),
+            None,
+            HashSet::new(),
+            4,
+            ListIndent::Standard,
+        )
     }
 
     /// The text of each paragraph, without its newline.
@@ -519,17 +536,29 @@ mod tests {
         std::fs::write(folder.join("pic.png"), b"not really a png").unwrap();
         let document = folder.join("doc.md");
         let layout = PrintLayout::new(
-            &Model::new("A ![pic](pic.png) and ![gone](gone.png).\n"),
+            &Model::new(
+                "A ![pic](pic.png) and ![gone](gone.png), ![web](https://a.org/w.png) \
+                 ![loaded](https://a.org/l.png).\n",
+            ),
             Some(&document),
+            HashSet::from(["https://a.org/l.png".to_owned()]),
             4,
             ListIndent::Standard,
         );
         std::fs::remove_dir_all(&folder).ok();
-        assert_eq!(paragraphs(&layout), ["A \u{FFFC} and gone."]);
-        assert_eq!(layout.images.len(), 1);
+        assert_eq!(paragraphs(&layout), ["A \u{FFFC} and gone, web \u{FFFC}."]);
+        assert_eq!(layout.images.len(), 2);
         assert_eq!(&layout.text[layout.images[0].range.clone()], "\u{FFFC}");
-        assert_eq!(layout.images[0].path, folder.join("pic.png"));
+        assert_eq!(
+            layout.images[0].location,
+            ImageLocation::File(folder.join("pic.png"))
+        );
+        assert_eq!(
+            layout.images[1].location,
+            ImageLocation::Web("https://a.org/l.png".to_owned())
+        );
         assert!(style_of(&layout, "gone").muted);
+        assert!(style_of(&layout, "web").muted);
     }
 
     #[test]
@@ -558,7 +587,7 @@ mod tests {
     fn list_indent_scales_lists_but_not_quotes() {
         let text = "- a\n  - b\n\n> c\n";
         let indents = |indent| {
-            PrintLayout::new(&Model::new(text), None, 4, indent)
+            PrintLayout::new(&Model::new(text), None, HashSet::new(), 4, indent)
                 .paragraphs
                 .iter()
                 .map(|paragraph| paragraph.indent)
@@ -574,6 +603,7 @@ mod tests {
         let layout = PrintLayout::new(
             &Model::new("```\n\tx\n```\n"),
             None,
+            HashSet::new(),
             2,
             ListIndent::Standard,
         );
