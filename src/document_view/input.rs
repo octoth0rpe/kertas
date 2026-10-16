@@ -36,8 +36,7 @@ impl DocumentView {
         let Some(open) = &mut self.open else {
             return;
         };
-        open.list_state
-            .splice(change.splice.old, change.splice.new_count);
+        open.splice(&change.splice);
         // The revealed items' indices and sources may have changed.
         open.revealed.clear();
         *open.revealed_layout.borrow_mut() = None;
@@ -69,7 +68,7 @@ impl DocumentView {
         let Some(splice) = open.editor.toggle_task(marker) else {
             return;
         };
-        open.list_state.splice(splice.old, splice.new_count);
+        open.splice(&splice);
         super::caret::reveal(open);
         self.schedule_autosave(cx);
         cx.notify();

@@ -54,7 +54,8 @@ pub fn styled_source(source: &str, kind: BlockKind, definitions: &Definitions) -
         BlockKind::Paragraph
         | BlockKind::List { .. }
         | BlockKind::BlockQuote
-        | BlockKind::ThematicBreak => RevealFont::Prose { heading: None },
+        | BlockKind::ThematicBreak
+        | BlockKind::FootnoteDefinition => RevealFont::Prose { heading: None },
         BlockKind::CodeBlock { .. }
         | BlockKind::Table
         | BlockKind::HtmlBlock
@@ -96,7 +97,9 @@ fn collect_segments(block: &RenderedBlock, out: &mut Vec<SourceSpan>) {
                 }
             }
         }
-        RenderedBlock::BlockQuote(children) | RenderedBlock::Alert { children, .. } => {
+        RenderedBlock::BlockQuote(children)
+        | RenderedBlock::Alert { children, .. }
+        | RenderedBlock::FootnoteDefinition { children, .. } => {
             for child in children {
                 collect_segments(child, out);
             }

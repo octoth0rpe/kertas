@@ -56,6 +56,13 @@ pub enum RenderedBlock {
     /// A block that isn't rendered, shown as its source text: front matter
     /// and link reference definitions.
     Raw(String),
+    /// A footnote's text (`[^label]: …`). It's drawn with the other notes
+    /// at the end of the document, not where it is (#90).
+    FootnoteDefinition {
+        /// The label, as written.
+        label: String,
+        children: Vec<RenderedBlock>,
+    },
 }
 
 /// Which GitHub alert a blockquote is.
@@ -149,8 +156,9 @@ pub(crate) fn render_blocks(text: &str, blocks: &Blocks) -> Vec<RenderedBlock> {
 /// Renders a single top-level block from its source. `definitions` are the
 /// document's link reference definitions, so reference links resolve.
 pub fn render_block(source: &str, definitions: &Definitions) -> Option<RenderedBlock> {
-    let mut builder = TreeBuilder::default();
-    for (event, range) in definitions.parse(source) {
+    let mut builder = TreeBuilder::new(definitions);
+    let text = definitions.prepare(source);
+    for (event, range) in definitions.parse(&text, source.len()) {
         builder.handle(event, range);
         // Stop once the block is complete. Don't cut off by source
         // position: the parser can place events just past the block's
@@ -190,22 +198,25 @@ enum Frame {
         row: Vec<InlineText>,
     },
     Cell(InlineBuilder),
+    /// A footnote's text, and its label.
+    Footnote(String, Vec<RenderedBlock>),
 }
 
 #[derive(Debug)]
-struct TreeBuilder {
+struct TreeBuilder<'a> {
     stack: Vec<Frame>,
+    /// For footnotes' numbers.
+    definitions: &'a Definitions,
 }
 
-impl Default for TreeBuilder {
-    fn default() -> Self {
+impl<'a> TreeBuilder<'a> {
+    fn new(definitions: &'a Definitions) -> Self {
         Self {
             stack: vec![Frame::Root(Vec::new())],
+            definitions,
         }
     }
-}
 
-impl TreeBuilder {
     fn handle(&mut self, event: Event, range: std::ops::Range<usize>) {
         // Inline events go to the innermost inline container.
         match self.stack.last_mut() {
@@ -215,6 +226,12 @@ impl TreeBuilder {
                 | Frame::Cell(inline)
                 | Frame::Item { inline, .. },
             ) => {
+                if let Event::FootnoteReference(label) = &event {
+                    if let Some(number) = self.definitions.footnote_number(label) {
+                        inline.footnote_reference(label, number, range);
+                    }
+                    return;
+                }
                 if inline.handle(&event, range.clone()) {
                     return;
                 }
@@ -286,6 +303,7 @@ impl TreeBuilder {
                 row: Vec::new(),
             },
             Tag::TableCell => Frame::Cell(InlineBuilder::default()),
+            Tag::FootnoteDefinition(label) => Frame::Footnote(label.to_string(), Vec::new()),
             // Table heads and rows are tracked in the table frame; other tags
             // are inline (handled above) or extensions Kertas doesn't enable.
             _ => return,
@@ -317,7 +335,8 @@ impl TreeBuilder {
             | TagEnd::CodeBlock
             | TagEnd::HtmlBlock
             | TagEnd::Table
-            | TagEnd::TableCell => {}
+            | TagEnd::TableCell
+            | TagEnd::FootnoteDefinition => {}
             _ => return,
         }
 
@@ -360,6 +379,9 @@ impl TreeBuilder {
                     row.push(inline.finish());
                 }
             }
+            Frame::Footnote(label, children) => {
+                self.push_block(RenderedBlock::FootnoteDefinition { label, children })
+            }
             Frame::Root(_) => unreachable!("root frame is never closed"),
         }
     }
@@ -368,7 +390,10 @@ impl TreeBuilder {
     fn push_block(&mut self, block: RenderedBlock) {
         self.flush_item_text();
         if let Some(
-            Frame::Root(children) | Frame::BlockQuote(_, children) | Frame::Item { children, .. },
+            Frame::Root(children)
+            | Frame::BlockQuote(_, children)
+            | Frame::Item { children, .. }
+            | Frame::Footnote(_, children),
         ) = self.stack.last_mut()
         {
             children.push(block);
@@ -487,6 +512,10 @@ mod tests {
             }
             RenderedBlock::Html(html) => format!("html({html:?})"),
             RenderedBlock::Raw(source) => format!("raw({source})"),
+            RenderedBlock::FootnoteDefinition { label, children } => {
+                let children: Vec<String> = children.iter().map(describe).collect();
+                format!("note:{label}[{}]", children.join(" "))
+            }
         }
     }
 
@@ -814,5 +843,45 @@ mod tests {
             panic!("{blocks:?}");
         };
         assert_eq!(text.text, "Para Heading");
+    }
+
+    #[test]
+    fn footnote_definitions_keep_their_blocks() {
+        assert_renders(
+            "Text[^n].\n\n[^n]: First.\n\n    - item\n",
+            &["p(Text¹.)", "note:n[p(First.) ul[p(item)]]"],
+        );
+    }
+
+    #[test]
+    fn footnote_references_inside_lists_quotes_and_tables() {
+        assert_renders(
+            "- a[^x]\n\n> b[^y]\n\n| c[^x] |\n|---|\n\n[^x]: X.\n\n[^y]: Y.\n",
+            &[
+                "ul[p(a¹)]",
+                "quote[p(b²)]",
+                "table[c¹ / ]",
+                "note:x[p(X.)]",
+                "note:y[p(Y.)]",
+            ],
+        );
+    }
+
+    #[test]
+    fn references_without_a_definition_stay_text() {
+        assert_renders("A[^missing] and [^].\n", &["p(A[^missing] and [^].)"]);
+    }
+
+    #[test]
+    fn code_never_has_footnotes() {
+        assert_renders(
+            "`x[^n]`\n\n```\ny[^n]\n```\n\n[^n]: N.\n\n```\nunclosed[^n]",
+            &[
+                "p(x[^n])",
+                r#"code:("y[^n]\n")"#,
+                "note:n[p(N.)]",
+                r#"code:("unclosed[^n]")"#,
+            ],
+        );
     }
 }

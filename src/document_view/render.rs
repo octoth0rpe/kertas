@@ -7,6 +7,7 @@ use gpui::{
     AnyElement, Context, Div, ImgResourceLoader, Rems, Role, SharedString, Stateful,
     SystemWindowTabController, Window, div, list, prelude::*, px, relative, rems,
 };
+use kertas::blocks::BlockKind;
 use kertas::editor::{Motion, RevealTarget};
 use kertas::settings::TextWidth;
 
@@ -21,7 +22,7 @@ use super::{
     SelectWordLeft, SelectWordRight, ZoomIn, ZoomOut,
 };
 use crate::app_settings::{self, AppSettings};
-use crate::rendered_block::{ClickTarget, render_block};
+use crate::rendered_block::{ClickTarget, note_marker_column, render_block, render_note};
 use crate::revealed_block::{RevealedBlock, TextInput, render_gap, render_revealed};
 use crate::tab_strip::{render_tab_strip, select_tab};
 use crate::text_style::Look;
@@ -161,8 +162,31 @@ impl DocumentView {
         let editable = !open.editor.read_only();
         let document: Option<Rc<Path>> = open.editor.document().path().map(Rc::from);
         let loading_images = self.loading_images.clone();
+        let reference = open.reference.clone();
+        let weak_view = view.downgrade();
+        let click_target = move |block_start: usize| ClickTarget {
+            view: weak_view.clone(),
+            block_start,
+            column_width,
+            editable,
+            document: document.clone(),
+            loading_images: loading_images.clone(),
+            reference: reference.clone(),
+        };
+        let note_column = note_marker_column(look.list_indent, &model.notes);
         let list = list(open.list_state.clone(), move |index, _, _| {
-            let item = &model.items[index];
+            // The footnotes come after the items (#90).
+            let Some(item) = model.items.get(index) else {
+                let number = index - model.items.len();
+                let note = &model.notes[number];
+                return render_note(
+                    note,
+                    number == 0,
+                    note_column,
+                    &look,
+                    click_target(note.block_start),
+                );
+            };
             match revealed
                 .iter()
                 .find(|revealed| revealed.target.index == index)
@@ -200,49 +224,23 @@ impl DocumentView {
                         hint,
                     });
                     match gap {
+                        // Clicks on the block place the caret in it.
                         Some(gap) if let Some(input) = input => render_gap(
                             &item.rendered,
                             *gap,
                             block,
                             &look,
-                            // Clicks on the block place the caret in it.
-                            ClickTarget {
-                                view: view.downgrade(),
-                                block_start: item.block.start,
-                                column_width,
-                                editable,
-                                document: document.clone(),
-                                loading_images: loading_images.clone(),
-                            },
+                            click_target(item.block.start),
                             input,
                         ),
-                        _ => render_revealed(
-                            block,
-                            &look,
-                            ClickTarget {
-                                view: view.downgrade(),
-                                block_start: range.start,
-                                column_width,
-                                editable,
-                                document: document.clone(),
-                                loading_images: loading_images.clone(),
-                            },
-                            input,
-                        ),
+                        _ => render_revealed(block, &look, click_target(range.start), input),
                     }
                 }
                 _ => render_block(
                     &item.rendered,
                     index == 0,
                     &look,
-                    ClickTarget {
-                        view: view.downgrade(),
-                        block_start: item.block.start,
-                        column_width,
-                        editable,
-                        document: document.clone(),
-                        loading_images: loading_images.clone(),
-                    },
+                    click_target(item.block.start),
                 ),
             }
         })
@@ -271,8 +269,15 @@ impl DocumentView {
                 if cx.fetch_asset::<ImgResourceLoader>(resource).is_none() {
                     return true;
                 }
-                let index = open.editor.model().item_at(*block_start);
+                let model = open.editor.model();
+                let index = model.item_at(*block_start);
                 open.list_state.remeasure_items(index..index + 1);
+                // The image may be in a footnote, drawn after the items.
+                if model.items[index].kind == BlockKind::FootnoteDefinition {
+                    let start = model.items.len();
+                    open.list_state
+                        .remeasure_items(start..start + model.notes.len());
+                }
                 false
             });
     }
@@ -459,7 +464,9 @@ impl Render for DocumentView {
         window.set_rem_size(px(zoom::size(cx) as f32));
         self.remeasure_loaded_images(cx);
         if let Some(open) = &self.open
-            && (open.anchor.is_some() || open.reveal_caret)
+            && (open.anchor.is_some()
+                || open.reveal_caret
+                || open.reference.borrow().offset.is_some())
         {
             let view = cx.entity().downgrade();
             window.on_next_frame(move |_, cx| {

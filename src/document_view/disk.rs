@@ -80,7 +80,7 @@ impl DocumentView {
             return;
         };
         if let Some(splice) = reload.splice {
-            open.list_state.splice(splice.old, splice.new_count);
+            open.splice(&splice);
         }
         // The revealed items' indices and sources may have changed.
         open.revealed.clear();

@@ -266,6 +266,7 @@ impl Builder {
                 let after = self.text.len();
                 self.end_para(after, Para::default());
             }
+            RenderedBlock::FootnoteDefinition { .. } => {}
             RenderedBlock::Html(source) | RenderedBlock::Raw(source) => {
                 self.push(
                     source.trim_end(),

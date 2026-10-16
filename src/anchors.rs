@@ -1,8 +1,11 @@
 //! Where `#name` links lead in a document: its headings, named the way
-//! GitHub names them (#91), and HTML tags' `id`s and `<a name>`s (#96).
+//! GitHub names them (#91), HTML tags' `id`s and `<a name>`s (#96), and
+//! footnotes and their references, named `fn-label` and `fnref-label`
+//! as on GitHub (#90).
 
 use std::collections::HashMap;
 
+use crate::blocks::normalize_label;
 use crate::html_tags;
 use crate::inline::InlineText;
 use crate::model::Model;
@@ -57,15 +60,57 @@ pub fn anchors(model: &Model) -> Vec<(String, usize)> {
             anchors.push((anchor, index));
         }
     }
+    // The notes are drawn in the rows after the items.
+    for (index, note) in model.notes.iter().enumerate() {
+        anchors.push((
+            format!("fn-{}", normalize_label(&note.label)),
+            model.items.len() + index,
+        ));
+    }
+    anchors.extend(
+        references(model)
+            .into_iter()
+            .map(|(anchor, offset)| (anchor, model.item_at(offset))),
+    );
     anchors
 }
 
-/// The index of the item holding the anchor `name`, if there is one. The
-/// first match in the document wins. An exact match is preferred;
-/// otherwise case is ignored, so `#Setup` finds `setup`. GitHub's
-/// `user-content-` prefix is optional.
+/// The footnote references' anchors, with where each one starts:
+/// `fnref-label` for a note's first reference, then `fnref-label-2` and
+/// so on.
+fn references(model: &Model) -> Vec<(String, usize)> {
+    let mut seen: HashMap<&str, usize> = HashMap::new();
+    model
+        .footnote_references
+        .iter()
+        .map(|(label, offset)| {
+            let count = seen.entry(label).or_default();
+            *count += 1;
+            let anchor = match *count {
+                1 => format!("fnref-{label}"),
+                n => format!("fnref-{label}-{n}"),
+            };
+            (anchor, *offset)
+        })
+        .collect()
+}
+
+/// The index of the row holding the anchor `name`, if there is one: an
+/// item, or past the items, a footnote. The first match in the document
+/// wins. An exact match is preferred; otherwise case is ignored, so
+/// `#Setup` finds `setup`. GitHub's `user-content-` prefix is optional.
 pub fn find(model: &Model, name: &str) -> Option<usize> {
-    let anchors = anchors(model);
+    lookup(&anchors(model), name)
+}
+
+/// Where the footnote reference `name` (`fnref-label`) starts in the
+/// document, if there is one. Names match as in [`find`].
+pub fn find_reference(model: &Model, name: &str) -> Option<usize> {
+    lookup(&references(model), name)
+}
+
+/// The value for the anchor `name` in `anchors`. See [`find`].
+fn lookup(anchors: &[(String, usize)], name: &str) -> Option<usize> {
     let lookup = |name: &str| {
         anchors
             .iter()
@@ -75,7 +120,7 @@ pub fn find(model: &Model, name: &str) -> Option<usize> {
                     .iter()
                     .find(|(anchor, _)| anchor.to_lowercase() == name.to_lowercase())
             })
-            .map(|(_, index)| *index)
+            .map(|(_, value)| *value)
     };
     lookup(name).or_else(|| lookup(name.strip_prefix(GITHUB_PREFIX)?))
 }
@@ -97,7 +142,9 @@ fn collect(block: &RenderedBlock, out: &mut Vec<Target>) {
                 collect(child, out);
             }
         }
-        RenderedBlock::BlockQuote(children) | RenderedBlock::Alert { children, .. } => {
+        RenderedBlock::BlockQuote(children)
+        | RenderedBlock::Alert { children, .. }
+        | RenderedBlock::FootnoteDefinition { children, .. } => {
             for child in children {
                 collect(child, out);
             }
@@ -190,5 +237,26 @@ mod tests {
         let model = Model::new("# Intro\n\n## Setup\n\n<a id=\"x\"></a>\n");
         assert_eq!(find(&model, "user-content-setup"), Some(1));
         assert_eq!(find(&model, "user-content-x"), Some(2));
+    }
+
+    #[test]
+    fn footnotes_and_their_references() {
+        let model =
+            Model::new("# Intro\n\nOne[^a] and two[^B].\n\nAgain[^a].\n\n[^b]: Bee.\n[^a]: Ay.\n");
+        // The items are the heading, two paragraphs and two definitions;
+        // the notes come after them, in the order they're referred to.
+        assert_eq!(find(&model, "fn-a"), Some(5));
+        assert_eq!(find(&model, "user-content-fn-b"), Some(6));
+        assert_eq!(find(&model, "fnref-a"), Some(1));
+        assert_eq!(find(&model, "fnref-a-2"), Some(2));
+        assert_eq!(
+            find_reference(&model, "fnref-b"),
+            Some(model.text.find("[^B]").unwrap())
+        );
+        assert_eq!(
+            find_reference(&model, "fnref-a-2"),
+            Some(model.text.find("Again").unwrap() + 5)
+        );
+        assert_eq!(find_reference(&model, "fnref-a-3"), None);
     }
 }

@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::rendered_block::ReferenceTarget;
 use gpui::{Context, ListOffset, PromptLevel, Task, Window, px};
 use kertas::anchors;
 use kertas::document::{Document, OpenError, SaveError};
@@ -300,10 +301,16 @@ impl DocumentView {
 impl DocumentView {
     /// Scrolls the heading named `name` (as in a `#name` link) to the top
     /// of the window (#91). If there's no such heading, beeps and stays
-    /// put.
+    /// put. A footnote reference's line goes to the top once it's drawn
+    /// (#90).
     pub fn go_to_anchor(&mut self, name: &str, cx: &mut Context<Self>) {
         let Some(open) = &mut self.open else {
             return;
+        };
+        let reference = anchors::find_reference(open.editor.model(), name);
+        *open.reference.borrow_mut() = ReferenceTarget {
+            offset: reference,
+            found: None,
         };
         let Some(index) = anchors::find(open.editor.model(), name) else {
             beep();

@@ -60,6 +60,16 @@ https://example.com/bare, www.example.com and hello@example.com.
 > [!CAUTION]
 > Advises about risks or negative outcomes of certain actions.
 
+## Footnotes
+
+A sentence with a footnote[^note], and another[^long].
+
+[^note]: Notes are drawn at the end of the document.
+
+[^long]: A note can have more than one paragraph.
+
+    Indent the ones after the first.
+
 ## Images
 
 ![A blue gradient](images/gradient.png)

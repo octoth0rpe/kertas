@@ -78,6 +78,7 @@ run help showcase.md
 run reveal showcase.md
 run clicks clicks.md
 run anchors anchors.md
+run footnotes footnotes.md
 run caret anchors.md
 run reading anchors.md
 run scrollbar 10k.md
