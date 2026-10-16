@@ -898,7 +898,8 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
 fn smoke_help(window: WindowHandle<DocumentView>, cx: &mut App) {
     use crate::builtin::Builtin;
     use crate::menus::{
-        OpenAbout, OpenHelp, OpenKeyboardShortcuts, OpenLicenses, OpenMarkdownSyntax, OpenThemes,
+        OpenAbout, OpenHelp, OpenKeyboardShortcuts, OpenLicenses, OpenMarkdownSyntax,
+        OpenReleaseNotes, OpenThemes,
     };
 
     cx.spawn(async move |cx| {
@@ -966,12 +967,15 @@ fn smoke_help(window: WindowHandle<DocumentView>, cx: &mut App) {
         dispatch(window, cx, Box::new(OpenThemes));
         pause(cx, 20).await;
         checks.check("Themes opens", window_count(cx) == 5);
+        dispatch(window, cx, Box::new(OpenReleaseNotes));
+        pause(cx, 20).await;
+        checks.check("Release Notes opens", window_count(cx) == 6);
         dispatch(window, cx, Box::new(OpenAbout));
         pause(cx, 20).await;
-        checks.check("About Kertas opens", window_count(cx) == 6);
+        checks.check("About Kertas opens", window_count(cx) == 7);
         dispatch(window, cx, Box::new(OpenLicenses));
         pause(cx, 20).await;
-        checks.check("Licenses opens", window_count(cx) == 7);
+        checks.check("Licenses opens", window_count(cx) == 8);
 
         let windows = cx.update(|cx| cx.windows());
         for other in windows.into_iter().filter(|other| *other != *window) {
