@@ -12,8 +12,8 @@
 //!   saves, so the text can be checked.
 //! - `bench`: times 500 inserts in the middle of the document.
 //! - `tabs`, `settings`, `settings-window`, `help`, `reveal`, `clicks`,
-//!   `anchors`, `images`, `a11y`, `print`, `disk`, `autosave`, `quit`: see
-//!   each function.
+//!   `anchors`, `images`, `caret`, `a11y`, `print`, `disk`, `autosave`,
+//!   `quit`: see each function.
 
 use std::cell::Cell;
 use std::path::Path;
@@ -46,6 +46,7 @@ pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
         "clicks" => smoke_clicks(window, cx),
         "anchors" => smoke_anchors(window, cx),
         "images" => smoke_images(window, cx),
+        "caret" => smoke_caret(window, cx),
         "a11y" => smoke_a11y(window, cx),
         "print" => smoke_print(window, cx),
         "disk" => smoke_disk(window, cx),
@@ -1024,6 +1025,73 @@ fn smoke_reveal(window: WindowHandle<DocumentView>, cx: &mut App) {
             revealed == 3 && selection.is_some_and(|selection| Some(selection.head) == target),
         );
         window.update(cx, |view, _, _| view.end_drag()).ok();
+        checks.finish(cx);
+    })
+    .detach();
+}
+
+/// `KERTAS_SMOKE=caret`, on `anchors.md` (#98): stepping through the
+/// document a block or a line at a time, down and back up, or jumping to
+/// either end, keeps the caret on screen after every step.
+fn smoke_caret(window: WindowHandle<DocumentView>, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        let mut checks = Checks::default();
+        pause(cx, 10).await;
+        let item_count = window
+            .read_with(cx, |view, _| view.item_count())
+            .unwrap_or(0);
+        // The other movements, checked for the same problem: arrows a line
+        // at a time (twice as many steps, as blank lines count), and the
+        // document's ends.
+        let steps = [
+            (
+                "Option-Down",
+                Box::new(MoveBlockDown) as Box<dyn Action>,
+                false,
+                item_count,
+            ),
+            ("Option-Up", Box::new(MoveBlockUp), false, item_count),
+            (
+                "Option-Shift-Down",
+                Box::new(SelectBlockDown),
+                true,
+                item_count,
+            ),
+            ("Down", Box::new(MoveDown), false, item_count * 2),
+            ("Up", Box::new(MoveUp), false, item_count * 2),
+            ("Cmd-Down", Box::new(MoveDocumentEnd), false, 1),
+            ("Cmd-Up", Box::new(MoveDocumentStart), false, 1),
+        ];
+        for (name, action, extend, steps) in steps {
+            let mut off_screen = Vec::new();
+            for step in 0..steps {
+                dispatch(window, cx, action.boxed_clone());
+                // About as fast as a held key repeats. A long jump can
+                // take a couple more frames to settle.
+                let mut on_screen = None;
+                for _ in 0..3 {
+                    pause(cx, 1).await;
+                    on_screen = window
+                        .read_with(cx, |view, _| view.caret_on_screen())
+                        .ok()
+                        .flatten();
+                    if on_screen == Some(true) {
+                        break;
+                    }
+                }
+                if on_screen != Some(true) {
+                    off_screen.push(step);
+                }
+            }
+            checks.check(
+                &format!("{name} keeps the caret on screen (off at steps {off_screen:?})"),
+                off_screen.is_empty(),
+            );
+            if extend {
+                dispatch(window, cx, Box::new(MoveDocumentStart));
+                pause(cx, 5).await;
+            }
+        }
         checks.finish(cx);
     })
     .detach();

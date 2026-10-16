@@ -469,6 +469,28 @@ impl DocumentView {
         })
     }
 
+    /// Whether the caret's line is inside the window, for the smoke test.
+    /// `None` without a caret, `Some(false)` if its block isn't laid out.
+    #[cfg(debug_assertions)]
+    pub fn caret_on_screen(&self) -> Option<bool> {
+        let open = self.open.as_ref()?;
+        let selection = open.editor.selection()?;
+        let viewport = open.list_state.viewport_bounds();
+        let index = open.editor.model().item_at(selection.head);
+        let Some(bounds) = open.list_state.bounds_for_item(index) else {
+            return Some(false);
+        };
+        if let Some((layout, start)) = self.revealed_layout()
+            && let Some(position) = layout.position_for_index(selection.head.saturating_sub(start))
+        {
+            return Some(
+                position.y >= viewport.top()
+                    && position.y + layout.line_height() <= viewport.bottom(),
+            );
+        }
+        Some(bounds.top() < viewport.bottom() && bounds.bottom() > viewport.top())
+    }
+
     /// The list's scroll position, for the smoke test.
     #[cfg(debug_assertions)]
     pub fn scroll_top(&self) -> Option<(usize, Pixels)> {
