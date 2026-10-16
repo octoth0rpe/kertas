@@ -4,7 +4,7 @@
 //! blockquotes contain nested blocks, and tables contain cells. Inline text
 //! keeps source ranges relative to the start of its top-level block.
 
-use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Tag, TagEnd};
+use pulldown_cmark::{Alignment, BlockQuoteKind, CodeBlockKind, Event, HeadingLevel, Tag, TagEnd};
 
 #[cfg(test)]
 use crate::blocks::{BlockKind, Blocks};
@@ -38,6 +38,12 @@ pub enum RenderedBlock {
         items: Vec<ListItem>,
     },
     BlockQuote(Vec<RenderedBlock>),
+    /// A GitHub alert: a blockquote whose first line is `[!NOTE]` or one of
+    /// the other markers. The marker line isn't part of `children`.
+    Alert {
+        kind: AlertKind,
+        children: Vec<RenderedBlock>,
+    },
     CodeBlock {
         /// The info string's language, e.g. `rust` in ```` ```rust ````.
         language: Option<String>,
@@ -50,6 +56,41 @@ pub enum RenderedBlock {
     /// A block that isn't rendered, shown as its source text: front matter
     /// and link reference definitions.
     Raw(String),
+}
+
+/// Which GitHub alert a blockquote is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlertKind {
+    Note,
+    Tip,
+    Important,
+    Warning,
+    Caution,
+}
+
+impl AlertKind {
+    /// The title shown above the alert, as GitHub shows it.
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Note => "Note",
+            Self::Tip => "Tip",
+            Self::Important => "Important",
+            Self::Warning => "Warning",
+            Self::Caution => "Caution",
+        }
+    }
+}
+
+impl From<BlockQuoteKind> for AlertKind {
+    fn from(kind: BlockQuoteKind) -> Self {
+        match kind {
+            BlockQuoteKind::Note => Self::Note,
+            BlockQuoteKind::Tip => Self::Tip,
+            BlockQuoteKind::Important => Self::Important,
+            BlockQuoteKind::Warning => Self::Warning,
+            BlockQuoteKind::Caution => Self::Caution,
+        }
+    }
 }
 
 /// One item in a list.
@@ -137,7 +178,8 @@ enum Frame {
         /// Text directly in a tight list item, which has no paragraph tags.
         inline: InlineBuilder,
     },
-    BlockQuote(Vec<RenderedBlock>),
+    /// A blockquote, with its alert kind if it's a GitHub alert.
+    BlockQuote(Option<AlertKind>, Vec<RenderedBlock>),
     CodeBlock {
         language: Option<String>,
         code: InlineBuilder,
@@ -223,7 +265,7 @@ impl TreeBuilder {
                 children: Vec::new(),
                 inline: InlineBuilder::default(),
             },
-            Tag::BlockQuote(_) => Frame::BlockQuote(Vec::new()),
+            Tag::BlockQuote(kind) => Frame::BlockQuote(kind.map(AlertKind::from), Vec::new()),
             Tag::CodeBlock(kind) => Frame::CodeBlock {
                 language: match kind {
                     CodeBlockKind::Fenced(info) => info
@@ -301,7 +343,12 @@ impl TreeBuilder {
                     items.push(ListItem { task, children });
                 }
             }
-            Frame::BlockQuote(children) => self.push_block(RenderedBlock::BlockQuote(children)),
+            Frame::BlockQuote(None, children) => {
+                self.push_block(RenderedBlock::BlockQuote(children))
+            }
+            Frame::BlockQuote(Some(kind), children) => {
+                self.push_block(RenderedBlock::Alert { kind, children })
+            }
             Frame::CodeBlock { language, code } => self.push_block(RenderedBlock::CodeBlock {
                 language,
                 code: code.finish(),
@@ -321,7 +368,7 @@ impl TreeBuilder {
     fn push_block(&mut self, block: RenderedBlock) {
         self.flush_item_text();
         if let Some(
-            Frame::Root(children) | Frame::BlockQuote(children) | Frame::Item { children, .. },
+            Frame::Root(children) | Frame::BlockQuote(_, children) | Frame::Item { children, .. },
         ) = self.stack.last_mut()
         {
             children.push(block);
@@ -415,6 +462,10 @@ mod tests {
             RenderedBlock::BlockQuote(children) => {
                 let children: Vec<String> = children.iter().map(describe).collect();
                 format!("quote[{}]", children.join(" "))
+            }
+            RenderedBlock::Alert { kind, children } => {
+                let children: Vec<String> = children.iter().map(describe).collect();
+                format!("{}[{}]", kind.title().to_lowercase(), children.join(" "))
             }
             RenderedBlock::CodeBlock { language, code } => {
                 format!(
@@ -518,6 +569,44 @@ mod tests {
         assert_renders(
             "> # Title\n> text\n>\n> > nested\n>\n> - item\n",
             &["quote[h1(Title) p(text) quote[p(nested)] ul[p(item)]]"],
+        );
+    }
+
+    #[test]
+    fn github_alerts() {
+        assert_renders(
+            "> [!NOTE]\n> Useful.\n\n> [!tip]\n> - one\n\n> [!IMPORTANT]\n> a\n\n> [!WARNING]\n> b\n\n> [!CAUTION]\n> c\n",
+            &[
+                "note[p(Useful.)]",
+                "tip[ul[p(one)]]",
+                "important[p(a)]",
+                "warning[p(b)]",
+                "caution[p(c)]",
+            ],
+        );
+    }
+
+    #[test]
+    fn alert_text_maps_to_source() {
+        let text = "> [!NOTE]\n> Useful.\n";
+        let RenderedBlock::Alert { children, .. } = render_one(text) else {
+            panic!()
+        };
+        let RenderedBlock::Paragraph(inline) = &children[0] else {
+            panic!()
+        };
+        assert_eq!(&text[inline.segments[0].source.clone()], "Useful.");
+    }
+
+    #[test]
+    fn unknown_or_misplaced_alert_markers_stay_blockquotes() {
+        assert_renders(
+            "> [!FOO]\n> text\n\n> text\n> [!NOTE]\n\n> [!NOTE] same line\n",
+            &[
+                "quote[p([!FOO] text)]",
+                "quote[p(text [!NOTE])]",
+                "quote[p([!NOTE] same line)]",
+            ],
         );
     }
 

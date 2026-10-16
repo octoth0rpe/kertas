@@ -9,6 +9,7 @@
 
 use std::ops::Range;
 
+use crate::theme::Theme;
 use kertas::model::Model;
 use kertas::print_layout::{Alignment, Frame, PrintLayout};
 use kertas::rendered::heading_scale;
@@ -192,6 +193,14 @@ fn attributed(
         }
         let color = if style.link {
             NSColor::colorWithSRGBRed_green_blue_alpha(0.035, 0.41, 0.85, 1.)
+        } else if let Some(kind) = style.alert {
+            let rgba = gpui::Rgba::from(Theme::light().alert(kind));
+            NSColor::colorWithSRGBRed_green_blue_alpha(
+                rgba.r.into(),
+                rgba.g.into(),
+                rgba.b.into(),
+                1.,
+            )
         } else if style.muted {
             grey(0.35)
         } else {

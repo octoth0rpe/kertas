@@ -297,3 +297,4 @@
 | zune-inflate | 0.2.54 | MIT OR Apache-2.0 OR Zlib |
 | zune-jpeg | 0.5.15 | MIT OR Apache-2.0 OR Zlib |
 | Rust standard library | | MIT OR Apache-2.0 |
+| Octicons (alert icons) | 19.15.0 | MIT |

@@ -7,13 +7,14 @@ use std::rc::Rc;
 use gpui::{
     AccessibleAction, AnyElement, App, ElementId, Font, FontWeight, Hsla, InteractiveText,
     MouseButton, Rems, Role, SharedString, StyledText, Toggled, WeakEntity, Window, div,
-    prelude::*, px, rems,
+    prelude::*, px, rems, svg,
 };
 use kertas::inline::InlineText;
-use kertas::rendered::{ColumnAlignment, ListItem, RenderedBlock, Table, Task};
+use kertas::rendered::{AlertKind, ColumnAlignment, ListItem, RenderedBlock, Table, Task};
 use kertas::settings::ListIndent;
 use kertas::tabs::ExpandedTabs;
 
+use crate::assets::alert_icon;
 use crate::document_view::DocumentView;
 use crate::text_style::{Look, code_text, heading_text, inline_run};
 use crate::theme::Theme;
@@ -241,6 +242,7 @@ fn render_content(block: &RenderedBlock, style: &TextStyle, depth: usize) -> Any
                 .child(render_children(children, &quote_style, depth))
                 .into_any_element()
         }
+        RenderedBlock::Alert { kind, children } => render_alert(*kind, children, style, depth),
         RenderedBlock::CodeBlock { code, .. } => code_text(div(), &style.code_font)
             .bg(style.theme.code_background)
             .rounded_md()
@@ -261,6 +263,44 @@ fn render_content(block: &RenderedBlock, style: &TextStyle, depth: usize) -> Any
                 .into_any_element()
         }
     }
+}
+
+/// A GitHub alert: a colored bar, a title with an icon, and its contents.
+fn render_alert(
+    kind: AlertKind,
+    children: &[RenderedBlock],
+    style: &TextStyle,
+    depth: usize,
+) -> AnyElement {
+    let color = style.theme.alert(kind);
+    div()
+        .id(style.node_id("alert"))
+        .role(Role::Note)
+        .aria_label(kind.title())
+        .border_l_4()
+        .border_color(color)
+        .pl_4()
+        .flex()
+        .flex_col()
+        .gap(px(NESTED_GAP))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(rems(0.5))
+                .text_color(color)
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(
+                    svg()
+                        .path(alert_icon(kind))
+                        .flex_none()
+                        .size(rems(1.))
+                        .text_color(color),
+                )
+                .child(kind.title()),
+        )
+        .child(render_children(children, style, depth))
+        .into_any_element()
 }
 
 /// Nested blocks stacked vertically, e.g. the contents of a list item.
