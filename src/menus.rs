@@ -28,6 +28,7 @@ actions!(
         OpenMarkdownSyntax,
         OpenKeyboardShortcuts,
         OpenThemes,
+        OpenReleaseNotes,
         OpenLicenses,
         OpenAbout,
         OpenSettings,
@@ -92,6 +93,9 @@ pub fn init(cx: &mut App) {
         cx.defer(|cx| builtin::open(Builtin::KeyboardShortcuts, cx))
     });
     cx.on_action(|_: &OpenThemes, cx| cx.defer(|cx| builtin::open(Builtin::Themes, cx)));
+    cx.on_action(|_: &OpenReleaseNotes, cx| {
+        cx.defer(|cx| builtin::open(Builtin::ReleaseNotes, cx))
+    });
 
     refresh(cx);
     cx.observe_global::<AppSettings>(refresh).detach();
@@ -171,6 +175,7 @@ fn menus(settings: Settings, themes: &[Theme]) -> Vec<Menu> {
             MenuItem::action("Keyboard Shortcuts", OpenKeyboardShortcuts),
             MenuItem::action("Themes", OpenThemes),
             MenuItem::separator(),
+            MenuItem::action("Release Notes", OpenReleaseNotes),
             MenuItem::action("Licenses", OpenLicenses),
         ]),
     ]
