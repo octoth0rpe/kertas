@@ -4,8 +4,8 @@ use std::path::Path;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, Context, Div, Rems, Role, SharedString, Stateful, SystemWindowTabController,
-    Window, div, list, prelude::*, px, relative, rems,
+    AnyElement, Context, Div, ImgResourceLoader, Rems, Role, SharedString, Stateful,
+    SystemWindowTabController, Window, div, list, prelude::*, px, relative, rems,
 };
 use kertas::editor::{Motion, RevealTarget};
 use kertas::settings::TextWidth;
@@ -160,6 +160,7 @@ impl DocumentView {
         let hint = app_settings::get(cx).editing_hint;
         let editable = !open.editor.read_only();
         let document: Option<Rc<Path>> = open.editor.document().path().map(Rc::from);
+        let loading_images = self.loading_images.clone();
         let list = list(open.list_state.clone(), move |index, _, _| {
             let item = &model.items[index];
             match revealed
@@ -211,6 +212,7 @@ impl DocumentView {
                                 column_width,
                                 editable,
                                 document: document.clone(),
+                                loading_images: loading_images.clone(),
                             },
                             input,
                         ),
@@ -223,6 +225,7 @@ impl DocumentView {
                                 column_width,
                                 editable,
                                 document: document.clone(),
+                                loading_images: loading_images.clone(),
                             },
                             input,
                         ),
@@ -238,6 +241,7 @@ impl DocumentView {
                         column_width,
                         editable,
                         document: document.clone(),
+                        loading_images: loading_images.clone(),
                     },
                 ),
             }
@@ -245,14 +249,32 @@ impl DocumentView {
         .size_full();
         let scrollbar = app_settings::get(cx)
             .scrollbar
-            .then(|| self.render_scrollbar(open, window, cx))
-            .flatten();
+            .then(|| self.render_scrollbar(open, window, cx));
         div()
             .relative()
             .size_full()
             .child(list)
             .children(scrollbar)
             .into_any_element()
+    }
+
+    /// Re-measures the blocks whose images have arrived since they were
+    /// drawn (#88): they were measured without them, so the scrollbar
+    /// would be wrong about the document's length.
+    fn remeasure_loaded_images(&mut self, cx: &mut Context<Self>) {
+        let Some(open) = &self.open else {
+            return;
+        };
+        self.loading_images
+            .borrow_mut()
+            .retain(|(block_start, resource)| {
+                if cx.fetch_asset::<ImgResourceLoader>(resource).is_none() {
+                    return true;
+                }
+                let index = open.editor.model().item_at(*block_start);
+                open.list_state.remeasure_items(index..index + 1);
+                false
+            });
     }
 
     /// The view's actions: files, tabs, zoom, movement and editing.
@@ -435,6 +457,7 @@ impl Render for DocumentView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Document text is sized in rems, so this sets the zoom.
         window.set_rem_size(px(zoom::size(cx) as f32));
+        self.remeasure_loaded_images(cx);
         if let Some(open) = &self.open
             && (open.anchor.is_some() || open.reveal_caret)
         {

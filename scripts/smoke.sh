@@ -80,6 +80,7 @@ run clicks clicks.md
 run anchors anchors.md
 run caret anchors.md
 run scrollbar 10k.md
+run scrollbar-drag showcase.md
 run images showcase.md
 run a11y a11y.md
 run print showcase.md KERTAS_PRINT_PDF="$work/print/out.pdf"

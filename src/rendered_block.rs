@@ -69,7 +69,13 @@ pub struct ClickTarget {
     pub editable: bool,
     /// The document's file, which images' relative paths start from.
     pub document: Option<Rc<Path>>,
+    /// Images still loading, by their block's start, so the view can
+    /// re-measure the block once each one arrives.
+    pub loading_images: LoadingImages,
 }
+
+/// Images still loading, and where their blocks start.
+pub type LoadingImages = Rc<std::cell::RefCell<Vec<(usize, Resource)>>>;
 
 impl ClickTarget {
     /// Places the caret at `offset` in the block's source (shift-click
@@ -563,8 +569,19 @@ impl RenderOnce for DocumentImage {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let path: Option<PathBuf> =
             links::image_path(&self.image.destination, self.click.document.as_deref());
-        let loaded = path
-            .map(|path| window.use_asset::<ImgResourceLoader>(&Resource::Path(path.into()), cx));
+        let resource = path.map(|path| Resource::Path(path.into()));
+        let loaded = resource
+            .as_ref()
+            .map(|resource| window.use_asset::<ImgResourceLoader>(resource, cx));
+        if let (Some(None), Some(resource)) = (&loaded, resource) {
+            // Its block was measured without it, so it'll need measuring
+            // again once it arrives, even if it's off screen.
+            let mut loading = self.click.loading_images.borrow_mut();
+            let entry = (self.click.block_start, resource);
+            if !loading.contains(&entry) {
+                loading.push(entry);
+            }
+        }
         let scale = crate::zoom::image_scale(cx);
         let (click, follow, link, source) = (
             self.click.clone(),

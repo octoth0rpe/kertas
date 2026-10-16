@@ -12,8 +12,8 @@
 //!   saves, so the text can be checked.
 //! - `bench`: times 500 inserts in the middle of the document.
 //! - `tabs`, `settings`, `settings-window`, `help`, `reveal`, `clicks`,
-//!   `anchors`, `images`, `caret`, `scrollbar`, `a11y`, `print`, `disk`,
-//!   `autosave`, `quit`: see each function.
+//!   `anchors`, `images`, `caret`, `scrollbar`, `scrollbar-drag`, `a11y`,
+//!   `print`, `disk`, `autosave`, `quit`: see each function.
 
 use std::cell::Cell;
 use std::path::Path;
@@ -48,6 +48,7 @@ pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
         "images" => smoke_images(window, cx),
         "caret" => smoke_caret(window, cx),
         "scrollbar" => smoke_scrollbar(window, cx),
+        "scrollbar-drag" => smoke_scrollbar_drag(window, cx),
         "a11y" => smoke_a11y(window, cx),
         "print" => smoke_print(window, cx),
         "disk" => smoke_disk(window, cx),
@@ -1098,7 +1099,9 @@ fn smoke_scrollbar(window: WindowHandle<DocumentView>, cx: &mut App) {
         if let Some((_, height, track)) = end {
             window
                 .update(cx, |view, window, cx| {
-                    view.drag_thumb_to((track - height) / 2., window, cx)
+                    view.grab_thumb(window);
+                    view.drag_thumb_to((track - height) / 2., window, cx);
+                    view.release_thumb(cx);
                 })
                 .ok();
         }
@@ -1141,6 +1144,69 @@ fn smoke_scrollbar(window: WindowHandle<DocumentView>, cx: &mut App) {
         cx.update(|cx| crate::app_settings::set_or_report("scrollbar", true, cx));
         pause(cx, 10).await;
         checks.check("and shows it again", thumb(cx).is_some());
+        checks.finish(cx);
+    })
+    .detach();
+}
+
+/// `KERTAS_SMOKE=scrollbar-drag`, on `showcase.md` (#88): a short
+/// document's thumb is exact, and dragging it from top to bottom moves the
+/// document on every step, all the way to the end, without pausing.
+fn smoke_scrollbar_drag(window: WindowHandle<DocumentView>, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        let mut checks = Checks::default();
+        pause(cx, 10).await;
+        let exact = window
+            .update(cx, |view, window, _| view.scrollbar_exact(window))
+            .unwrap_or(false);
+        checks.check("a short document's thumb is exact", exact);
+        let thumb = window
+            .update(cx, |view, window, cx| view.scrollbar_thumb(window, cx))
+            .ok()
+            .flatten();
+        let Some((_, height, track)) = thumb else {
+            checks.check("the showcase has a scrollbar", false);
+            return checks.finish(cx);
+        };
+        let offset = |cx: &mut AsyncApp| {
+            window
+                .read_with(cx, |view, _| view.scroll_offset())
+                .unwrap_or(0.)
+        };
+        window
+            .update(cx, |view, window, _| view.grab_thumb(window))
+            .ok();
+        let steps = 40;
+        let mut offsets = vec![offset(cx)];
+        for step in 1..=steps {
+            window
+                .update(cx, |view, window, cx| {
+                    view.drag_thumb_to((track - height) * step as f32 / steps as f32, window, cx)
+                })
+                .ok();
+            pause(cx, 1).await;
+            offsets.push(offset(cx));
+        }
+        window.update(cx, |view, _, cx| view.release_thumb(cx)).ok();
+        pause(cx, 5).await;
+        let stalls: Vec<usize> = offsets
+            .windows(2)
+            .enumerate()
+            .filter(|(_, pair)| pair[1] <= pair[0])
+            .map(|(step, _)| step + 1)
+            .collect();
+        checks.check(
+            &format!("every step of the drag scrolls (stalled at steps {stalls:?})"),
+            stalls.is_empty(),
+        );
+        let end = window
+            .update(cx, |view, window, cx| view.scrollbar_thumb(window, cx))
+            .ok()
+            .flatten();
+        checks.check(
+            &format!("after the drag the thumb stays at the bottom ({end:?})"),
+            end.is_some_and(|(top, height, track)| (top + height - track).abs() < 1.),
+        );
         checks.finish(cx);
     })
     .detach();
