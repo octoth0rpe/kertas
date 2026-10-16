@@ -16,14 +16,18 @@ use super::{
     InsertTab, LineBreak, MoveBlockDown, MoveBlockUp, MoveDocumentEnd, MoveDocumentStart, MoveDown,
     MoveLeft, MoveLineEnd, MoveLineStart, MoveRight, MoveUp, MoveWordLeft, MoveWordRight, Newline,
     NextTab, OpenDocument, OutdentLines, OutdentTab, PageDown, PageUp, PreviousTab, ResetZoom,
-    Revealed, SelectBlockDown, SelectBlockUp, SelectDocumentEnd, SelectDocumentStart, SelectDown,
-    SelectLeft, SelectLineEnd, SelectLineStart, SelectRight, SelectTab1, SelectTab2, SelectTab3,
-    SelectTab4, SelectTab5, SelectTab6, SelectTab7, SelectTab8, SelectTab9, SelectUp,
-    SelectWordLeft, SelectWordRight, ZoomIn, ZoomOut,
+    Revealed, ScrollRequest, SelectBlockDown, SelectBlockUp, SelectDocumentEnd,
+    SelectDocumentStart, SelectDown, SelectLeft, SelectLineEnd, SelectLineStart, SelectRight,
+    SelectTab1, SelectTab2, SelectTab3, SelectTab4, SelectTab5, SelectTab6, SelectTab7, SelectTab8,
+    SelectTab9, SelectUp, SelectWordLeft, SelectWordRight, ZoomIn, ZoomOut,
 };
 use crate::app_settings::{self, AppSettings};
-use crate::rendered_block::{ClickTarget, note_marker_column, render_block, render_note};
-use crate::revealed_block::{RevealedBlock, TextInput, render_gap, render_revealed};
+use crate::rendered_block::{
+    ClickTarget, ReferenceTarget, note_marker_column, render_block, render_note,
+};
+use crate::revealed_block::{
+    CaretPlace, RevealedBlock, ScrollToCaret, TextInput, render_gap, render_revealed,
+};
 use crate::tab_strip::{render_tab_strip, select_tab};
 use crate::text_style::Look;
 use crate::zoom;
@@ -145,6 +149,7 @@ impl DocumentView {
     fn render_document(
         &self,
         open: &OpenDocument,
+        request: Option<ScrollRequest>,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -162,7 +167,19 @@ impl DocumentView {
         let editable = !open.editor.read_only();
         let document: Option<Rc<Path>> = open.editor.document().path().map(Rc::from);
         let loading_images = self.loading_images.clone();
-        let reference = open.reference.clone();
+        // What this frame scrolls to (see `ScrollRequest`).
+        let viewport_height = open.list_state.viewport_bounds().size.height;
+        let reference = match request {
+            Some(ScrollRequest::Position(offset)) => Some(ReferenceTarget {
+                offset,
+                viewport_height,
+            }),
+            _ => None,
+        };
+        let caret_place = match request {
+            Some(ScrollRequest::Caret(place)) => Some(place),
+            _ => None,
+        };
         let weak_view = view.downgrade();
         let click_target = move |block_start: usize| ClickTarget {
             view: weak_view.clone(),
@@ -171,7 +188,7 @@ impl DocumentView {
             editable,
             document: document.clone(),
             loading_images: loading_images.clone(),
-            reference: reference.clone(),
+            reference,
         };
         let note_column = note_marker_column(look.list_indent, &model.notes);
         let list = list(open.list_state.clone(), move |index, _, _| {
@@ -217,13 +234,17 @@ impl DocumentView {
                         marked,
                         first: index == 0,
                     };
+                    let scroll_to_caret = caret_place.filter(|_| *head).map(|place| {
+                        ScrollToCaret::new(local(selection.head), place, viewport_height)
+                    });
                     let input = head.then(|| TextInput {
                         focus_handle: focus_handle.clone(),
                         view: view.clone(),
                         layout_slot: layout_slot.clone(),
                         hint,
+                        scroll_to_caret: scroll_to_caret.clone(),
                     });
-                    match gap {
+                    let element = match gap {
                         // Clicks on the block place the caret in it.
                         Some(gap) if let Some(input) = input => render_gap(
                             &item.rendered,
@@ -234,6 +255,10 @@ impl DocumentView {
                             input,
                         ),
                         _ => render_revealed(block, &look, click_target(range.start), input),
+                    };
+                    match scroll_to_caret {
+                        Some(scroll) => scroll.track_item(element),
+                        None => element,
                     }
                 }
                 _ => render_block(
@@ -258,11 +283,22 @@ impl DocumentView {
 
     /// Re-measures the blocks whose images have arrived since they were
     /// drawn (#88): they were measured without them, so the scrollbar
-    /// would be wrong about the document's length.
+    /// would be wrong about the document's length. A caret that was on
+    /// screen stays there, though the blocks above it grow.
     fn remeasure_loaded_images(&mut self, cx: &mut Context<Self>) {
-        let Some(open) = &self.open else {
+        let Some(open) = &mut self.open else {
             return;
         };
+        let caret_on_screen = open.editor.selection().is_some_and(|selection| {
+            let index = open.editor.model().item_at(selection.head);
+            let viewport = open.list_state.viewport_bounds();
+            open.list_state
+                .bounds_for_item(index)
+                .is_some_and(|bounds| {
+                    bounds.top() < viewport.bottom() && bounds.bottom() > viewport.top()
+                })
+        });
+        let mut remeasured = false;
         self.loading_images
             .borrow_mut()
             .retain(|(block_start, resource)| {
@@ -278,8 +314,12 @@ impl DocumentView {
                     open.list_state
                         .remeasure_items(start..start + model.notes.len());
                 }
+                remeasured = true;
                 false
             });
+        if remeasured && caret_on_screen && open.scroll_request.is_none() {
+            open.scroll_request = Some(ScrollRequest::Caret(CaretPlace::Nearest));
+        }
     }
 
     /// The view's actions: files, tabs, zoom, movement and editing.
@@ -463,14 +503,17 @@ impl Render for DocumentView {
         // Document text is sized in rems, so this sets the zoom.
         window.set_rem_size(px(zoom::size(cx) as f32));
         self.remeasure_loaded_images(cx);
-        if let Some(open) = &self.open
-            && (open.anchor.is_some()
-                || open.reveal_caret
-                || open.reference.borrow().offset.is_some())
-        {
+        // This frame's elements ask the list to scroll to what was
+        // requested as it's laid out.
+        let request = self
+            .open
+            .as_mut()
+            .and_then(|open| open.scroll_request.take());
+        if let Some(ScrollRequest::Caret(_)) = request {
             let view = cx.entity().downgrade();
             window.on_next_frame(move |_, cx| {
-                view.update(cx, |this, cx| this.after_layout(cx)).ok();
+                view.update(cx, |this, cx| this.after_layout(request, cx))
+                    .ok();
             });
         }
         // Show unsaved changes in the window's close button.
@@ -492,7 +535,7 @@ impl Render for DocumentView {
                 .unwrap_or_default(),
         };
         let content = match &self.open {
-            Some(open) => self.render_document(open, window, cx),
+            Some(open) => self.render_document(open, request, window, cx),
             None => div()
                 .size_full()
                 .flex()

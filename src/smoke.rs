@@ -1316,9 +1316,11 @@ fn smoke_reading(window: WindowHandle<DocumentView>, cx: &mut App) {
     .detach();
 }
 
-/// `KERTAS_SMOKE=caret`, on `anchors.md` (#98): stepping through the
-/// document a block or a line at a time, down and back up, or jumping to
-/// either end, keeps the caret on screen after every step.
+/// `KERTAS_SMOKE=caret`, on `anchors.md` and `showcase.md` (#98, #102):
+/// stepping through the document a block or a line at a time, down and
+/// back up, or jumping to either end, keeps the caret on screen after
+/// every step, in the first frame drawn after it (so scrolling a frame
+/// late fails).
 fn smoke_caret(window: WindowHandle<DocumentView>, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
@@ -1352,19 +1354,9 @@ fn smoke_caret(window: WindowHandle<DocumentView>, cx: &mut App) {
             let mut off_screen = Vec::new();
             for step in 0..steps {
                 dispatch(window, cx, action.boxed_clone());
-                // About as fast as a held key repeats. A long jump can
-                // take a couple more frames to settle.
-                let mut on_screen = None;
-                for _ in 0..3 {
-                    pause(cx, 1).await;
-                    on_screen = window
-                        .read_with(cx, |view, _| view.caret_on_screen())
-                        .ok()
-                        .flatten();
-                    if on_screen == Some(true) {
-                        break;
-                    }
-                }
+                let on_screen = after_frames(window, cx, 1, |view| view.caret_on_screen())
+                    .await
+                    .flatten();
                 if on_screen != Some(true) {
                     off_screen.push(step);
                 }
@@ -2017,6 +2009,42 @@ fn smoke_print(window: WindowHandle<DocumentView>, cx: &mut App) {
 /// did.
 async fn wait_until(cx: &mut AsyncApp, done: impl FnMut(&mut AsyncApp) -> bool) -> bool {
     wait_for(cx, Duration::from_secs(2), done).await
+}
+
+/// Waits until `window` has drawn `frames` frames, then reads the view
+/// with `read`, before the next frame (and anything it was told to do
+/// before that frame) can change what was drawn.
+async fn after_frames<T: 'static>(
+    window: WindowHandle<DocumentView>,
+    cx: &mut AsyncApp,
+    frames: usize,
+    read: impl FnOnce(&DocumentView) -> T + 'static,
+) -> Option<T> {
+    /// Calls `then` at the start of the `hops`th frame from now.
+    fn hop(window: &mut gpui::Window, hops: usize, then: Box<dyn FnOnce(&mut App)>) {
+        window.on_next_frame(move |window, cx| {
+            if hops <= 1 {
+                then(cx);
+            } else {
+                hop(window, hops - 1, then);
+            }
+        });
+    }
+    let result = Rc::new(std::cell::RefCell::new(None));
+    let slot = result.clone();
+    // Frame callbacks run at the start of a frame, before it's drawn: the
+    // first one is before the next frame, so wait one more.
+    window
+        .update(cx, |_, window, cx| {
+            let view = cx.entity();
+            let then = Box::new(move |cx: &mut App| {
+                *slot.borrow_mut() = Some(read(view.read(cx)));
+            });
+            hop(window, frames + 1, then);
+        })
+        .ok()?;
+    wait_until(cx, |_| result.borrow().is_some()).await;
+    result.take()
 }
 
 /// Waits until `done` returns true, or `timeout` passes. Returns whether
