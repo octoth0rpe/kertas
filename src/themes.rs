@@ -141,8 +141,13 @@ impl Theme {
 
 const KERTAS: &str = include_str!("builtin/themes/kertas.toml");
 
-/// The theme files built into Kertas.
-const BUILTIN: &[&str] = &[KERTAS];
+/// The theme files built into Kertas, in the order they're listed.
+const BUILTIN: &[&str] = &[
+    KERTAS,
+    include_str!("builtin/themes/solarized.toml"),
+    include_str!("builtin/themes/gruvbox.toml"),
+    include_str!("builtin/themes/catppuccin.toml"),
+];
 
 /// The themes built into Kertas.
 pub fn builtin() -> &'static [Theme] {
@@ -355,7 +360,7 @@ mod tests {
             assert_eq!(problems, vec![], "{}", theme.name);
         }
         let names: Vec<_> = builtin().iter().map(|theme| theme.name.as_str()).collect();
-        assert_eq!(names, ["Kertas"]);
+        assert_eq!(names, ["Kertas", "Solarized", "Gruvbox", "Catppuccin"]);
         assert_ne!(kertas().light, kertas().dark);
     }
 
