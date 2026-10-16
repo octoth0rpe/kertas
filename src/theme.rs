@@ -1,10 +1,13 @@
-//! Built-in light and dark color themes (A2).
+//! The colors windows are drawn in (A2), from a color theme.
 //!
-//! The `theme` setting picks one, or follows the macOS appearance.
+//! The `theme` setting picks light or dark mode, or follows the macOS
+//! appearance. The colors come from Kertas's theme file; see
+//! [`kertas::themes`].
 
-use gpui::{App, Hsla, Window, WindowAppearance, rgb, rgba};
+use gpui::{App, Hsla, Window, WindowAppearance, rgba};
 use kertas::rendered::AlertKind;
 use kertas::settings::ThemeSetting;
+use kertas::themes::{self, Color, Palette};
 
 use crate::app_settings;
 
@@ -22,6 +25,8 @@ pub struct Theme {
     /// Background of selected text.
     pub selection: Hsla,
     pub caret: Hsla,
+    /// Text drawn on the caret color, e.g. a default button's label.
+    pub accent_text: Hsla,
     /// Background and border that mark the revealed block.
     pub revealed_background: Hsla,
     pub revealed_border: Hsla,
@@ -40,49 +45,11 @@ impl Theme {
     }
 
     pub fn light() -> Self {
-        Self {
-            background: rgb(0xffffff).into(),
-            text: rgb(0x1f2328).into(),
-            muted_text: rgb(0x59636e).into(),
-            link: rgb(0x0969da).into(),
-            code_background: rgb(0xeff1f3).into(),
-            rule: rgb(0xd1d9e0).into(),
-            table_header_background: rgb(0xf6f8fa).into(),
-            selection: rgba(0x0969da40).into(),
-            caret: rgb(0x0969da).into(),
-            revealed_background: rgba(0x0969da0a).into(),
-            revealed_border: rgba(0x0969da40).into(),
-            alerts: [
-                rgb(0x0969da).into(),
-                rgb(0x1a7f37).into(),
-                rgb(0x8250df).into(),
-                rgb(0x9a6700).into(),
-                rgb(0xd1242f).into(),
-            ],
-        }
+        Self::from(&themes::kertas().light)
     }
 
     pub fn dark() -> Self {
-        Self {
-            background: rgb(0x16181d).into(),
-            text: rgb(0xe6e8eb).into(),
-            muted_text: rgb(0x9aa3ad).into(),
-            link: rgb(0x58a6ff).into(),
-            code_background: rgb(0x262a31).into(),
-            rule: rgb(0x3a4049).into(),
-            table_header_background: rgb(0x1e2127).into(),
-            selection: rgba(0x58a6ff4d).into(),
-            caret: rgb(0x58a6ff).into(),
-            revealed_background: rgba(0x58a6ff0f).into(),
-            revealed_border: rgba(0x58a6ff47).into(),
-            alerts: [
-                rgb(0x4493f8).into(),
-                rgb(0x3fb950).into(),
-                rgb(0xab7df8).into(),
-                rgb(0xd29922).into(),
-                rgb(0xf85149).into(),
-            ],
-        }
+        Self::from(&themes::kertas().dark)
     }
 
     /// The color of an alert's bar, icon and title, as GitHub draws it.
@@ -95,6 +62,33 @@ impl Theme {
         match appearance {
             WindowAppearance::Light | WindowAppearance::VibrantLight => Self::light(),
             WindowAppearance::Dark | WindowAppearance::VibrantDark => Self::dark(),
+        }
+    }
+}
+
+impl From<&Palette> for Theme {
+    fn from(palette: &Palette) -> Self {
+        let color = |Color(rgba_value): Color| rgba(rgba_value).into();
+        Self {
+            background: color(palette.background),
+            text: color(palette.text),
+            muted_text: color(palette.muted_text),
+            link: color(palette.link),
+            code_background: color(palette.code_background),
+            rule: color(palette.rule),
+            table_header_background: color(palette.table_header_background),
+            selection: color(palette.selection),
+            caret: color(palette.caret),
+            accent_text: color(palette.accent_text),
+            revealed_background: color(palette.revealed_background),
+            revealed_border: color(palette.revealed_border),
+            alerts: [
+                color(palette.alert_note),
+                color(palette.alert_tip),
+                color(palette.alert_important),
+                color(palette.alert_warning),
+                color(palette.alert_caution),
+            ],
         }
     }
 }
@@ -125,8 +119,13 @@ mod tests {
     }
 
     #[test]
-    fn text_is_readable_in_both_themes() {
-        for theme in [Theme::light(), Theme::dark()] {
+    fn text_is_readable_in_every_builtin_theme() {
+        let halves = themes::builtin().iter().flat_map(|theme| {
+            [("light", &theme.light), ("dark", &theme.dark)]
+                .map(|(half, palette)| (&theme.name, half, palette))
+        });
+        for (theme_name, half, palette) in halves {
+            let theme = Theme::from(palette);
             // WCAG AA: 4.5:1 for body text.
             for (name, color, background) in [
                 ("text", theme.text, theme.background),
@@ -145,7 +144,10 @@ mod tests {
                 ("caution", theme.alert(AlertKind::Caution), theme.background),
             ] {
                 let ratio = contrast(color, background);
-                assert!(ratio >= 4.5, "{name} contrast {ratio:.2} in {theme:?}");
+                assert!(
+                    ratio >= 4.5,
+                    "{name} contrast {ratio:.2} in {theme_name} ({half})"
+                );
             }
         }
     }
