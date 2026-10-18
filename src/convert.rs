@@ -14,6 +14,8 @@ use kertas_core::model::Model;
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSFontManager};
 
+use crate::text_style::TextSettings;
+
 /// If the arguments ask for `--convert`, converts and returns the exit
 /// code; otherwise `None`, and Kertas starts as usual.
 pub fn run_if_requested() -> Option<ExitCode> {
@@ -60,7 +62,7 @@ fn convert(args: Vec<OsString>) -> Result<(), String> {
             .find(|family| family.eq_ignore_ascii_case(name))
             .cloned()
     };
-    let settings = crate::app_settings::read_once(&installed);
+    let settings = TextSettings::from(&crate::app_settings::read_once(&installed));
 
     let model = Model::new(&document.buffer().rope().to_string());
     // Absolute paths, so images resolve and AppKit gets proper file URLs.

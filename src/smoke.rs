@@ -1174,7 +1174,7 @@ fn smoke_scrollbar(window: WindowHandle<DocumentView>, cx: &mut App) {
         pause(cx, 10).await;
         let thumb = |cx: &mut AsyncApp| {
             window
-                .update(cx, |view, window, cx| view.scrollbar_thumb(window, cx))
+                .update(cx, |view, window, _| view.scrollbar_thumb(window))
                 .ok()
                 .flatten()
         };
@@ -1332,7 +1332,7 @@ fn smoke_scrollbar_drag(window: WindowHandle<DocumentView>, cx: &mut App) {
             .unwrap_or(false);
         checks.check("a short document's thumb is exact", exact);
         let thumb = window
-            .update(cx, |view, window, cx| view.scrollbar_thumb(window, cx))
+            .update(cx, |view, window, _| view.scrollbar_thumb(window))
             .ok()
             .flatten();
         let Some((_, height, track)) = thumb else {
@@ -1371,7 +1371,7 @@ fn smoke_scrollbar_drag(window: WindowHandle<DocumentView>, cx: &mut App) {
             stalls.is_empty(),
         );
         let end = window
-            .update(cx, |view, window, cx| view.scrollbar_thumb(window, cx))
+            .update(cx, |view, window, _| view.scrollbar_thumb(window))
             .ok()
             .flatten();
         checks.check(
@@ -1607,7 +1607,7 @@ fn smoke_reading(window: WindowHandle<DocumentView>, cx: &mut App) {
 
         press(Box::new(MoveDocumentEnd), cx).await;
         let end = window
-            .update(cx, |view, window, cx| view.scrollbar_thumb(window, cx))
+            .update(cx, |view, window, _| view.scrollbar_thumb(window))
             .ok()
             .flatten();
         checks.check(
@@ -2466,7 +2466,7 @@ fn smoke_print(window: WindowHandle<DocumentView>, cx: &mut App) {
             .flatten();
         let printed = cx.update(|cx| {
             let mtm = objc2::MainThreadMarker::new()?;
-            let settings = crate::app_settings::get(cx);
+            let settings = crate::text_style::TextSettings::from(&crate::app_settings::get(cx));
             Some(crate::print::save_pdf(
                 &*model?,
                 document.as_deref(),

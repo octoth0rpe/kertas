@@ -37,7 +37,7 @@ impl From<&Settings> for TextSettings {
 }
 
 /// What document text is drawn with: the body and code fonts, the theme,
-/// the tab width and the list indent.
+/// the tab width, the list indent and the image scale.
 #[derive(Clone)]
 pub struct Look {
     /// The body font, at the current size.
@@ -48,11 +48,13 @@ pub struct Look {
     /// How many spaces a tab is shown as.
     pub tab_width: u32,
     pub list_indent: ListIndent,
+    /// How much images are scaled from their natural size, with zoom.
+    pub image_scale: f32,
 }
 
 impl Look {
     /// The look for `settings`, on top of the window's `font`.
-    pub fn new(mut font: Font, theme: Theme, settings: &TextSettings) -> Self {
+    pub fn new(mut font: Font, theme: Theme, settings: &TextSettings, image_scale: f32) -> Self {
         if let Some(body_font) = &settings.body_font {
             font.family = body_font.clone();
         }
@@ -62,6 +64,7 @@ impl Look {
             theme,
             tab_width: settings.tab_width,
             list_indent: settings.list_indent,
+            image_scale,
         }
     }
 }

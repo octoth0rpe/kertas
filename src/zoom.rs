@@ -47,29 +47,20 @@ pub fn size(cx: &App) -> u32 {
         .map_or(app_settings::get(cx).font_size, |zoom| zoom.size)
 }
 
-/// How much images are scaled: 1 at the `font_size` setting, growing and
-/// shrinking with zoom.
-pub fn image_scale(cx: &App) -> f32 {
+/// The size zooming started from: the `font_size` setting.
+pub fn default_size(cx: &App) -> u32 {
     cx.try_global::<Zoom>()
-        .map_or(1., |zoom| zoom.size as f32 / zoom.default as f32)
+        .map_or(app_settings::get(cx).font_size, |zoom| zoom.default)
 }
 
-/// The next size up, if there is one.
-pub fn larger(cx: &App) -> Option<u32> {
-    let size = size(cx);
+/// The next size up from `size`, if there is one.
+pub fn larger(size: u32) -> Option<u32> {
     STEPS.iter().copied().find(|&step| step > size)
 }
 
-/// The next size down, if there is one.
-pub fn smaller(cx: &App) -> Option<u32> {
-    let size = size(cx);
+/// The next size down from `size`, if there is one.
+pub fn smaller(size: u32) -> Option<u32> {
     STEPS.iter().copied().rev().find(|&step| step < size)
-}
-
-/// Whether the size differs from the `font_size` setting.
-pub fn is_zoomed(cx: &App) -> bool {
-    cx.try_global::<Zoom>()
-        .is_some_and(|zoom| zoom.size != zoom.default)
 }
 
 /// Sets the size for this session.

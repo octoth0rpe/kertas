@@ -1,15 +1,13 @@
 //! The colors windows are drawn in (A2), from a color theme.
 //!
-//! The `theme` setting picks a theme, and the `appearance` setting its
-//! light or dark colors, or follows the macOS appearance. Themes come from
-//! theme files; see [`kertas_core::themes`].
+//! A theme has light and dark colors. Which are shown is chosen, or follows
+//! the macOS appearance. Themes come from theme files; see
+//! [`kertas_core::themes`].
 
-use gpui::{App, Hsla, Window, WindowAppearance, rgba};
+use gpui::{Hsla, Window, WindowAppearance, rgba};
 use kertas_core::rendered::AlertKind;
 use kertas_core::settings::AppearanceSetting;
 use kertas_core::themes::{self, Appearance, Color, Palette};
-
-use crate::app_settings;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Theme {
@@ -35,20 +33,18 @@ pub struct Theme {
 }
 
 impl Theme {
-    /// The colors for `window`: the `theme` setting's, in light or dark
-    /// mode as the `appearance` setting picks.
-    pub fn current(window: &Window, cx: &App) -> Self {
-        let settings = app_settings::get(cx);
-        let appearance = match settings.appearance {
+    /// `theme`'s colors for `window`, in light or dark mode as
+    /// `appearance` picks.
+    pub fn for_window(
+        theme: &themes::Theme,
+        appearance_setting: AppearanceSetting,
+        window: &Window,
+    ) -> Self {
+        let appearance = match appearance_setting {
             AppearanceSetting::Light => Appearance::Light,
             AppearanceSetting::Dark => Appearance::Dark,
             AppearanceSetting::System => appearance(window.appearance()),
         };
-        // The setting only names a theme there is.
-        let theme = app_settings::themes(cx)
-            .iter()
-            .find(|theme| theme.name == settings.theme)
-            .unwrap_or_else(|| themes::kertas());
         Self::from(theme.palette(appearance))
     }
 

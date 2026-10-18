@@ -8,12 +8,12 @@
 
 use std::ops::Range;
 
+use crate::text_style::TextSettings;
 use crate::theme::Theme;
 use kertas_core::links::ImageLocation;
 use kertas_core::model::Model;
 use kertas_core::print_layout::{Alignment, Frame, PrintLayout};
 use kertas_core::rendered::heading_scale;
-use kertas_core::settings::Settings;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{AnyThread, MainThreadMarker};
@@ -44,7 +44,7 @@ pub fn print(
     model: &Model,
     document: Option<&std::path::Path>,
     web_images: bool,
-    settings: &Settings,
+    settings: &TextSettings,
     title: &str,
     window: &NSWindow,
     mtm: MainThreadMarker,
@@ -67,7 +67,7 @@ pub fn print(
 pub fn save_pdf(
     model: &Model,
     document: Option<&std::path::Path>,
-    settings: &Settings,
+    settings: &TextSettings,
     path: &std::path::Path,
     mtm: MainThreadMarker,
 ) -> bool {
@@ -96,7 +96,7 @@ fn operation(
     model: &Model,
     document: Option<&std::path::Path>,
     web_images: bool,
-    settings: &Settings,
+    settings: &TextSettings,
     mtm: MainThreadMarker,
 ) -> Retained<NSPrintOperation> {
     let info = NSPrintInfo::sharedPrintInfo().copy();
@@ -167,7 +167,7 @@ impl Palette {
 /// `settings` choose, with images no wider than `width`.
 fn attributed(
     layout: &PrintLayout,
-    settings: &Settings,
+    settings: &TextSettings,
     width: f64,
     mtm: MainThreadMarker,
 ) -> Retained<NSMutableAttributedString> {
@@ -211,7 +211,7 @@ fn attributed(
             None => BODY,
         };
         let family = if style.code {
-            Some(settings.code_font())
+            Some(&*settings.code_font)
         } else {
             settings.body_font.as_deref()
         };

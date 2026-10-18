@@ -156,14 +156,14 @@ impl SettingsWindow {
         focus_handle.focus(window, cx);
         Self {
             focus_handle,
-            theme: Theme::current(window, cx),
+            theme: app_settings::window_theme(window, cx),
             _settings_observer: cx.observe_global_in::<AppSettings>(window, |this, window, cx| {
-                this.theme = Theme::current(window, cx);
+                this.theme = app_settings::window_theme(window, cx);
                 cx.notify();
             }),
             open_menu: None,
             _appearance_observer: cx.observe_window_appearance(window, |this, window, cx| {
-                this.theme = Theme::current(window, cx);
+                this.theme = app_settings::window_theme(window, cx);
                 cx.notify();
             }),
         }
