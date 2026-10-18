@@ -2394,6 +2394,7 @@ dependencies = [
 name = "kertas"
 version = "0.4.0"
 dependencies = [
+ "anyhow",
  "block2 0.6.2",
  "futures",
  "gpui",

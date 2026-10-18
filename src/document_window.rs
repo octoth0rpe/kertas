@@ -1,88 +1,53 @@
-//! A document window: the view Kertas wraps a document view in.
+//! A document window: the documents' tabs and the bars around them.
 //!
-//! The document view shows one document. The window around it has the tab
-//! strip, the window's title and edited marker, the bar for problems in
-//! the settings file, printing, and the actions for tabs, zoom and closing
-//! the window. It hears what the document view doesn't handle itself
-//! through [`DocumentEvent`]s.
+//! The tabs ([`DocumentTabs`]) hold the document views and show one at a
+//! time. The window around them has the window's title and edited marker
+//! (the active tab's), the bar for problems in the settings file,
+//! printing, and the actions for zoom and closing the window. It hears
+//! what the tabs and documents don't handle themselves through
+//! [`TabsEvent`]s.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use gpui::{
-    AnyElement, AnyWindowHandle, App, AppContext, Context, Entity, Focusable, KeyBinding, Render,
-    Subscription, SystemWindowTabController, Window, WindowHandle, actions, div, prelude::*, px,
-    relative, rems,
+    AnyElement, AnyWindowHandle, App, AppContext, Context, Entity, EntityId, Focusable, KeyBinding,
+    Render, Subscription, Window, WindowHandle, actions, div, prelude::*, px, relative, rems,
 };
-use kertas_core::titles;
 
 use crate::app_settings::{self, AppSettings};
 use crate::builtin::Builtin;
-use crate::tab_strip::{render_tab_strip, select_tab};
 use crate::{windows, zoom};
 use kertas_editor::Theme;
+use kertas_editor::tabs::{DocumentTabs, TabsEvent};
 use kertas_editor::{DocumentEvent, DocumentView, problems_bar};
 
-actions!(
-    kertas,
-    [
-        New,
-        Open,
-        Print,
-        CloseWindow,
-        Quit,
-        NextTab,
-        PreviousTab,
-        SelectTab1,
-        SelectTab2,
-        SelectTab3,
-        SelectTab4,
-        SelectTab5,
-        SelectTab6,
-        SelectTab7,
-        SelectTab8,
-        SelectTab9,
-    ]
-);
+actions!(kertas, [New, Open, Print, CloseWindow, Quit]);
 
-/// Key bindings for document windows (macOS conventions).
+/// Key bindings for document windows (macOS conventions). The tabs' keys,
+/// including ⌘W, are [`kertas_editor::tabs::key_bindings`].
 pub fn key_bindings() -> Vec<KeyBinding> {
     vec![
         KeyBinding::new("cmd-n", New, None),
         KeyBinding::new("cmd-o", Open, None),
         KeyBinding::new("cmd-p", Print, None),
-        KeyBinding::new("cmd-w", CloseWindow, None),
+        KeyBinding::new("cmd-shift-w", CloseWindow, None),
         KeyBinding::new("cmd-q", Quit, None),
-        KeyBinding::new("cmd-shift-]", NextTab, None),
-        KeyBinding::new("cmd-shift-[", PreviousTab, None),
-        KeyBinding::new("ctrl-tab", NextTab, None),
-        KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
-        KeyBinding::new("cmd-1", SelectTab1, None),
-        KeyBinding::new("cmd-2", SelectTab2, None),
-        KeyBinding::new("cmd-3", SelectTab3, None),
-        KeyBinding::new("cmd-4", SelectTab4, None),
-        KeyBinding::new("cmd-5", SelectTab5, None),
-        KeyBinding::new("cmd-6", SelectTab6, None),
-        KeyBinding::new("cmd-7", SelectTab7, None),
-        KeyBinding::new("cmd-8", SelectTab8, None),
-        KeyBinding::new("cmd-9", SelectTab9, None),
     ]
 }
 
 pub struct DocumentWindow {
-    view: Entity<DocumentView>,
-    /// Set when showing one of Kertas's built-in documents.
-    builtin: Option<Builtin>,
-    /// The folder shown after the file's name in the title, if another
-    /// open file has the same name.
-    title_hint: Option<String>,
+    tabs: Entity<DocumentTabs>,
+    /// The tabs showing Kertas's built-in documents, by document view.
+    builtins: HashMap<EntityId, Builtin>,
     /// Whether the user closed the bar reporting problems in the settings
     /// file. It shows again when the file changes.
     settings_problems_dismissed: bool,
-    _subscriptions: [Subscription; 4],
+    _subscriptions: [Subscription; 3],
 }
 
 impl DocumentWindow {
-    pub fn new(view: Entity<DocumentView>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         // Closing the window (e.g. its close button) asks about unsaved
         // changes first.
         let this = cx.entity().downgrade();
@@ -90,14 +55,13 @@ impl DocumentWindow {
             this.update(cx, |this, cx| this.should_close(window, cx))
                 .unwrap_or(true)
         });
+        let tabs = cx.new(|_| DocumentTabs::new());
         let subscriptions = [
-            cx.subscribe_in(&view, window, Self::document_event),
+            cx.subscribe_in(&tabs, window, Self::tabs_event),
             cx.observe_global_in::<AppSettings>(window, |this, _, cx| {
                 this.settings_problems_dismissed = false;
                 cx.notify();
             }),
-            // Redraw the tab strip when tabs are added, removed or renamed.
-            cx.observe_global_in::<SystemWindowTabController>(window, |_, _, cx| cx.notify()),
             cx.observe_window_activation(window, |_, window, cx| {
                 if window.is_window_active() {
                     // The default Markdown app can change in Finder.
@@ -106,44 +70,54 @@ impl DocumentWindow {
             }),
         ];
         Self {
-            view,
-            builtin: None,
-            title_hint: None,
+            tabs,
+            builtins: HashMap::new(),
             settings_problems_dismissed: false,
             _subscriptions: subscriptions,
         }
     }
 
-    /// The document view the window shows.
-    pub fn view(&self) -> &Entity<DocumentView> {
-        &self.view
+    /// The window's tabs.
+    pub fn tabs(&self) -> &Entity<DocumentTabs> {
+        &self.tabs
     }
 
-    /// Shows one of Kertas's built-in documents, view-only.
-    pub fn open_builtin(&mut self, builtin: Builtin, window: &mut Window, cx: &mut Context<Self>) {
-        self.builtin = Some(builtin);
-        self.view.update(cx, |view, cx| {
+    /// Adds a tab for a new document view, makes it the active tab, and
+    /// returns its view.
+    pub fn add_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<DocumentView> {
+        let config = app_settings::editor_config(cx);
+        let view = cx.new(|cx| DocumentView::new(config, window, cx));
+        self.tabs
+            .update(cx, |tabs, cx| tabs.add(view.clone(), window, cx));
+        view
+    }
+
+    /// Shows one of Kertas's built-in documents, view-only, in `view`.
+    pub fn open_builtin(
+        &mut self,
+        view: &Entity<DocumentView>,
+        builtin: Builtin,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.builtins.insert(view.entity_id(), builtin);
+        view.update(cx, |view, cx| {
             view.show_text(&builtin.text(), builtin.title(), window, cx)
         });
     }
 
-    /// The built-in document shown, if any.
-    pub fn builtin(&self) -> Option<Builtin> {
-        self.builtin
+    /// The tab showing `builtin`, if any, by its position.
+    pub fn builtin_tab(&self, builtin: Builtin, cx: &App) -> Option<usize> {
+        let tabs = self.tabs.read(cx);
+        tabs.views()
+            .position(|view| self.builtins.get(&view.entity_id()) == Some(&builtin))
     }
 
-    /// Sets the folder shown after the file's name, to tell it from other
-    /// open files with the same name.
-    pub fn set_title_hint(
-        &mut self,
-        hint: Option<String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.title_hint != hint {
-            self.title_hint = hint;
-            self.apply_title(window, cx);
-        }
+    /// The built-in document in the active tab, if any.
+    #[cfg(debug_assertions)]
+    pub fn builtin(&self, cx: &App) -> Option<Builtin> {
+        let view = self.tabs.read(cx).active_view()?;
+        self.builtins.get(&view.entity_id()).copied()
     }
 
     /// Whether the bar reporting problems in the settings file is showing,
@@ -153,59 +127,67 @@ impl DocumentWindow {
         !self.settings_problems_dismissed
     }
 
-    fn document_event(
+    fn tabs_event(
         &mut self,
-        _: &Entity<DocumentView>,
-        event: &DocumentEvent,
+        _: &Entity<DocumentTabs>,
+        event: &TabsEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         match event {
-            // Every other window's title too, since they may share a name
+            TabsEvent::ActiveChanged | TabsEvent::Reordered => self.apply_title(window, cx),
+            TabsEvent::Closed(view) => {
+                self.builtins.remove(&view.entity_id());
+                if self.tabs.read(cx).is_empty() {
+                    window.remove_window();
+                    return;
+                }
+                self.apply_title(window, cx);
+                // A file that shared its name with the closed one may not
+                // need its folder any more.
+                cx.defer(windows::refresh_titles);
+            }
+            // Every other tab's title too, since they may share a name
             // (#95).
-            DocumentEvent::TitleChanged => {
+            TabsEvent::Document(_, DocumentEvent::TitleChanged) => {
                 self.apply_title(window, cx);
                 cx.defer(windows::refresh_titles);
             }
-            // Show unsaved changes in the window's close button and tab.
-            DocumentEvent::DirtyChanged(dirty) => {
-                window.set_window_edited(*dirty);
+            TabsEvent::Document(_, DocumentEvent::DirtyChanged(_)) => {
+                self.apply_title(window, cx);
                 cx.notify();
             }
-            DocumentEvent::OpenFile { path, anchor } => {
+            TabsEvent::Document(_, DocumentEvent::OpenFile { path, anchor }) => {
                 let (path, anchor) = (path.clone(), anchor.clone());
                 cx.defer(move |cx| windows::open_path_at(path, anchor, cx));
             }
         }
     }
 
-    fn apply_title(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let view = self.view.read(cx);
-        let Some(name) = view.display_name() else {
+    /// Gives the window the active tab's title, file and unsaved changes.
+    pub fn apply_title(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let tabs = self.tabs.read(cx);
+        let Some(view) = tabs.active_view() else {
             return;
         };
-        let title = match self.builtin {
-            Some(_) => name,
-            None => titles::title(&name, self.title_hint.as_deref()),
-        };
-        window.set_window_title(&title);
+        let view = view.read(cx);
+        if let Some(title) = tabs.title(tabs.active_index(), cx) {
+            window.set_window_title(&title);
+        }
         window.set_document_path(view.document_path());
-        // GPUI doesn't update tab titles from the window title.
-        SystemWindowTabController::update_tab_title(
-            cx,
-            window.window_handle().window_id(),
-            title.into(),
-        );
+        // Show unsaved changes in the window's close button.
+        window.set_window_edited(view.is_dirty());
     }
 
-    /// Whether the window may close now. With unsaved changes, asks first
-    /// and closes the window itself once that's resolved.
+    /// Whether the window may close now. With unsaved changes, asks about
+    /// each tab in turn and closes the window itself once they're all
+    /// resolved.
     fn should_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let view = self.view.clone();
-        if view.update(cx, |view, cx| view.ready_to_close(window, cx)) {
+        let tabs = self.tabs.clone();
+        if tabs.update(cx, |tabs, cx| tabs.ready_to_close(window, cx)) {
             return true;
         }
-        let confirmed = view.update(cx, |view, cx| view.confirm_close(window, cx));
+        let confirmed = tabs.update(cx, |tabs, cx| tabs.confirm_close(window, cx));
         cx.spawn_in(window, async move |_, cx| {
             if confirmed.await {
                 cx.update(|window, _| window.remove_window()).ok();
@@ -225,14 +207,17 @@ impl DocumentWindow {
     fn print(&mut self, _: &Print, window: &mut Window, cx: &mut Context<Self>) {
         #[cfg(target_os = "macos")]
         {
-            let view = self.view.read(cx);
+            let Some(view) = self.tabs.read(cx).active_view() else {
+                return;
+            };
+            let view = view.read(cx);
             let Some(model) = view.model() else {
                 return;
             };
             let Some(mtm) = objc2::MainThreadMarker::new() else {
                 return;
             };
-            let Some(ns_window) = crate::native_tabs::ns_window(window) else {
+            let Some(ns_window) = crate::ns_window::ns_window(window) else {
                 return;
             };
             crate::print::print(
@@ -265,7 +250,7 @@ impl DocumentWindow {
                 cx.listener(|this, _, window, cx| {
                     this.settings_problems_dismissed = true;
                     // Focus would otherwise be left on nothing.
-                    this.view.focus_handle(cx).focus(window, cx);
+                    this.tabs.focus_handle(cx).focus(window, cx);
                     cx.notify();
                 }),
             )
@@ -276,13 +261,21 @@ impl DocumentWindow {
 
 impl Render for DocumentWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let view = self.view.read(cx);
-        let theme = view.theme();
-        let dirty = view.is_dirty();
-        let size = view.config().font_size;
+        let (theme, size) = match self.tabs.read(cx).active_view() {
+            Some(view) => {
+                let view = view.read(cx);
+                (view.theme(), view.config().font_size)
+            }
+            None => {
+                let config = app_settings::editor_config(cx);
+                (
+                    Theme::for_window(&config.theme, config.appearance, window),
+                    config.font_size,
+                )
+            }
+        };
         // The bars are sized in rems too, so they zoom with the text.
         window.set_rem_size(px(size as f32));
-        let tab_strip = render_tab_strip(window, cx, theme, dirty);
         let problems_bar = self.render_settings_problems(theme, cx);
         // Zoom In, Zoom Out and Reset Zoom, while each is possible.
         zoom::handle_actions(div(), cx)
@@ -295,32 +288,13 @@ impl Render for DocumentWindow {
             .flex_col()
             .on_action(cx.listener(Self::print))
             .on_action(cx.listener(Self::close_window))
-            .on_action(|_: &NextTab, window, cx| {
-                SystemWindowTabController::select_next_tab(cx, window.window_handle().window_id())
-            })
-            .on_action(|_: &PreviousTab, window, cx| {
-                SystemWindowTabController::select_previous_tab(
-                    cx,
-                    window.window_handle().window_id(),
-                )
-            })
-            .on_action(|_: &SelectTab1, window, cx| select_tab(0, window, cx))
-            .on_action(|_: &SelectTab2, window, cx| select_tab(1, window, cx))
-            .on_action(|_: &SelectTab3, window, cx| select_tab(2, window, cx))
-            .on_action(|_: &SelectTab4, window, cx| select_tab(3, window, cx))
-            .on_action(|_: &SelectTab5, window, cx| select_tab(4, window, cx))
-            .on_action(|_: &SelectTab6, window, cx| select_tab(5, window, cx))
-            .on_action(|_: &SelectTab7, window, cx| select_tab(6, window, cx))
-            .on_action(|_: &SelectTab8, window, cx| select_tab(7, window, cx))
-            .on_action(|_: &SelectTab9, window, cx| select_tab(8, window, cx))
-            .children(tab_strip)
-            .child(div().flex_1().min_h(px(0.)).child(self.view.clone()))
+            .child(div().flex_1().min_h(px(0.)).child(self.tabs.clone()))
             .children(problems_bar)
     }
 }
 
-/// A document window's handle, which reaches the document view inside it
-/// as a window handle reaches its root view.
+/// A document window's handle, which reaches the active tab's document
+/// view as a window handle reaches its root view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DocumentWindowHandle(pub WindowHandle<DocumentWindow>);
 
@@ -330,36 +304,62 @@ impl DocumentWindowHandle {
         window.downcast::<DocumentWindow>().map(Self)
     }
 
-    /// Updates the window's document view.
+    /// Updates the active tab's document view.
     pub fn update<C: AppContext, R>(
         &self,
         cx: &mut C,
         update: impl FnOnce(&mut DocumentView, &mut Window, &mut Context<DocumentView>) -> R,
     ) -> gpui::Result<R> {
         self.0.update(cx, |this, window, cx| {
-            this.view.update(cx, |view, cx| update(view, window, cx))
-        })
+            let view = this.active_view(cx)?;
+            Ok(view.update(cx, |view, cx| update(view, window, cx)))
+        })?
     }
 
-    /// The window's document view.
+    /// The active tab's document view.
     pub fn read<'a>(&self, cx: &'a App) -> gpui::Result<&'a DocumentView> {
-        Ok(self.0.read(cx)?.view.read(cx))
+        let view = self.0.read(cx)?.tabs.read(cx).active_view();
+        Ok(view.ok_or_else(no_tabs)?.read(cx))
     }
 
-    /// Reads the window's document view, with a callback.
+    /// Reads the active tab's document view, with a callback.
     pub fn read_with<C: AppContext, R>(
         &self,
         cx: &C,
         read_with: impl FnOnce(&DocumentView, &App) -> R,
     ) -> gpui::Result<R> {
-        self.0
-            .read_with(cx, |this, cx| read_with(this.view.read(cx), cx))
+        self.0.read_with(cx, |this, cx| {
+            let view = this.active_view(cx)?;
+            Ok(read_with(view.read(cx), cx))
+        })?
+    }
+
+    /// Every tab's document view, in tab order.
+    pub fn views(&self, cx: &App) -> Vec<Entity<DocumentView>> {
+        self.0.read(cx).map_or_else(
+            |_| Vec::new(),
+            |this| this.tabs.read(cx).views().cloned().collect(),
+        )
     }
 
     /// The document's file, if it has one.
     pub fn document_path<'a>(&self, cx: &'a App) -> Option<&'a Path> {
         self.read(cx).ok()?.document_path()
     }
+}
+
+impl DocumentWindow {
+    fn active_view(&self, cx: &App) -> gpui::Result<Entity<DocumentView>> {
+        self.tabs
+            .read(cx)
+            .active_view()
+            .cloned()
+            .ok_or_else(no_tabs)
+    }
+}
+
+fn no_tabs() -> anyhow::Error {
+    anyhow::anyhow!("the window has no tabs")
 }
 
 impl std::ops::Deref for DocumentWindowHandle {

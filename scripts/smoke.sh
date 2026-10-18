@@ -72,6 +72,9 @@ fi
 echo "    SMOKE OK (text as expected)"
 
 run tabs showcase.md
+mkdir -p "$work/windows/config"
+echo 'layout = "windows"' > "$work/windows/config/config.toml"
+run windows showcase.md
 run settings showcase.md
 run settings-window showcase.md
 run help showcase.md
