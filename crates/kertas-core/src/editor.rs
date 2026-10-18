@@ -162,6 +162,11 @@ impl Editor {
         result
     }
 
+    /// Moves the document's file to `path`. See [`Document::rename`].
+    pub fn rename(&mut self, path: impl Into<PathBuf>) -> std::io::Result<()> {
+        self.document.rename(path)
+    }
+
     /// Accepts a change another app made to the file without reloading
     /// ("Keep Mine"). See [`Document::accept_disk_change`].
     pub fn accept_disk_change(&mut self, change: &DiskChange) {

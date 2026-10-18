@@ -162,6 +162,39 @@ impl Document {
         Ok(())
     }
 
+    /// Moves the document's file to `path`, which becomes its path. The
+    /// text and any unsaved changes are kept as they are. A document whose
+    /// file hasn't been created yet just takes the new path.
+    ///
+    /// It never overwrites: if something is already at `path`, it fails
+    /// with [`io::ErrorKind::AlreadyExists`] and nothing changes. A name
+    /// that differs only in case, on a disk that ignores case, is the same
+    /// file, so that rename works.
+    pub fn rename(&mut self, path: impl Into<PathBuf>) -> io::Result<()> {
+        let path = path.into();
+        let Some(old) = self.path.clone() else {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "the document has no file yet",
+            ));
+        };
+        if path == old {
+            return Ok(());
+        }
+        let old_exists = fs::symlink_metadata(&old).is_ok();
+        if fs::symlink_metadata(&path).is_ok() && !(old_exists && same_file(&old, &path)) {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("“{}” already exists", display_name(&path)),
+            ));
+        }
+        if old_exists {
+            fs::rename(&old, &path)?;
+        }
+        self.path = Some(path);
+        Ok(())
+    }
+
     /// How the file now differs from the version last loaded, saved or
     /// accepted, or `None` if it doesn't, or the document has no file.
     /// Kertas's own saves never count as changes.
@@ -244,6 +277,23 @@ fn write_atomically(path: &Path, buffer: &Buffer) -> io::Result<()> {
         fs::remove_file(&temp).ok();
     }
     result
+}
+
+/// Whether `a` and `b` name the same file (not following symlinks), as two
+/// spellings of one name do on a disk that ignores case.
+fn same_file(a: &Path, b: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        match (fs::symlink_metadata(a), fs::symlink_metadata(b)) {
+            (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+            _ => false,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        matches!((fs::canonicalize(a), fs::canonicalize(b)), (Ok(a), Ok(b)) if a == b)
+    }
 }
 
 fn display_name(path: &Path) -> String {
@@ -399,6 +449,71 @@ mod tests {
             document.disk_change().map(|change| change.kind),
             Some(DiskChangeKind::Changed(_))
         ));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rename_moves_the_file_and_keeps_the_text() {
+        let dir = temp_dir("rename");
+        let old = dir.join("04-untitled.md");
+        fs::write(&old, "# Storm\n").unwrap();
+        let mut document = Document::open(&old).unwrap();
+        document.buffer_mut().replace(8..8, "Rain.\n");
+        let new = dir.join("04-storm.md");
+        document.rename(&new).unwrap();
+        assert_eq!(document.path(), Some(new.as_path()));
+        assert!(!old.exists());
+        // The file moved as it was; the unsaved changes are still unsaved.
+        assert_eq!(fs::read_to_string(&new).unwrap(), "# Storm\n");
+        assert!(document.is_dirty());
+        assert!(document.disk_change().is_none());
+        document.save().unwrap();
+        assert_eq!(fs::read_to_string(&new).unwrap(), "# Storm\nRain.\n");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rename_never_overwrites() {
+        let dir = temp_dir("rename-clash");
+        let old = dir.join("a.md");
+        let taken = dir.join("b.md");
+        fs::write(&old, "A\n").unwrap();
+        fs::write(&taken, "B\n").unwrap();
+        let mut document = Document::open(&old).unwrap();
+        let err = document.rename(&taken).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(document.path(), Some(old.as_path()));
+        assert_eq!(fs::read_to_string(&old).unwrap(), "A\n");
+        assert_eq!(fs::read_to_string(&taken).unwrap(), "B\n");
+        // Without a file, there's nothing to rename.
+        assert!(Document::untitled().rename(&taken).is_err());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rename_before_the_file_exists() {
+        let dir = temp_dir("rename-new");
+        let mut document = Document::new_at(dir.join("new.md"));
+        document.rename(dir.join("renamed.md")).unwrap();
+        assert_eq!(document.display_name(), "renamed.md");
+        assert!(!dir.join("renamed.md").exists());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rename_changing_only_case() {
+        let dir = temp_dir("rename-case");
+        let old = dir.join("storm.md");
+        fs::write(&old, "S\n").unwrap();
+        let mut document = Document::open(&old).unwrap();
+        let new = dir.join("Storm.md");
+        // Works whether or not the disk ignores case.
+        document.rename(&new).unwrap();
+        let names: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["Storm.md"]);
         fs::remove_dir_all(&dir).ok();
     }
 }
