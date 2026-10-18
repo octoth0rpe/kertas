@@ -97,8 +97,9 @@ pub fn key_bindings() -> Vec<KeyBinding> {
     ]
 }
 
-/// How long the caret stays on, and then off, while blinking.
-const CARET_BLINK_INTERVAL: Duration = Duration::from_millis(530);
+/// How long the caret stays on, and then off, while blinking. Public so
+/// other text controls in a host app can blink in step with the editor.
+pub const CARET_BLINK_INTERVAL: Duration = Duration::from_millis(530);
 
 /// An open document: its editor, and the layout state that shows it.
 struct OpenDocument {
