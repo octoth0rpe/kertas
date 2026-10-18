@@ -1,6 +1,6 @@
 # Markdown Syntax
 
-Kertas supports CommonMark and GitHub's additions to it: tables, task lists, strikethrough, links from web addresses, footnotes and alerts. Each example shows the Markdown, then how it looks. The everyday syntax comes first.
+{app} supports CommonMark and GitHub's additions to it: tables, task lists, strikethrough, links from web addresses, footnotes and alerts. Each example shows the Markdown, then how it looks. The everyday syntax comes first.
 
 ## Headings
 
@@ -52,7 +52,7 @@ https://commonmark.org
 
 https://commonmark.org
 
-A link can have a title after its address, `[Markdown](https://commonmark.org "CommonMark")`, which Kertas keeps but doesn't show.
+A link can have a title after its address, `[Markdown](https://commonmark.org "CommonMark")`, which {app} keeps but doesn't show.
 
 ## Images
 
@@ -62,7 +62,7 @@ A link can have a title after its address, `[Markdown](https://commonmark.org "C
 
 The path is relative to the document's folder. The image is shown at its own size, or smaller to fit, and the description is shown instead if the file can't be found.
 
-Images from the web (`https://…`) aren't loaded until you ask: a bar at the top of the document offers **Load Images**. Kertas asks each time the document is opened. Until then, each image shows its description.
+Images from the web (`https://…`) aren't loaded until you ask: a bar at the top of the document offers **Load Images**. {app} asks each time the document is opened. Until then, each image shows its description.
 
 ## Lists
 
@@ -162,7 +162,7 @@ Heading 2
 
 ## Numbered lists that start elsewhere
 
-A list starts at its first number. The numbers after it don't matter: Kertas counts on from the first.
+A list starts at its first number. The numbers after it don't matter: {app} counts on from the first.
 
 ```markdown
 3. Third
@@ -231,12 +231,12 @@ A quote that starts with `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]` or `[
 ## Footnotes
 
 ```markdown
-Kertas shows footnotes[^1] as GitHub does.
+{app} shows footnotes[^1] as GitHub does.
 
 [^1]: The note can go anywhere in the file.
 ```
 
-Kertas shows footnotes[^1] as GitHub does.
+{app} shows footnotes[^1] as GitHub does.
 
 [^1]: The note can go anywhere in the file.
 
@@ -244,7 +244,7 @@ Each note is drawn at the end of the document, numbered in the order the referen
 
 ## Front matter
 
-Settings for other tools, such as a blog's title and date, can go at the very start of the file, between two `---` lines (YAML) or two `+++` lines (TOML). Kertas keeps the front matter and shows it as it's written.
+Settings for other tools, such as a blog's title and date, can go at the very start of the file, between two `---` lines (YAML) or two `+++` lines (TOML). {app} keeps the front matter and shows it as it's written.
 
 ```markdown
 ---

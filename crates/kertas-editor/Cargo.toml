@@ -14,6 +14,8 @@ kertas-core.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
 futures.workspace = true
+# Editing the settings file in place, keeping its comments.
+toml_edit.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Watching files with kqueue (src/file_watch.rs).

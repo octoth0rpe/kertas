@@ -12,8 +12,8 @@
 use std::path::{Path, PathBuf};
 
 use gpui::{
-    App, Bounds, Context, PathPromptOptions, SystemWindowTabController, TitlebarOptions, Window,
-    WindowBounds, WindowOptions, point, prelude::*, px, size,
+    App, Bounds, Context, Global, PathPromptOptions, SystemWindowTabController, TitlebarOptions,
+    Window, WindowBounds, WindowOptions, point, prelude::*, px, size,
 };
 
 use kertas_core::settings::Layout;
@@ -23,10 +23,8 @@ use crate::app_settings::{self, AppSettings};
 use crate::document_window::{CloseWindow, DocumentWindow, DocumentWindowHandle, New, Open, Quit};
 #[cfg(target_os = "macos")]
 use crate::native_tabs::{add_as_tab, ns_window};
-use crate::zoom::{self, Zoom};
+use crate::zoom::Zoom;
 use kertas_editor::DocumentView;
-use kertas_editor::EditorConfig;
-use kertas_editor::TextSettings;
 
 /// Groups document windows into native tabs.
 const TABBING_IDENTIFIER: &str = "kertas-documents";
@@ -42,6 +40,7 @@ const CASCADE_OFFSET: f32 = 24.;
 /// is locked for the dispatch, so updating that window from the handler
 /// itself would silently fail.
 pub fn register(cx: &mut App) {
+    cx.set_global(LaunchLayout(app_settings::get(cx).layout));
     cx.observe_global::<AppSettings>(update_configs).detach();
     cx.observe_global::<Zoom>(update_configs).detach();
     cx.on_action(|_: &New, cx| {
@@ -69,6 +68,8 @@ pub fn register(cx: &mut App) {
     // closing the last window quits.
     cx.on_action(|_: &Quit, cx| {
         cx.defer(|cx| {
+            // Settings closes without asking.
+            crate::settings_window::close(cx);
             let windows = cx.windows();
             if windows.is_empty() {
                 cx.quit();
@@ -85,24 +86,10 @@ pub fn register(cx: &mut App) {
 }
 
 /// What document views are told: the settings, at the current zoom.
-fn editor_config(cx: &App) -> EditorConfig {
-    let settings = app_settings::get(cx);
-    EditorConfig {
-        text: TextSettings::from(&settings),
-        theme: app_settings::theme(cx),
-        appearance: settings.appearance,
-        font_size: zoom::size(cx),
-        default_font_size: zoom::default_size(cx),
-        autosave: settings.autosave,
-        scrollbar: settings.scrollbar,
-        editing_hint: settings.editing_hint,
-    }
-}
-
 /// Gives every document view the configuration, after the settings or the
 /// zoom change.
 fn update_configs(cx: &mut App) {
-    let config = editor_config(cx);
+    let config = app_settings::editor_config(cx);
     for window in cx.windows() {
         if let Some(window) = DocumentWindowHandle::downcast(window) {
             window
@@ -155,6 +142,20 @@ pub fn refresh_titles(cx: &mut App) {
     }
 }
 
+/// The `layout` setting when Kertas started. Changing it takes effect when
+/// Kertas restarts, so documents already open never have to be rearranged.
+struct LaunchLayout(Layout);
+
+impl Global for LaunchLayout {}
+
+/// How documents are arranged in this session: the `layout` setting when
+/// Kertas started.
+fn launch_layout(cx: &App) -> Layout {
+    cx.try_global::<LaunchLayout>()
+        .map(|launch| launch.0)
+        .unwrap_or_default()
+}
+
 /// Opens a new document window (a tab, by default) and sets it up.
 pub fn open_window(
     cx: &mut App,
@@ -163,7 +164,7 @@ pub fn open_window(
     let previous = frontmost_document_window(cx);
     let previous_bounds =
         previous.and_then(|window| window.update(cx, |_, window, _| window.bounds()).ok());
-    let layout = app_settings::launch_layout(cx);
+    let layout = launch_layout(cx);
     let bounds = match (layout, previous_bounds) {
         (Layout::Windows, Some(previous)) => Bounds::new(
             previous.origin + point(px(CASCADE_OFFSET), px(CASCADE_OFFSET)),
@@ -185,7 +186,7 @@ pub fn open_window(
                 ..Default::default()
             },
             |window, cx| {
-                let config = editor_config(cx);
+                let config = app_settings::editor_config(cx);
                 let view = cx.new(|cx| DocumentView::new(config, window, cx));
                 cx.new(|cx| DocumentWindow::new(view, window, cx))
             },

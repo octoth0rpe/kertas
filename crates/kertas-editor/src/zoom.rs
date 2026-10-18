@@ -1,13 +1,43 @@
-//! The text size for this session (#28).
+//! The text size for this session.
 //!
-//! Zooming changes the size in every document. It isn't saved: Kertas starts
-//! at the `font_size` setting, and Reset Zoom returns to it. Changing the
-//! setting also changes the current size.
+//! Zooming changes the size in every document. It isn't saved: the app
+//! starts at the `font_size` setting, and Reset Zoom returns to it.
+//! Changing the setting also changes the current size.
 
-use gpui::{App, Global};
+use gpui::prelude::FluentBuilder;
+use gpui::{App, Global, InteractiveElement, KeyBinding, actions};
 use kertas_core::settings::FONT_SIZES;
 
 use crate::app_settings::{self, AppSettings};
+
+actions!(kertas, [ZoomIn, ZoomOut, ResetZoom]);
+
+/// The zoom keys: ⌘+ (or ⌘=), ⌘- and ⌘0.
+pub fn key_bindings() -> Vec<KeyBinding> {
+    vec![
+        KeyBinding::new("cmd-=", ZoomIn, None),
+        KeyBinding::new("cmd-+", ZoomIn, None),
+        KeyBinding::new("cmd--", ZoomOut, None),
+        KeyBinding::new("cmd-0", ResetZoom, None),
+    ]
+}
+
+/// `element` handling the zoom actions. Each is handled only while
+/// possible, so its menu item is disabled at the limits.
+pub fn handle_actions<E: InteractiveElement + FluentBuilder>(element: E, cx: &App) -> E {
+    let size = size(cx);
+    let zoomed = size != default_size(cx);
+    element
+        .when_some(larger(size), |this, size| {
+            this.on_action(move |_: &ZoomIn, _, cx| set(size, cx))
+        })
+        .when_some(smaller(size), |this, size| {
+            this.on_action(move |_: &ZoomOut, _, cx| set(size, cx))
+        })
+        .when(zoomed, |this| {
+            this.on_action(|_: &ResetZoom, _, cx| reset(cx))
+        })
+}
 
 /// The sizes Zoom In and Zoom Out step through, in pixels.
 const STEPS: &[u32] = &[
@@ -23,7 +53,7 @@ pub struct Zoom {
 impl Global for Zoom {}
 
 /// Starts at the `font_size` setting, and follows changes to it.
-pub fn init(cx: &mut App) {
+pub(crate) fn init(cx: &mut App) {
     let default = app_settings::get(cx).font_size;
     cx.set_global(Zoom {
         size: default,
