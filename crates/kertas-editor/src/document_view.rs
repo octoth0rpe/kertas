@@ -17,6 +17,7 @@ mod line_scroll;
 mod render;
 mod scrollbar;
 
+pub use files::HeadingTarget;
 pub use render::bar_button;
 
 use std::cell::RefCell;

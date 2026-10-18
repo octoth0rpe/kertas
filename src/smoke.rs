@@ -2078,6 +2078,31 @@ fn smoke_anchors(window: DocumentWindowHandle, cx: &mut App) {
             &format!("#setup scrolls to the heading (top item {top:?})"),
             top == Some(63),
         );
+        // A host going to a heading by an offset in it, without starting
+        // to edit (#116).
+        dispatch(window, cx, Box::new(Unreveal));
+        pause(cx, 2).await;
+        let inside = window
+            .read_with(cx, |view, _| view.item_start(33))
+            .ok()
+            .flatten()
+            .map(|start| start + 3);
+        let found = window
+            .update(cx, |view, _, cx| {
+                inside.is_some_and(|offset| {
+                    view.go_to_heading(kertas_editor::HeadingTarget::Offset(offset), cx)
+                })
+            })
+            .unwrap_or(false);
+        pause(cx, 10).await;
+        let top = top_item(window, cx);
+        let caret = window
+            .read_with(cx, |view, _| view.has_caret())
+            .unwrap_or(true);
+        checks.check(
+            &format!("go_to_heading by offset scrolls there, not editing (top item {top:?})"),
+            found && top == Some(33) && !caret,
+        );
 
         window
             .update(cx, |view, window, cx| {
@@ -2087,7 +2112,7 @@ fn smoke_anchors(window: DocumentWindowHandle, cx: &mut App) {
         pause(cx, 5).await;
         checks.check(
             "a missing heading stays put",
-            top_item(window, cx) == Some(63),
+            top_item(window, cx) == Some(33),
         );
 
         // An HTML anchor, with and without GitHub's prefix (#96). It's on
