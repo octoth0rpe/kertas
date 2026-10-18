@@ -34,7 +34,9 @@ pub use gpui_platform;
 pub use kertas_core;
 
 pub use assets::Assets;
-pub use document_view::{DocumentEvent, DocumentView, bar_button, key_bindings};
+pub use document_view::{
+    CARET_BLINK_INTERVAL, DocumentEvent, DocumentView, bar_button, key_bindings,
+};
 pub use editor_config::EditorConfig;
 pub use rendered_block::natural_size;
 pub use text_style::TextSettings;
