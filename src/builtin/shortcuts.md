@@ -9,7 +9,8 @@
 | ⌘S | Save |
 | ⇧⌘S | Save As |
 | ⌘P | Print |
-| ⌘W | Close the document |
+| ⌘W | Close the tab |
+| ⇧⌘W | Close the window |
 | ⌘Q | Quit Kertas |
 | ⌘, | Settings |
 | ⇧⌘] or ⌃⇥ | Next tab |

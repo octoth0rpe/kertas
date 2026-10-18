@@ -36,6 +36,15 @@ impl DocumentView {
         .detach();
     }
 
+    /// Called when the view is hidden, such as when another tab is
+    /// chosen: autosaves, and ends a mouse drag, whose button may now come
+    /// up over another view.
+    pub(crate) fn hidden(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.end_drag();
+        self.end_scrollbar_drag(cx);
+        self.autosave(window, cx);
+    }
+
     /// Saves the document if autosave is on and it has unsaved changes
     /// that can be saved without asking. Returns whether there's nothing
     /// left unsaved: it was saved, or didn't need to be.
@@ -44,7 +53,7 @@ impl DocumentView {
     /// another app made to the file, or after an autosave failed, until
     /// the user saves it. If the file changed since it was last loaded or
     /// saved, the bar asks instead of saving over it.
-    pub(super) fn autosave(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+    pub(crate) fn autosave(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if self.config.autosave.is_none() || self.confirming {
             return !self.is_dirty();
         }

@@ -6,7 +6,7 @@
 
 use std::borrow::Cow;
 
-use gpui::{App, Keystroke, WindowHandle};
+use gpui::{App, Keystroke};
 
 use kertas_editor::help;
 
@@ -73,19 +73,19 @@ impl Builtin {
 
 /// Opens `builtin` in a new tab, or switches to it if it's open already.
 pub fn open(builtin: Builtin, cx: &mut App) {
-    let existing = cx
-        .windows()
-        .into_iter()
-        .filter_map(|window| window.downcast::<DocumentWindow>())
-        .find(|window: &WindowHandle<DocumentWindow>| {
-            window
-                .read(cx)
-                .is_ok_and(|this| this.builtin() == Some(builtin))
-        });
+    let existing = cx.windows().into_iter().find_map(|window| {
+        let window = window.downcast::<DocumentWindow>()?;
+        let index = window.read(cx).ok()?.builtin_tab(builtin, cx)?;
+        Some((window, index))
+    });
     match existing {
-        Some(window) => {
+        Some((window, index)) => {
             window
-                .update(cx, |_, window, _| window.activate_window())
+                .update(cx, |this, window, cx| {
+                    window.activate_window();
+                    this.tabs()
+                        .update(cx, |tabs, cx| tabs.activate(index, window, cx));
+                })
                 .ok();
         }
         None => {
@@ -93,7 +93,9 @@ pub fn open(builtin: Builtin, cx: &mut App) {
                 window
                     .0
                     .update(cx, |this, window, cx| {
-                        this.open_builtin(builtin, window, cx)
+                        if let Some(view) = this.tabs().read(cx).active_view().cloned() {
+                            this.open_builtin(&view, builtin, window, cx);
+                        }
                     })
                     .ok();
             }
@@ -149,6 +151,7 @@ mod tests {
         let bindings = kertas_editor::key_bindings()
             .into_iter()
             .chain(crate::document_window::key_bindings())
+            .chain(kertas_editor::tabs::key_bindings())
             .chain(kertas_editor::zoom::key_bindings())
             .chain(kertas_editor::settings_window::key_bindings());
         for binding in bindings {

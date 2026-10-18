@@ -11,14 +11,13 @@ mod document_window;
 #[cfg(target_os = "macos")]
 mod menus;
 #[cfg(target_os = "macos")]
-mod native_tabs;
+mod ns_window;
 #[cfg(target_os = "macos")]
 mod print;
 #[cfg(debug_assertions)]
 mod smoke;
 #[cfg(target_os = "macos")]
 mod system_actions;
-mod tab_strip;
 #[cfg(target_os = "macos")]
 mod web_images;
 mod windows;
@@ -59,6 +58,7 @@ fn main() -> std::process::ExitCode {
         windows::register(cx);
         cx.bind_keys(kertas_editor::key_bindings());
         cx.bind_keys(document_window::key_bindings());
+        cx.bind_keys(kertas_editor::tabs::key_bindings());
         cx.bind_keys(settings_window::key_bindings());
         cx.bind_keys(zoom::key_bindings());
         #[cfg(target_os = "macos")]
@@ -70,8 +70,8 @@ fn main() -> std::process::ExitCode {
             if cx.windows().is_empty() {
                 cx.quit();
             } else {
-                // A file that shared its name with the closed one may not
-                // need its folder any more.
+                // A file that shared its name with one in the closed
+                // window may not need its folder any more.
                 cx.defer(windows::refresh_titles);
             }
         })

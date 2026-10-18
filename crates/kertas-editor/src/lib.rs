@@ -24,6 +24,9 @@
 //! ([`app_settings`]), and with them zooming ([`zoom`]), the View menu
 //! ([`view_menu`]), the settings window ([`settings_window`]), the bar that
 //! reports problems ([`problems_bar`]), and help texts ([`help`]).
+//!
+//! [`tabs::DocumentTabs`] holds several document views in one window, as
+//! tabs.
 
 pub mod app_settings;
 mod assets;
@@ -35,6 +38,7 @@ mod problems_bar;
 mod rendered_block;
 mod revealed_block;
 pub mod settings_window;
+pub mod tabs;
 mod text_style;
 mod theme;
 pub mod view_menu;

@@ -8,8 +8,11 @@ use gpui::{App, Menu, MenuItem, actions};
 use crate::app_settings::AppSettings;
 use crate::builtin::{self, Builtin};
 use crate::document_window::{CloseWindow, New, Open, Print, Quit};
+use crate::windows;
+use kertas_core::settings::Layout;
 use kertas_editor::actions::{Save, SaveAs};
 use kertas_editor::settings_window::OpenSettings;
+use kertas_editor::tabs::CloseTab;
 use kertas_editor::view_menu;
 
 actions!(
@@ -67,17 +70,20 @@ fn menus(cx: &App) -> Vec<Menu> {
     kertas.push(MenuItem::action("Quit Kertas", Quit));
     vec![
         Menu::new("Kertas").items(kertas),
-        Menu::new("File").items([
-            MenuItem::action("New", New),
-            MenuItem::action("Open…", Open),
-            MenuItem::separator(),
-            MenuItem::action("Save", Save),
-            MenuItem::action("Save As…", SaveAs),
-            MenuItem::separator(),
-            MenuItem::action("Print…", Print),
-            MenuItem::separator(),
-            MenuItem::action("Close", CloseWindow),
-        ]),
+        Menu::new("File").items(
+            [
+                MenuItem::action("New", New),
+                MenuItem::action("Open…", Open),
+                MenuItem::separator(),
+                MenuItem::action("Save", Save),
+                MenuItem::action("Save As…", SaveAs),
+                MenuItem::separator(),
+                MenuItem::action("Print…", Print),
+                MenuItem::separator(),
+            ]
+            .into_iter()
+            .chain(close_items(cx)),
+        ),
         Menu::new("View").items(view_menu::items(cx)),
         Menu::new("Help").items([
             MenuItem::action("Kertas Help", OpenHelp),
@@ -89,4 +95,16 @@ fn menus(cx: &App) -> Vec<Menu> {
             MenuItem::action("Licenses", OpenLicenses),
         ]),
     ]
+}
+
+/// Close Tab and Close Window, or just Close when each document has its
+/// own window.
+fn close_items(cx: &App) -> Vec<MenuItem> {
+    match windows::launch_layout(cx) {
+        Layout::Tabs => vec![
+            MenuItem::action("Close Tab", CloseTab),
+            MenuItem::action("Close Window", CloseWindow),
+        ],
+        Layout::Windows => vec![MenuItem::action("Close", CloseTab)],
+    }
 }

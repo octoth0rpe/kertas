@@ -11,7 +11,7 @@
 //! - `write`: only the writing steps (Enter, lists, quotes, code), then
 //!   saves, so the text can be checked.
 //! - `bench`: times 500 inserts in the middle of the document.
-//! - `tabs`, `settings`, `settings-window`, `help`, `reveal`, `clicks`,
+//! - `tabs`, `windows`, `settings`, `settings-window`, `help`, `reveal`, `clicks`,
 //!   `anchors`, `footnotes`, `images`, `caret`, `reading`, `scrollbar`,
 //!   `scrollbar-drag`, `a11y`, `print`, `disk`, `autosave`, `quit`,
 //!   `web-images`: see
@@ -24,9 +24,7 @@ use std::time::{Duration, Instant};
 
 use gpui::{Action, App, AsyncApp, EntityInputHandler};
 
-use crate::document_window::{
-    CloseWindow, DocumentWindowHandle, New, Quit, SelectTab1, SelectTab3, SelectTab9,
-};
+use crate::document_window::{CloseWindow, DocumentWindowHandle, New, Quit};
 use kertas_editor::DocumentView;
 use kertas_editor::actions::{
     Backspace, Delete, DeleteWordLeft, IndentLines, IndentTab, InsertTab, LineBreak, MoveBlockDown,
@@ -34,6 +32,8 @@ use kertas_editor::actions::{
     Newline, OutdentTab, Redo, Save, SelectAll, SelectBlockDown, SelectDown, SelectUp, Undo,
     Unreveal,
 };
+use kertas_editor::gpui::Entity;
+use kertas_editor::tabs::{CloseTab, SelectTab1};
 
 const STEP: Duration = Duration::from_millis(16);
 
@@ -44,6 +44,7 @@ pub fn start_if_requested(window: DocumentWindowHandle, cx: &mut App) {
     };
     match mode.as_str() {
         "tabs" => smoke_tabs(window, cx),
+        "windows" => smoke_windows(window, cx),
         "quit" => smoke_quit(window, cx),
         "settings" => smoke_settings(window, cx),
         "help" => smoke_help(window, cx),
@@ -182,16 +183,89 @@ fn window_count(cx: &mut AsyncApp) -> usize {
     cx.update(|cx| cx.windows().len())
 }
 
-/// How many tabs are in `window`'s tab group, per GPUI's tab controller.
+/// `window`'s document views, in tab order.
+fn tab_views(window: DocumentWindowHandle, cx: &mut AsyncApp) -> Vec<Entity<DocumentView>> {
+    cx.update(|cx| window.views(cx))
+}
+
+/// How many tabs `window` has.
 fn tab_count(window: DocumentWindowHandle, cx: &mut AsyncApp) -> usize {
+    tab_views(window, cx).len()
+}
+
+/// The position of `window`'s active tab.
+fn active_tab(window: DocumentWindowHandle, cx: &mut AsyncApp) -> usize {
     window
-        .update(cx, |_, window, cx| {
-            let id = window.window_handle().window_id();
-            cx.try_global::<gpui::SystemWindowTabController>()
-                .and_then(|controller| controller.tabs(id))
-                .map_or(1, |tabs| tabs.len())
+        .0
+        .read_with(cx, |this, cx| this.tabs().read(cx).active_index())
+        .unwrap_or(usize::MAX)
+}
+
+/// The titles of `window`'s tabs, in order.
+fn tab_titles(window: DocumentWindowHandle, cx: &mut AsyncApp) -> Vec<String> {
+    window
+        .0
+        .read_with(cx, |this, cx| {
+            let tabs = this.tabs().read(cx);
+            (0..tabs.len())
+                .filter_map(|index| tabs.title(index, cx))
+                .collect()
         })
-        .unwrap_or(0)
+        .unwrap_or_default()
+}
+
+/// Drags with the mouse in `window` from `from` to `to`, in small steps,
+/// and lets go there.
+async fn mouse_drag(
+    window: DocumentWindowHandle,
+    cx: &mut AsyncApp,
+    from: gpui::Point<gpui::Pixels>,
+    to: gpui::Point<gpui::Pixels>,
+) {
+    use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
+
+    let send = |cx: &mut AsyncApp, event: gpui::PlatformInput| {
+        gpui::AnyWindowHandle::from(window)
+            .update(cx, |_, window, cx| window.dispatch_event(event, cx))
+            .ok();
+    };
+    let moved = |position, pressed_button| {
+        gpui::PlatformInput::MouseMove(MouseMoveEvent {
+            position,
+            pressed_button,
+            modifiers: Modifiers::default(),
+        })
+    };
+    send(cx, moved(from, None));
+    pause(cx, 2).await;
+    send(
+        cx,
+        gpui::PlatformInput::MouseDown(MouseDownEvent {
+            button: MouseButton::Left,
+            position: from,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+            first_mouse: false,
+        }),
+    );
+    pause(cx, 2).await;
+    const STEPS: usize = 8;
+    for step in 1..=STEPS {
+        let along = step as f32 / STEPS as f32;
+        let position = from + (to - from) * along;
+        send(cx, moved(position, Some(MouseButton::Left)));
+        pause(cx, 1).await;
+    }
+    send(
+        cx,
+        gpui::PlatformInput::MouseUp(MouseUpEvent {
+            button: MouseButton::Left,
+            position: to,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+        }),
+    );
+    pause(cx, 3).await;
 }
 
 // Step-by-step editing: `1`, `save` and `write`.
@@ -441,8 +515,11 @@ fn percentiles(values: &mut [f64]) -> (f64, f64) {
 
 // The other modes.
 
-/// `KERTAS_SMOKE=tabs`: New opens windows as tabs, ⌘-numbers switch tabs,
-/// the tabs close again, and New replaces the startup message.
+/// `KERTAS_SMOKE=tabs`: New opens tabs in the same window, the tab keys
+/// switch between them, dragging reorders them, ⌘W closes them, New
+/// replaces the startup message, files with the same name show their
+/// folders, and closing the window closes them all. The caller checks that
+/// the process ends.
 fn smoke_tabs(window: DocumentWindowHandle, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
@@ -450,102 +527,90 @@ fn smoke_tabs(window: DocumentWindowHandle, cx: &mut App) {
             pause(cx, 10).await;
             dispatch(window, cx, Box::new(New));
         }
-        // Hold so the windows can be inspected from outside.
-        cx.background_executor().timer(Duration::from_secs(2)).await;
-        checks.check("3 x New opens 4 windows", window_count(cx) == 4);
-        #[cfg(target_os = "macos")]
-        {
-            let native_tabs = window
-                .update(cx, |_, window, _| {
-                    crate::native_tabs::ns_window(window)
-                        .map_or(0, |native| crate::native_tabs::tab_group_size(&native))
-                })
-                .unwrap_or(0);
-            checks.check("they're tabs in one macOS tab group", native_tabs == 4);
-        }
-        checks.check("the tab strip shows them", tab_count(window, cx) == 4);
-        // With automatic tabbing on, macOS adds "Show Tab Bar" to the View
-        // menu.
-        #[cfg(target_os = "macos")]
+        pause(cx, 20).await;
         checks.check(
-            "automatic tabbing is off",
-            !cx.update(|_| crate::native_tabs::automatic_tabbing()),
+            "3 x New opens 3 tabs in the same window",
+            window_count(cx) == 1 && tab_count(window, cx) == 4,
         );
+        checks.check("the new tab is the active one", active_tab(window, cx) == 3);
+        // Hold so the window can be inspected from outside.
+        cx.background_executor().timer(Duration::from_secs(2)).await;
 
         // ⌘1 switches to the first tab, ⌘3 to the third, and ⌘9 does
-        // nothing with four tabs. The selected tab is read from macOS,
-        // which doesn't depend on Kertas being the frontmost app.
-        #[cfg(target_os = "macos")]
-        for (action, expected) in [
-            (Box::new(SelectTab1) as Box<dyn Action>, Some(0)),
-            (Box::new(SelectTab3), Some(2)),
-            (Box::new(SelectTab9), None),
+        // nothing with four tabs. ⇧⌘] and ⌃⇥ go to the next tab, wrapping
+        // around, and ⇧⌘[ and ⌃⇧⇥ to the previous one.
+        for (key, expected) in [
+            ("cmd-1", 0),
+            ("cmd-3", 2),
+            ("cmd-9", 2),
+            ("cmd-shift-]", 3),
+            ("ctrl-tab", 0),
+            ("cmd-shift-[", 3),
+            ("ctrl-shift-tab", 2),
         ] {
-            let selected = |cx: &mut AsyncApp| {
-                window
-                    .update(cx, |_, window, _| {
-                        crate::native_tabs::ns_window(window)
-                            .and_then(|native| crate::native_tabs::selected_tab(&native))
-                    })
-                    .ok()
-                    .flatten()
-            };
-            let before = selected(cx);
-            // Send the key to the selected tab, as the keyboard would.
-            let target = window
-                .update(cx, |_, window, cx| {
-                    let id = window.window_handle().window_id();
-                    cx.try_global::<gpui::SystemWindowTabController>()
-                        .and_then(|controller| controller.tabs(id))
-                        .and_then(|tabs| tabs.get(before?))
-                        .map(|tab| tab.handle)
-                })
-                .ok()
-                .flatten();
-            if let Some(target) = target {
-                dispatch(target, cx, action);
-            }
-            pause(cx, 20).await;
-            let after = selected(cx);
+            press_key(window.into(), cx, key).await;
+            let active = active_tab(window, cx);
             checks.check(
-                &format!("tab switch to {expected:?} ({before:?} -> {after:?})"),
-                after.is_some() && after == expected.or(before),
+                &format!("{key} goes to tab {expected} (now {active})"),
+                active == expected,
             );
         }
-        // Kertas must group the tabs itself, whatever the macOS preference.
-        #[cfg(target_os = "macos")]
+
+        // Drag the first tab onto the third. The tabs share the strip's
+        // width, less the space kept after them, up to their widest.
+        let width = window
+            .0
+            .update(cx, |_, window, _| f32::from(window.viewport_size().width))
+            .unwrap_or(900.);
+        let tab_width = ((width - 24.) / 4.).min(240.);
+        let center =
+            |index: usize| gpui::point(gpui::px(tab_width * (index as f32 + 0.5)), gpui::px(15.));
+        let before = tab_views(window, cx);
+        mouse_drag(window, cx, center(0), center(2)).await;
+        let after = tab_views(window, cx);
         checks.check(
-            "Kertas grouped each new window",
-            crate::native_tabs::TABBING_CALLS.load(std::sync::atomic::Ordering::Relaxed) == 3,
+            "dragging the first tab onto the third moves it there",
+            after.len() == 4
+                && after[2] == before[0]
+                && after[0] == before[1]
+                && after[1] == before[2]
+                && after[3] == before[3],
+        );
+        checks.check(
+            "pressing on a tab to drag it selects it",
+            tab_views(window, cx).get(active_tab(window, cx)) == before.first(),
         );
 
-        let windows = cx.update(|cx| cx.windows());
-        for other in windows.into_iter().filter(|other| *other != *window) {
-            dispatch(other, cx, Box::new(CloseWindow));
-            pause(cx, 10).await;
+        // ⌘W closes the active tab, until only the first document is left.
+        for left in [3, 2, 1] {
+            let other = tab_views(window, cx)
+                .into_iter()
+                .find(|view| Some(view) != before.first());
+            if let Some(other) = other {
+                cx.update(|cx| crate::windows::activate(window, &other, cx));
+            }
+            press_key(window.into(), cx, "cmd-w").await;
+            pause(cx, 5).await;
+            checks.check(
+                &format!("⌘W closes a tab, leaving {left}"),
+                tab_count(window, cx) == left && window_count(cx) == 1,
+            );
         }
-        checks.check("closing them leaves 1 window", window_count(cx) == 1);
 
         // New in a tab showing the startup message starts the document
         // there instead of adding a tab.
-        let blank = cx.update(|cx| crate::windows::open_window(cx, |_, _, _| {}));
+        cx.update(|cx| crate::windows::open_window(cx, |_, _, _| {}));
         pause(cx, 20).await;
-        if let Some(blank) = blank {
-            dispatch(blank, cx, Box::new(New));
-        }
+        dispatch(window, cx, Box::new(New));
         pause(cx, 20).await;
         checks.check(
             "New replaces the startup message",
-            window_count(cx) == 2
-                && blank.is_some_and(|blank| {
-                    blank
-                        .read_with(cx, |view, _| !view.is_blank())
-                        .unwrap_or(false)
-                }),
+            tab_count(window, cx) == 2
+                && window
+                    .read_with(cx, |view, _| !view.is_blank())
+                    .unwrap_or(false),
         );
-        if let Some(blank) = blank {
-            dispatch(blank, cx, Box::new(CloseWindow));
-        }
+        dispatch(window, cx, Box::new(CloseTab));
         pause(cx, 10).await;
 
         // Files with the same name show their folders (#95).
@@ -566,43 +631,66 @@ fn smoke_tabs(window: DocumentWindowHandle, cx: &mut App) {
                 pause(cx, 20).await;
             }
         }
-        let titles = |cx: &mut AsyncApp| {
-            window
-                .update(cx, |_, window, cx| {
-                    let id = window.window_handle().window_id();
-                    cx.try_global::<gpui::SystemWindowTabController>()
-                        .and_then(|controller| controller.tabs(id))
-                        .map(|tabs| {
-                            tabs.iter()
-                                .map(|tab| tab.title.to_string())
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default()
-                })
-                .unwrap_or_default()
-        };
-        let both = titles(cx);
+        let both = tab_titles(window, cx);
         checks.check(
             &format!("same names show their folders ({both:?})"),
             both.contains(&"README.md — docs".to_owned())
                 && both.contains(&"README.md — src".to_owned()),
         );
-        let docs = cx.update(|cx| {
-            cx.windows().into_iter().find(|other| {
-                DocumentWindowHandle::downcast(*other)
-                    .and_then(|other| other.read(cx).ok())
-                    .and_then(|view| view.document_path())
+        let docs = tab_views(window, cx).into_iter().find(|view| {
+            cx.update(|cx| {
+                view.read(cx)
+                    .document_path()
                     .is_some_and(|path| path.ends_with("docs/README.md"))
             })
         });
         if let Some(docs) = docs {
-            dispatch(docs, cx, Box::new(CloseWindow));
+            cx.update(|cx| crate::windows::activate(window, &docs, cx));
+            pause(cx, 5).await;
+            dispatch(window, cx, Box::new(CloseTab));
         }
         pause(cx, 20).await;
-        let one = titles(cx);
+        let one = tab_titles(window, cx);
         checks.check(
             &format!("closing one drops the other's folder ({one:?})"),
             one.contains(&"README.md".to_owned()) && !one.iter().any(|title| title.contains('—')),
+        );
+
+        // Closing the window closes every tab, and so quits. The caller
+        // checks that the process ends.
+        checks.report();
+        println!("dispatching CloseWindow");
+        dispatch(window, cx, Box::new(CloseWindow));
+    })
+    .detach();
+}
+
+/// `KERTAS_SMOKE=windows`, with `layout = "windows"` in the settings
+/// file: New opens a window of its own, with one tab and no strip, and
+/// ⌘W closes it.
+fn smoke_windows(window: DocumentWindowHandle, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        let mut checks = Checks::default();
+        pause(cx, 10).await;
+        dispatch(window, cx, Box::new(New));
+        pause(cx, 20).await;
+        let windows: Vec<DocumentWindowHandle> = cx.update(|cx| {
+            cx.windows()
+                .into_iter()
+                .filter_map(DocumentWindowHandle::downcast)
+                .collect()
+        });
+        checks.check(
+            "New opens another window, with one tab each",
+            windows.len() == 2 && windows.iter().all(|window| tab_count(*window, cx) == 1),
+        );
+        if let Some(new) = windows.into_iter().find(|other| *other != window) {
+            press_key(new.into(), cx, "cmd-w").await;
+        }
+        pause(cx, 10).await;
+        checks.check(
+            "⌘W closes it",
+            window_count(cx) == 1 && tab_count(window, cx) == 1,
         );
         checks.finish(cx);
     })
@@ -898,7 +986,7 @@ fn smoke_settings(window: DocumentWindowHandle, cx: &mut App) {
         settle(cx).await;
         checks.check(
             "layout change waits for a restart",
-            window_count(cx) == 2 && tab_count(window, cx) == 2,
+            window_count(cx) == 1 && tab_count(window, cx) == 2,
         );
         checks.finish(cx);
     })
@@ -925,7 +1013,7 @@ fn smoke_help(window: DocumentWindowHandle, cx: &mut App) {
                         window
                             .0
                             .read(cx)
-                            .is_ok_and(|this| this.builtin() == Some(Builtin::Help))
+                            .is_ok_and(|this| this.builtin(cx) == Some(Builtin::Help))
                     })
             })
         };
@@ -970,32 +1058,41 @@ fn smoke_help(window: DocumentWindowHandle, cx: &mut App) {
 
         dispatch(window, cx, Box::new(OpenHelp));
         pause(cx, 20).await;
-        checks.check("opening it again switches to it", window_count(cx) == 2);
+        checks.check(
+            "opening it again switches to it",
+            tab_count(window, cx) == 2,
+        );
         dispatch(window, cx, Box::new(OpenMarkdownSyntax));
         pause(cx, 20).await;
-        checks.check("Markdown Syntax opens", window_count(cx) == 3);
+        checks.check("Markdown Syntax opens", tab_count(window, cx) == 3);
         dispatch(window, cx, Box::new(OpenKeyboardShortcuts));
         pause(cx, 20).await;
-        checks.check("Keyboard Shortcuts opens", window_count(cx) == 4);
+        checks.check("Keyboard Shortcuts opens", tab_count(window, cx) == 4);
         dispatch(window, cx, Box::new(OpenThemes));
         pause(cx, 20).await;
-        checks.check("Themes opens", window_count(cx) == 5);
+        checks.check("Themes opens", tab_count(window, cx) == 5);
         dispatch(window, cx, Box::new(OpenReleaseNotes));
         pause(cx, 20).await;
-        checks.check("Release Notes opens", window_count(cx) == 6);
+        checks.check("Release Notes opens", tab_count(window, cx) == 6);
         dispatch(window, cx, Box::new(OpenAbout));
         pause(cx, 20).await;
-        checks.check("About Kertas opens", window_count(cx) == 7);
+        checks.check("About Kertas opens", tab_count(window, cx) == 7);
         dispatch(window, cx, Box::new(OpenLicenses));
         pause(cx, 20).await;
-        checks.check("Licenses opens", window_count(cx) == 8);
+        checks.check("Licenses opens", tab_count(window, cx) == 8);
 
-        let windows = cx.update(|cx| cx.windows());
-        for other in windows.into_iter().filter(|other| *other != *window) {
-            dispatch(other, cx, Box::new(CloseWindow));
+        // Close every tab but the first.
+        for _ in 0..7 {
+            dispatch(window, cx, Box::new(kertas_editor::tabs::SelectTab2));
+            pause(cx, 5).await;
+            dispatch(window, cx, Box::new(CloseTab));
             pause(cx, 20).await;
         }
-        checks.check("they close without asking", window_count(cx) == 1);
+        let left = tab_count(window, cx);
+        checks.check(
+            &format!("they close without asking ({left} tab left)"),
+            window_count(cx) == 1 && left == 1,
+        );
         checks.finish(cx);
     })
     .detach();
@@ -1046,7 +1143,7 @@ fn smoke_settings_window(window: DocumentWindowHandle, cx: &mut App) {
         pause(cx, 20).await;
         checks.check(
             "New from Settings opens a tab",
-            window_count(cx) == 3 && tab_count(window, cx) == 2,
+            window_count(cx) == 2 && tab_count(window, cx) == 2,
         );
 
         // From the keyboard: Tab reaches the first control (Appearance's
@@ -1082,7 +1179,7 @@ fn smoke_settings_window(window: DocumentWindowHandle, cx: &mut App) {
                 .ok();
         }
         pause(cx, 20).await;
-        checks.check("Esc closes Settings", window_count(cx) == 2);
+        checks.check("Esc closes Settings", window_count(cx) == 1);
 
         // Quit with Settings open still quits.
         dispatch(window, cx, Box::new(OpenSettings));
@@ -2064,6 +2161,8 @@ fn smoke_anchors(window: DocumentWindowHandle, cx: &mut App) {
                 })
                 .ok();
             pause(cx, 10).await;
+            dispatch(window, cx, Box::new(SelectTab1));
+            pause(cx, 10).await;
             window
                 .update(cx, |view, window, cx| {
                     view.follow_link("other.md#deep-dive", window, cx)
@@ -2222,6 +2321,10 @@ fn smoke_clicks(window: DocumentWindowHandle, cx: &mut App) {
         })
         .await;
         checks.check("clicking a Markdown link opens the file", opened);
+        // Back to the first tab, once the new one is drawn.
+        pause(cx, 10).await;
+        dispatch(window, cx, Box::new(SelectTab1));
+        pause(cx, 10).await;
         let (revealed, selection) = window
             .read_with(cx, |view, _| view.reveal_state())
             .unwrap_or_default();
@@ -2229,11 +2332,6 @@ fn smoke_clicks(window: DocumentWindowHandle, cx: &mut App) {
             &format!("the link's block stays rendered ({revealed} revealed, {selection:?})"),
             revealed == 0 && selection.is_none(),
         );
-
-        window
-            .update(cx, |_, window, _| window.activate_window())
-            .ok();
-        pause(cx, 10).await;
 
         // The third block is a task list.
         let text = |cx: &mut AsyncApp| {
@@ -2290,7 +2388,7 @@ fn smoke_clicks(window: DocumentWindowHandle, cx: &mut App) {
 async fn a11y_tree(window: gpui::AnyWindowHandle, cx: &mut AsyncApp) -> String {
     window
         .update(cx, |_, window, _| {
-            let Some(ns_window) = crate::native_tabs::ns_window(window) else {
+            let Some(ns_window) = crate::ns_window::ns_window(window) else {
                 return;
             };
             if let Some(view) = ns_window.contentView() {
@@ -2328,12 +2426,10 @@ fn smoke_a11y(window: DocumentWindowHandle, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
         pause(cx, 10).await;
-        // A second tab, so there's a tab strip.
+        // A second tab, so there's a tab strip, then back to the first.
         dispatch(window, cx, Box::new(New));
         pause(cx, 20).await;
-        window
-            .update(cx, |_, window, _| window.activate_window())
-            .ok();
+        dispatch(window, cx, Box::new(SelectTab1));
         pause(cx, 20).await;
         let tree = a11y_tree(window.into(), cx).await;
         if let Ok(path) = std::env::var("KERTAS_A11Y_DUMP") {
@@ -2770,9 +2866,12 @@ fn smoke_autosave(window: DocumentWindowHandle, cx: &mut App) {
         type_text(cx, "Switching. ");
         dispatch(window, cx, Box::new(New));
         pause(cx, 10).await;
+        let first_dirty = tab_views(window, cx)
+            .first()
+            .is_none_or(|view| cx.update(|cx| view.read(cx).is_dirty()));
         checks.check(
             "switching tabs saves",
-            !dirty(cx) && on_disk().starts_with("Switching. "),
+            !first_dirty && on_disk().starts_with("Switching. "),
         );
         dispatch(window, cx, Box::new(SelectTab1));
         pause(cx, 10).await;

@@ -35,7 +35,7 @@ If another app changes a document's file, such as another editor or `git checkou
 
 ## Tabs and windows
 
-Each document opens in its own tab. **⌘1** to **⌘9** go straight to a tab. To open documents in separate windows instead, choose **Windows** for "Open documents in" in **Kertas → Settings…**. That takes effect the next time Kertas starts.
+Each document opens in its own tab, in one window. **⌘1** to **⌘9** go straight to a tab, and **⇧⌘]** and **⇧⌘[** go to the next and previous one. Drag a tab along the strip to move it. **⌘W** closes a tab and **⇧⌘W** closes the window, asking first about each document with unsaved changes. To open documents in separate windows instead, choose **Windows** for "Open documents in" in **Kertas → Settings…**. That takes effect the next time Kertas starts.
 
 ## Printing
 

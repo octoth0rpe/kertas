@@ -44,6 +44,7 @@ kertas-core.workspace = true
 kertas-editor.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
+anyhow = "1"
 futures.workspace = true
 ropey.workspace = true
 toml_edit.workspace = true
@@ -52,9 +53,10 @@ toml_edit.workspace = true
 workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
-# Native window tabs (see src/native_tabs.rs). Same versions GPUI uses.
+# AppKit, for printing, the Dock icon and system integration. Same
+# versions GPUI uses.
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-core-foundation", "objc2-uniform-type-identifiers", "NSApplication", "NSAttributedString", "NSColor", "NSFont", "NSFontManager", "NSGraphics", "NSImage", "NSLayoutManager", "NSParagraphStyle", "NSPrintInfo", "NSPrintOperation", "NSResponder", "NSRunningApplication", "NSText", "NSTextAttachment", "NSTextStorage", "NSTextTable", "NSTextView", "NSView", "NSWindow", "NSWindowTabGroup", "NSWorkspace"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-core-foundation", "objc2-uniform-type-identifiers", "NSApplication", "NSAttributedString", "NSColor", "NSFont", "NSFontManager", "NSGraphics", "NSImage", "NSLayoutManager", "NSParagraphStyle", "NSPrintInfo", "NSPrintOperation", "NSResponder", "NSRunningApplication", "NSText", "NSTextAttachment", "NSTextStorage", "NSTextTable", "NSTextView", "NSView", "NSWindow", "NSWorkspace"] }
 # Printing (src/print.rs) lays text out in points.
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes"] }
 objc2-uniform-type-identifiers = { version = "0.3", default-features = false, features = ["std", "UTType"] }
