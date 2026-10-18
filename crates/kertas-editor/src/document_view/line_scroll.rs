@@ -114,6 +114,7 @@ impl DocumentView {
 
     /// Whether ↑ or ↓ is scrolling, for the smoke test.
     #[cfg(debug_assertions)]
+    #[doc(hidden)]
     pub fn line_scrolling(&self) -> bool {
         self.line_scroll.is_some()
     }

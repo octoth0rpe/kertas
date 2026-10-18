@@ -146,7 +146,7 @@ mod tests {
         let document = Builtin::KeyboardShortcuts.text();
         let document = document.as_ref();
         let mut missing = Vec::new();
-        let bindings = crate::document_view::key_bindings()
+        let bindings = kertas_editor::key_bindings()
             .into_iter()
             .chain(crate::document_window::key_bindings());
         for binding in bindings {

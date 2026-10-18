@@ -1,7 +1,7 @@
 [workspace]
-members = [".", "crates/kertas-core"]
+members = [".", "crates/kertas-core", "crates/kertas-editor"]
 # So cargo test, clippy and build cover every crate.
-default-members = [".", "crates/kertas-core"]
+default-members = [".", "crates/kertas-core", "crates/kertas-editor"]
 resolver = "3"
 
 [workspace.package]
@@ -13,6 +13,7 @@ repository = "https://github.com/octoth0rpe/kertas"
 
 [workspace.dependencies]
 kertas-core = { path = "crates/kertas-core" }
+kertas-editor = { path = "crates/kertas-editor" }
 # GPUI is pinned to a Zed commit.
 # Bump deliberately and expect breaking changes.
 gpui = { git = "https://github.com/zed-industries/zed", rev = "c66312b200d113694fca08c1d468669028a09a0e" }
@@ -22,6 +23,8 @@ pulldown-cmark = { version = "0.13.4", default-features = false }
 ropey = "1.6"
 unicode-segmentation = "1"
 toml_edit = "0.25.17"
+futures = "0.3"
+libc = "0.2"
 
 [workspace.lints.clippy]
 # kertas often builds lists of byte ranges, including lists with one range.
@@ -38,9 +41,10 @@ publish = false
 
 [dependencies]
 kertas-core.workspace = true
+kertas-editor.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
-futures = "0.3"
+futures.workspace = true
 ropey.workspace = true
 toml_edit.workspace = true
 
@@ -56,5 +60,5 @@ objc2-core-foundation = { version = "0.3", default-features = false, features = 
 objc2-uniform-type-identifiers = { version = "0.3", default-features = false, features = ["std", "UTType"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSArray", "NSAttributedString", "NSBundle", "NSData", "NSDictionary", "NSDistributedNotificationCenter", "NSError", "NSGeometry", "NSNotification", "NSOperation", "NSRange", "NSString", "NSURL", "NSURLResponse", "NSURLSession", "NSUserDefaults", "NSValue"] }
 block2 = "0.6"
-libc = "0.2"
+libc.workspace = true
 raw-window-handle = "0.6"

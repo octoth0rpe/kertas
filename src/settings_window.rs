@@ -15,7 +15,7 @@ use kertas_core::settings::{DEFAULT_THEME, Kind, SETTINGS, Setting, Settings};
 
 use crate::app_settings::{self, AppSettings};
 use crate::document_window::{CloseWindow, DocumentWindow};
-use crate::theme::Theme;
+use kertas_editor::Theme;
 
 /// The settings window, if it's open.
 #[derive(Default)]

@@ -1,0 +1,25 @@
+[package]
+name = "kertas-editor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+# The GPUI view that shows and edits a Markdown document, for an app to
+# put in its own windows. It re-exports GPUI, so the app uses the same one.
+[dependencies]
+kertas-core.workspace = true
+gpui.workspace = true
+gpui_platform.workspace = true
+futures.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Watching files with kqueue (src/file_watch.rs).
+libc.workspace = true
+# The alert sound for a link to a heading that doesn't exist.
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSGraphics"] }
+
+[lints]
+workspace = true

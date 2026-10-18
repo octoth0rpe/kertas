@@ -1,4 +1,6 @@
-//! Images built into Kertas, for GPUI's `svg()` element.
+//! The images a document view draws, for GPUI's `svg()` element. An app
+//! loads them with `Application::with_assets(Assets)`, or serves the same
+//! paths from its own asset source.
 //!
 //! The alert icons are GitHub's Octicons (MIT; see the About tab).
 

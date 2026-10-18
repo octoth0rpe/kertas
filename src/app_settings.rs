@@ -20,7 +20,7 @@ use kertas_core::settings::{
 };
 use kertas_core::themes::{self, FileProblem, Theme};
 
-use crate::file_watch;
+use kertas_editor::file_watch;
 
 /// The current settings and themes, and any problems reading them.
 pub struct AppSettings {
@@ -77,8 +77,8 @@ pub fn theme(cx: &App) -> Theme {
 
 /// The colors for `window`: the `theme` setting's, in light or dark mode
 /// as the `appearance` setting picks.
-pub fn window_theme(window: &gpui::Window, cx: &App) -> crate::theme::Theme {
-    crate::theme::Theme::for_window(&theme(cx), get(cx).appearance, window)
+pub fn window_theme(window: &gpui::Window, cx: &App) -> kertas_editor::Theme {
+    kertas_editor::Theme::for_window(&theme(cx), get(cx).appearance, window)
 }
 
 /// The installed font families, sorted, for the font settings.

@@ -5,7 +5,7 @@
 //! [`EditorConfig`] when it's created, and a new one whenever the settings
 //! or the zoom change.
 
-use kertas_core::settings::AppearanceSetting;
+use kertas_core::settings::{AppearanceSetting, Settings};
 use kertas_core::themes;
 
 use crate::text_style::TextSettings;
@@ -31,6 +31,23 @@ pub struct EditorConfig {
     pub scrollbar: bool,
     /// Whether the block being edited shows its keyboard hints.
     pub editing_hint: bool,
+}
+
+impl Default for EditorConfig {
+    /// The default settings, in the Kertas theme.
+    fn default() -> Self {
+        let settings = Settings::default();
+        Self {
+            text: TextSettings::from(&settings),
+            theme: themes::kertas().clone(),
+            appearance: settings.appearance,
+            font_size: settings.font_size,
+            default_font_size: settings.font_size,
+            autosave: settings.autosave,
+            scrollbar: settings.scrollbar,
+            editing_hint: settings.editing_hint,
+        }
+    }
 }
 
 impl EditorConfig {

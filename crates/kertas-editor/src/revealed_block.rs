@@ -486,7 +486,7 @@ mod tests {
             image_scale: 1.,
         };
         for name in ["showcase.md", "10k.md"] {
-            let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
+            let path = format!("{}/../../tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
             let text = std::fs::read_to_string(path).unwrap();
             let model = Model::new(&text);
             for (index, item) in model.items.iter().enumerate() {

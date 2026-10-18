@@ -774,7 +774,7 @@ impl RenderOnce for DocumentImage {
 
 /// An image's size as the web would show it, in pixels. SVGs are drawn at
 /// twice their size, so they stay sharp on Retina screens.
-pub(crate) fn natural_size(image: &gpui::RenderImage, destination: &str) -> (f32, f32) {
+pub fn natural_size(image: &gpui::RenderImage, destination: &str) -> (f32, f32) {
     let size = image.size(0);
     let (width, height) = (size.width.0 as f32, size.height.0 as f32);
     // A web image's address may have a query after its path.

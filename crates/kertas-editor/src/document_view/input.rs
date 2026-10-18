@@ -46,14 +46,14 @@ impl DocumentView {
 
     /// Notes that the mouse went down on the checkbox whose `[ ]` starts
     /// at document offset `marker`.
-    pub fn press_task(&mut self, marker: usize) {
+    pub(crate) fn press_task(&mut self, marker: usize) {
         self.pressed_task = Some(marker);
     }
 
     /// Toggles the checkbox at `marker` when the mouse goes up on the one
     /// it went down on. The selection stays as it is, so the list stays
     /// rendered.
-    pub fn release_task(&mut self, marker: usize, cx: &mut Context<Self>) {
+    pub(crate) fn release_task(&mut self, marker: usize, cx: &mut Context<Self>) {
         if self.pressed_task.take() == Some(marker) {
             self.toggle_task(marker, cx);
         }
@@ -61,7 +61,7 @@ impl DocumentView {
 
     /// Toggles the checkbox whose `[ ]` starts at document offset
     /// `marker`, leaving the selection as it is.
-    pub fn toggle_task(&mut self, marker: usize, cx: &mut Context<Self>) {
+    pub(crate) fn toggle_task(&mut self, marker: usize, cx: &mut Context<Self>) {
         let Some(open) = &mut self.open else {
             return;
         };

@@ -207,7 +207,7 @@ fn watch_until_stopped(
 fn open_for_events(path: &Path) -> Option<i32> {
     let path = CString::new(path.as_os_str().as_bytes()).ok()?;
     // SAFETY: `path` is a valid C string. O_CLOEXEC keeps the descriptor
-    // out of child processes Kertas starts.
+    // out of child processes the app starts.
     let fd = unsafe { libc::open(path.as_ptr(), libc::O_EVTONLY | libc::O_CLOEXEC) };
     (fd >= 0).then_some(fd)
 }

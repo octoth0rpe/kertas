@@ -35,7 +35,7 @@ cargo run
 
 The first build downloads GPUI from the Zed repository and takes a few minutes.
 
-The repository is a Cargo workspace. The app is the package at the root, and `crates/kertas-core` holds the document model, Markdown parsing and settings, without any UI.
+The repository is a Cargo workspace. The app is the package at the root. `crates/kertas-core` holds the document model, Markdown parsing and settings, without any UI. `crates/kertas-editor` is the GPUI view that shows and edits a document, which another app can put in its own windows; `cargo run -p kertas-editor --example embed` shows one on its own.
 
 ### Settings
 
@@ -110,4 +110,4 @@ The icon is built from `macos/icon-light.svg` and `macos/icon-dark.svg`. After c
 
 ## License
 
-Kertas is under the MIT License (`LICENSE`), which covers every revision of this repository, including those from before `LICENSE` was added. The libraries and other open-source work it includes keep their own licenses, listed in the About tab and Help → Licenses (see above). The alert icons are GitHub's Octicons, also MIT (`assets/alerts/LICENSE`).
+Kertas is under the MIT License (`LICENSE`), which covers every revision of this repository, including those from before `LICENSE` was added. The libraries and other open-source work it includes keep their own licenses, listed in the About tab and Help → Licenses (see above). The alert icons are GitHub's Octicons, also MIT (`crates/kertas-editor/assets/alerts/LICENSE`).

@@ -14,7 +14,7 @@ use kertas_core::model::Model;
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSFontManager};
 
-use crate::text_style::TextSettings;
+use kertas_editor::TextSettings;
 
 /// If the arguments ask for `--convert`, converts and returns the exit
 /// code; otherwise `None`, and Kertas starts as usual.

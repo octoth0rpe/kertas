@@ -328,6 +328,7 @@ impl DocumentView {
     /// The thumb's top and height, and the track's height, if the
     /// scrollbar is shown, for the smoke test.
     #[cfg(debug_assertions)]
+    #[doc(hidden)]
     pub fn scrollbar_thumb(&self, window: &Window) -> Option<(f32, f32, f32)> {
         if !self.config.scrollbar {
             return None;
@@ -342,6 +343,7 @@ impl DocumentView {
 
     /// Whether the thumb is placed exactly, for the smoke test.
     #[cfg(debug_assertions)]
+    #[doc(hidden)]
     pub fn scrollbar_exact(&self, window: &Window) -> bool {
         self.open.as_ref().is_some_and(|open| {
             self.placement(open, window)
@@ -352,6 +354,7 @@ impl DocumentView {
 
     /// How far the document is scrolled, in pixels, for the smoke test.
     #[cfg(debug_assertions)]
+    #[doc(hidden)]
     pub fn scroll_offset(&self) -> f32 {
         self.open.as_ref().map_or(0., |open| {
             f32::from(-open.list_state.scroll_px_offset_for_scrollbar().y)
@@ -360,6 +363,7 @@ impl DocumentView {
 
     /// Grabs the thumb, for the smoke test, as a mouse down on it would.
     #[cfg(debug_assertions)]
+    #[doc(hidden)]
     pub fn grab_thumb(&mut self, window: &Window) {
         let Some(thumb) = self
             .open
@@ -380,6 +384,7 @@ impl DocumentView {
 
     /// Drags the grabbed thumb to `top`, for the smoke test.
     #[cfg(debug_assertions)]
+    #[doc(hidden)]
     pub fn drag_thumb_to(&mut self, top: f32, window: &Window, cx: &mut Context<Self>) {
         self.drag_thumb(px(top), window);
         cx.notify();
@@ -387,6 +392,7 @@ impl DocumentView {
 
     /// Whether the thumb is being dragged, for the smoke test.
     #[cfg(debug_assertions)]
+    #[doc(hidden)]
     pub fn scrollbar_dragging(&self) -> bool {
         self.open
             .as_ref()
@@ -395,12 +401,14 @@ impl DocumentView {
 
     /// Lets go of the thumb, for the smoke test.
     #[cfg(debug_assertions)]
+    #[doc(hidden)]
     pub fn release_thumb(&mut self, cx: &mut Context<Self>) {
         self.end_scrollbar_drag(cx);
     }
 
     /// Where the track is, for the smoke test to click it.
     #[cfg(debug_assertions)]
+    #[doc(hidden)]
     pub fn scrollbar_track(&self) -> Option<Bounds<Pixels>> {
         let bounds = self.open.as_ref()?.list_state.viewport_bounds();
         Some(Bounds::from_corners(

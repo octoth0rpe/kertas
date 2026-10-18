@@ -1,5 +1,4 @@
 mod app_settings;
-mod assets;
 mod builtin;
 #[cfg(target_os = "macos")]
 mod cli_tool;
@@ -9,26 +8,19 @@ mod convert;
 mod default_app;
 #[cfg(target_os = "macos")]
 mod dock_icon;
-mod document_view;
 mod document_window;
-mod editor_config;
 #[cfg(target_os = "macos")]
-mod file_watch;
 mod menus;
 #[cfg(target_os = "macos")]
 mod native_tabs;
 #[cfg(target_os = "macos")]
 mod print;
-mod rendered_block;
-mod revealed_block;
 mod settings_window;
 #[cfg(debug_assertions)]
 mod smoke;
 #[cfg(target_os = "macos")]
 mod system_actions;
 mod tab_strip;
-mod text_style;
-mod theme;
 #[cfg(target_os = "macos")]
 mod web_images;
 mod windows;
@@ -52,7 +44,7 @@ fn main() -> std::process::ExitCode {
     // URLs, outside of any app context, so pass them to a task that opens
     // them.
     let (opened_urls, mut urls_to_open) = mpsc::unbounded::<Vec<String>>();
-    let app = application().with_assets(assets::Assets);
+    let app = application().with_assets(kertas_editor::Assets);
     app.on_open_urls(move |urls| {
         opened_urls.unbounded_send(urls).ok();
     });
@@ -65,7 +57,7 @@ fn main() -> std::process::ExitCode {
         #[cfg(target_os = "macos")]
         dock_icon::init();
         windows::register(cx);
-        cx.bind_keys(document_view::key_bindings());
+        cx.bind_keys(kertas_editor::key_bindings());
         cx.bind_keys(document_window::key_bindings());
         cx.bind_keys(settings_window::key_bindings());
         #[cfg(target_os = "macos")]
