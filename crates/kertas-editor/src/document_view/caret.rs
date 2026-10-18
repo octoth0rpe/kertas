@@ -12,8 +12,8 @@ use crate::revealed_block::{CaretPlace, RevealedLayout};
 use super::heights::Heights;
 
 use super::{
-    CARET_BLINK_INTERVAL, DocumentView, LineGoal, OpenDocument, Revealed, ScrollRequest, SelectAll,
-    Unreveal,
+    CARET_BLINK_INTERVAL, DocumentEvent, DocumentView, LineGoal, OpenDocument, Revealed,
+    ScrollRequest, SelectAll, Unreveal,
 };
 
 impl DocumentView {
@@ -125,6 +125,7 @@ impl DocumentView {
         let Some(open) = &mut self.open else {
             return;
         };
+        let moved = open.editor.selection().map(|old| old.head) != Some(selection.head);
         // Read-only documents have no caret, so every movement, click and
         // edit stops here.
         if !open.editor.select(selection) {
@@ -170,6 +171,9 @@ impl DocumentView {
         };
         open.scroll_request = Some(ScrollRequest::Caret(place));
         self.restart_blink(cx);
+        if moved {
+            cx.emit(DocumentEvent::CaretMoved);
+        }
         cx.notify();
     }
 
@@ -211,10 +215,14 @@ impl DocumentView {
         let Some(open) = &mut self.open else {
             return;
         };
+        let had_caret = open.editor.selection().is_some();
         open.editor.deselect();
         open.goal_x = None;
         reveal(open);
         self.stop_blink();
+        if had_caret {
+            cx.emit(DocumentEvent::CaretMoved);
+        }
         cx.notify();
     }
 
@@ -391,6 +399,12 @@ impl DocumentView {
     // With no caret, keys read the document, as in Preview or Safari (#99):
     // ↑, ↓, ⌘↑ and ⌘↓ scroll, and keys that mean editing start at the
     // first block on screen rather than wherever the caret last was.
+
+    /// Where the caret is in the document's text: the selection's moving
+    /// end. None while no block is being edited.
+    pub fn caret_offset(&self) -> Option<usize> {
+        Some(self.open.as_ref()?.editor.selection()?.head)
+    }
 
     /// Whether there's a caret: whether a block is being edited.
     #[doc(hidden)]

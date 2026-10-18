@@ -202,6 +202,10 @@ pub enum DocumentEvent {
     /// something like an outline or a word count in step with the text
     /// without working on every keystroke.
     Edited,
+    /// The caret moved to another place, or went away, without an edit
+    /// (see [`DocumentView::caret_offset`]). An edit that moves it sends
+    /// [`Edited`](Self::Edited) instead, after the pause.
+    CaretMoved,
     /// A link to another Markdown file was followed, and asks for it to be
     /// opened, scrolled to the heading named `anchor` if there is one.
     OpenFile {

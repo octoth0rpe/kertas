@@ -3002,6 +3002,33 @@ fn smoke_edited(window: DocumentWindowHandle, cx: &mut App) {
             "a reload sends it too",
             reloaded && first.as_deref() == Some("Theirs"),
         );
+
+        // The caret moving without an edit is sent right away, and the
+        // view says where it is.
+        let moved = Rc::new(Cell::new(0));
+        let _caret_subscription = cx.update(|cx| {
+            let moved = moved.clone();
+            cx.subscribe(&view, move |_, event, _| {
+                if *event == DocumentEvent::CaretMoved {
+                    moved.set(moved.get() + 1);
+                }
+            })
+        });
+        window
+            .update(cx, |view, window, cx| view.click(3, false, window, cx))
+            .ok();
+        let caret = cx.update(|cx| view.read(cx).caret_offset());
+        checks.check(
+            &format!("a click sends CaretMoved (caret {caret:?})"),
+            moved.get() == 1 && caret == Some(3),
+        );
+        dispatch(window, cx, Box::new(Unreveal));
+        pause(cx, 2).await;
+        let caret = cx.update(|cx| view.read(cx).caret_offset());
+        checks.check(
+            "so does Escape, leaving no caret",
+            moved.get() == 2 && caret.is_none(),
+        );
         checks.finish(cx);
     })
     .detach();
