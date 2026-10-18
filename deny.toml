@@ -7,7 +7,7 @@
 targets = ["aarch64-apple-darwin"]
 
 [licenses]
-# Licenses compatible with an Apache-2.0 project (T7). A dependency under
+# Licenses Kertas, an MIT project, may depend on (T7). A dependency under
 # "A OR B" passes if either is allowed. GPL, LGPL and AGPL are never
 # allowed (T6).
 allow = [
@@ -25,10 +25,6 @@ confidence-threshold = 0.9
 # The list is the policy, not an inventory: allowed licenses no dependency
 # uses yet are fine.
 unused-allowed-license = "allow"
-
-[licenses.private]
-# Kertas itself isn't published, and its own license is still open (Q6).
-ignore = true
 
 [advisories]
 # Known vulnerabilities, from the RustSec database, fail wherever they are.

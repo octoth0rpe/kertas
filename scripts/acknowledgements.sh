@@ -42,7 +42,7 @@ if [ "${1:-}" = "--check" ]; then
     exit 0
 fi
 
-# Errors are kept, but not the warning that Kertas itself has no license.
+# Errors are kept.
 cargo about generate --locked -c scripts/about.toml scripts/acknowledgements.hbs \
     2> "$root/target/acknowledgements.log" |
     # Some license files have Windows line endings.
