@@ -62,7 +62,10 @@ fn convert(args: Vec<OsString>) -> Result<(), String> {
             .find(|family| family.eq_ignore_ascii_case(name))
             .cloned()
     };
-    let settings = TextSettings::from(&crate::app_settings::read_once(&installed));
+    let settings = TextSettings::from(&crate::app_settings::read_once(
+        &crate::config_folder(),
+        &installed,
+    ));
 
     let model = Model::new(&document.buffer().rope().to_string());
     // Absolute paths, so images resolve and AppKit gets proper file URLs.

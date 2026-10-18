@@ -1,8 +1,11 @@
-//! The settings window (G5), opened with Kertas > Settings… (⌘,).
+//! The settings window, opened with Settings… (⌘,) in the app menu.
 //!
-//! It's a sheet on the front document window, so it can't get lost behind
-//! it. It shows the same settings as the settings file and the View menu,
-//! and changing one here writes it to the file, so all three always agree.
+//! It's a sheet on the front window, so it can't get lost behind it. It
+//! shows the same settings as the settings file and the View menu, and
+//! changing one here writes it to the file, so all three always agree.
+//!
+//! The host app sets it up with [`init`], which can hide the settings that
+//! don't apply to it.
 
 use std::ops::RangeInclusive;
 
@@ -13,9 +16,8 @@ use gpui::{
 };
 use kertas_core::settings::{DEFAULT_THEME, Kind, SETTINGS, Setting, Settings};
 
+use crate::Theme;
 use crate::app_settings::{self, AppSettings};
-use crate::document_window::{CloseWindow, DocumentWindow};
-use kertas_editor::Theme;
 
 /// The settings window, if it's open.
 #[derive(Default)]
@@ -38,7 +40,7 @@ pub fn open(cx: &mut App) {
         .window_stack()
         .unwrap_or_default()
         .into_iter()
-        .find_map(|window| window.downcast::<DocumentWindow>())
+        .find(|window| window.downcast::<SettingsWindow>().is_none())
     {
         document
             .update(cx, |_, window, _| window.activate_window())
@@ -65,15 +67,39 @@ pub fn open(cx: &mut App) {
     cx.activate(true);
 }
 
-actions!(settings_window, [FocusNext, FocusPrevious]);
+/// Closes the settings window, if it's open, as when the app quits.
+pub fn close(cx: &mut App) {
+    if let Some(window) = cx.default_global::<OpenSettingsWindow>().0.take() {
+        window
+            .update(cx, |_, window, _| window.remove_window())
+            .ok();
+    }
+}
 
-/// Keys for the settings window. Esc and Return close it, as for any
-/// sheet (Return is Done, the default button), and Tab and ⇧Tab move
-/// between its controls. Space activates the focused control.
+actions!(settings_window, [FocusNext, FocusPrevious, Done]);
+actions!(kertas, [OpenSettings]);
+
+/// The settings the host app doesn't show, by their keys.
+struct HiddenSettings(&'static [&'static str]);
+
+impl Global for HiddenSettings {}
+
+/// Makes [`OpenSettings`] open the settings window, which shows every
+/// setting but those in `hidden`, by their keys.
+pub fn init(hidden: &'static [&'static str], cx: &mut App) {
+    cx.set_global(HiddenSettings(hidden));
+    cx.on_action(|_: &OpenSettings, cx| cx.defer(open));
+}
+
+/// Keys for the settings window. ⌘, opens it. Esc, Return and ⌘W close
+/// it, as for any sheet (Return is Done, the default button), and Tab and
+/// ⇧Tab move between its controls. Space activates the focused control.
 pub fn key_bindings() -> Vec<KeyBinding> {
     vec![
-        KeyBinding::new("escape", CloseWindow, Some(KEY_CONTEXT)),
-        KeyBinding::new("enter", CloseWindow, Some(KEY_CONTEXT)),
+        KeyBinding::new("cmd-,", OpenSettings, None),
+        KeyBinding::new("escape", Done, Some(KEY_CONTEXT)),
+        KeyBinding::new("enter", Done, Some(KEY_CONTEXT)),
+        KeyBinding::new("cmd-w", Done, Some(KEY_CONTEXT)),
         KeyBinding::new("tab", FocusNext, Some(KEY_CONTEXT)),
         KeyBinding::new("shift-tab", FocusPrevious, Some(KEY_CONTEXT)),
     ]
@@ -700,7 +726,13 @@ impl Render for SettingsWindow {
         let mut rows = Vec::new();
         let mut fonts = Vec::new();
         let mut fonts_at = None;
-        for setting in SETTINGS {
+        let hidden = cx
+            .try_global::<HiddenSettings>()
+            .map_or(&[][..], |hidden| hidden.0);
+        for setting in SETTINGS
+            .iter()
+            .filter(|setting| !hidden.contains(&setting.key))
+        {
             let row = self.row(setting, &settings, cx);
             if matches!(setting.kind, Kind::Font { .. }) {
                 fonts_at.get_or_insert(rows.len());
@@ -723,7 +755,7 @@ impl Render for SettingsWindow {
             .focus_visible(move |style| style.border_color(accent_text))
             .bg(self.theme.caret)
             .text_color(accent_text)
-            .on_click(|_, window, cx| window.dispatch_action(Box::new(CloseWindow), cx))
+            .on_click(|_, window, cx| window.dispatch_action(Box::new(Done), cx))
             .child("Done");
         div()
             .id("settings")
@@ -743,7 +775,7 @@ impl Render for SettingsWindow {
             .on_action(|_: &FocusNext, window, cx| window.focus_next(cx))
             .on_action(|_: &FocusPrevious, window, cx| window.focus_prev(cx))
             // Esc closes the open pop-up list, if any, then the window.
-            .on_action(cx.listener(|this, _: &CloseWindow, window, cx| {
+            .on_action(cx.listener(|this, _: &Done, window, cx| {
                 if this.open_menu.take().is_some() {
                     cx.notify();
                 } else {

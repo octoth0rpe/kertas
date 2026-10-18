@@ -10,18 +10,17 @@ use std::path::Path;
 
 use gpui::{
     AnyElement, AnyWindowHandle, App, AppContext, Context, Entity, Focusable, KeyBinding, Render,
-    Role, Subscription, SystemWindowTabController, Window, WindowHandle, actions, div, prelude::*,
-    px, relative, rems,
+    Subscription, SystemWindowTabController, Window, WindowHandle, actions, div, prelude::*, px,
+    relative, rems,
 };
 use kertas_core::titles;
 
-use crate::app_settings::AppSettings;
+use crate::app_settings::{self, AppSettings};
 use crate::builtin::Builtin;
-use crate::menus::OpenSettings;
 use crate::tab_strip::{render_tab_strip, select_tab};
 use crate::{windows, zoom};
 use kertas_editor::Theme;
-use kertas_editor::{DocumentEvent, DocumentView, bar_button};
+use kertas_editor::{DocumentEvent, DocumentView, problems_bar};
 
 actions!(
     kertas,
@@ -42,9 +41,6 @@ actions!(
         SelectTab7,
         SelectTab8,
         SelectTab9,
-        ZoomIn,
-        ZoomOut,
-        ResetZoom,
     ]
 );
 
@@ -56,7 +52,6 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-p", Print, None),
         KeyBinding::new("cmd-w", CloseWindow, None),
         KeyBinding::new("cmd-q", Quit, None),
-        KeyBinding::new("cmd-,", OpenSettings, None),
         KeyBinding::new("cmd-shift-]", NextTab, None),
         KeyBinding::new("cmd-shift-[", PreviousTab, None),
         KeyBinding::new("ctrl-tab", NextTab, None),
@@ -70,10 +65,6 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-7", SelectTab7, None),
         KeyBinding::new("cmd-8", SelectTab8, None),
         KeyBinding::new("cmd-9", SelectTab9, None),
-        KeyBinding::new("cmd-=", ZoomIn, None),
-        KeyBinding::new("cmd-+", ZoomIn, None),
-        KeyBinding::new("cmd--", ZoomOut, None),
-        KeyBinding::new("cmd-0", ResetZoom, None),
     ]
 }
 
@@ -264,51 +255,21 @@ impl DocumentWindow {
         if self.settings_problems_dismissed {
             return None;
         }
-        let state = cx.try_global::<AppSettings>()?;
-        let count = state.problems.len() + state.theme_problems.len();
-        let mut message = match state.problems.first() {
-            Some(first) => format!("Settings file, {first}"),
-            None => state.theme_problems.first()?.to_string(),
-        };
-        if count > 1 {
-            message.push_str(&format!(" (and {} more)", count - 1));
-        }
+        let message = app_settings::problems_message(cx)?;
         Some(
-            div()
-                .id("settings-problems")
-                .role(Role::Status)
-                .aria_label(message.clone())
-                .flex()
-                .items_center()
-                .gap_2()
-                .px_3()
-                .py(px(6.))
-                .border_t_1()
-                .border_color(theme.rule)
-                .bg(theme.table_header_background)
-                .text_size(px(12.))
-                .line_height(px(16.))
-                .text_color(theme.muted_text)
-                .child(div().flex_1().child(message))
-                .child(
-                    bar_button(
-                        theme,
-                        "dismiss-settings-problems",
-                        "×",
-                        "Dismiss settings problems",
-                    )
-                    .px_1()
-                    .py_0()
-                    .border_color(gpui::transparent_black())
-                    .bg(gpui::transparent_black())
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.settings_problems_dismissed = true;
-                        // Focus would otherwise be left on nothing.
-                        this.view.focus_handle(cx).focus(window, cx);
-                        cx.notify();
-                    })),
-                )
-                .into_any_element(),
+            problems_bar(
+                theme,
+                "settings-problems",
+                message,
+                "Dismiss settings problems",
+                cx.listener(|this, _, window, cx| {
+                    this.settings_problems_dismissed = true;
+                    // Focus would otherwise be left on nothing.
+                    this.view.focus_handle(cx).focus(window, cx);
+                    cx.notify();
+                }),
+            )
+            .into_any_element(),
         )
     }
 }
@@ -319,12 +280,12 @@ impl Render for DocumentWindow {
         let theme = view.theme();
         let dirty = view.is_dirty();
         let size = view.config().font_size;
-        let zoomed = view.config().is_zoomed();
         // The bars are sized in rems too, so they zoom with the text.
         window.set_rem_size(px(size as f32));
         let tab_strip = render_tab_strip(window, cx, theme, dirty);
         let problems_bar = self.render_settings_problems(theme, cx);
-        div()
+        // Zoom In, Zoom Out and Reset Zoom, while each is possible.
+        zoom::handle_actions(div(), cx)
             .size_full()
             .bg(theme.background)
             .text_color(theme.text)
@@ -352,17 +313,6 @@ impl Render for DocumentWindow {
             .on_action(|_: &SelectTab7, window, cx| select_tab(6, window, cx))
             .on_action(|_: &SelectTab8, window, cx| select_tab(7, window, cx))
             .on_action(|_: &SelectTab9, window, cx| select_tab(8, window, cx))
-            // Only while possible, so the menu items are disabled at the
-            // limits.
-            .when_some(zoom::larger(size), |this, size| {
-                this.on_action(move |_: &ZoomIn, _, cx| zoom::set(size, cx))
-            })
-            .when_some(zoom::smaller(size), |this, size| {
-                this.on_action(move |_: &ZoomOut, _, cx| zoom::set(size, cx))
-            })
-            .when(zoomed, |this| {
-                this.on_action(|_: &ResetZoom, _, cx| zoom::reset(cx))
-            })
             .children(tab_strip)
             .child(div().flex_1().min_h(px(0.)).child(self.view.clone()))
             .children(problems_bar)

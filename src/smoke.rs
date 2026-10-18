@@ -615,7 +615,7 @@ fn smoke_tabs(window: DocumentWindowHandle, cx: &mut App) {
 /// and zoom work, and the layout setting waits for a restart.
 fn smoke_settings(window: DocumentWindowHandle, cx: &mut App) {
     use crate::app_settings::{self, AppSettings};
-    use crate::document_window::{ResetZoom, ZoomIn, ZoomOut};
+    use crate::zoom::{ResetZoom, ZoomIn, ZoomOut};
     use kertas_editor::Theme;
 
     let path = std::path::PathBuf::from(std::env::var_os("KERTAS_CONFIG_DIR").unwrap_or_default())
@@ -691,8 +691,12 @@ fn smoke_settings(window: DocumentWindowHandle, cx: &mut App) {
         );
 
         // The View menu's commands change settings.
-        dispatch(window, cx, Box::new(crate::menus::UseDarkAppearance));
-        dispatch(window, cx, Box::new(crate::menus::UseFullWidth));
+        dispatch(
+            window,
+            cx,
+            Box::new(kertas_editor::view_menu::UseDarkAppearance),
+        );
+        dispatch(window, cx, Box::new(kertas_editor::view_menu::UseFullWidth));
         let dark = wait_for(cx, APPLY, |cx| theme(cx) == Some(Theme::dark())).await;
         let text = std::fs::read_to_string(&path).unwrap_or_default();
         checks.check(
@@ -701,7 +705,7 @@ fn smoke_settings(window: DocumentWindowHandle, cx: &mut App) {
         );
         checks.check("View menu appearance applies", dark);
         let use_theme = |name: &str| {
-            Box::new(crate::menus::UseTheme {
+            Box::new(kertas_editor::view_menu::UseTheme {
                 name: name.to_owned().into(),
             })
         };
@@ -809,7 +813,11 @@ fn smoke_settings(window: DocumentWindowHandle, cx: &mut App) {
                 && cx.update(|cx| cx.global::<AppSettings>().theme_problems.is_empty())
         })
         .await;
-        dispatch(window, cx, Box::new(crate::menus::UseStandardWidth));
+        dispatch(
+            window,
+            cx,
+            Box::new(kertas_editor::view_menu::UseStandardWidth),
+        );
         settle(cx).await;
 
         // Zoom steps through sizes, stops at the limits, and Reset Zoom
@@ -997,7 +1005,7 @@ fn smoke_help(window: DocumentWindowHandle, cx: &mut App) {
 /// still opens a tab; Esc closes it; and Quit with it open quits. The
 /// caller checks that the process ends.
 fn smoke_settings_window(window: DocumentWindowHandle, cx: &mut App) {
-    use crate::menus::OpenSettings;
+    use crate::settings_window::OpenSettings;
 
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
@@ -2315,7 +2323,7 @@ async fn a11y_tree(window: gpui::AnyWindowHandle, cx: &mut AsyncApp) -> String {
 /// `KERTAS_SMOKE=a11y`, on `a11y.md`: what VoiceOver is told about the
 /// document, the tab strip and the settings sheet (N5).
 fn smoke_a11y(window: DocumentWindowHandle, cx: &mut App) {
-    use crate::menus::OpenSettings;
+    use crate::settings_window::OpenSettings;
 
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
@@ -2447,7 +2455,7 @@ fn smoke_a11y(window: DocumentWindowHandle, cx: &mut App) {
                 ),
         );
         if let Some(settings) = settings {
-            dispatch(settings, cx, Box::new(CloseWindow));
+            dispatch(settings, cx, Box::new(crate::settings_window::Done));
         }
         pause(cx, 10).await;
         checks.finish(cx);

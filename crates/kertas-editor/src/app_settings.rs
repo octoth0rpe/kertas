@@ -1,10 +1,9 @@
-//! The settings file on disk (REQUIREMENTS §8.1), loaded into a GPUI
-//! global and kept up to date.
+//! The settings file on disk, loaded into a GPUI global and kept up to
+//! date.
 //!
-//! The file is `~/Library/Application Support/kertas/config.toml` (G1), or
-//! `config.toml` in `$KERTAS_CONFIG_DIR` if that's set. macOS reports
-//! changes to it, so edits made in any editor apply live (G3). Views
-//! observe [`AppSettings`] to update.
+//! The file is `config.toml` in the folder the host app gives [`init`].
+//! macOS reports changes to it, so edits made in any editor apply live.
+//! Views observe [`AppSettings`] to update.
 //!
 //! The user's color themes are files in `themes/` next to it, watched the
 //! same way.
@@ -15,12 +14,10 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use gpui::{App, BorrowAppContext, Global, WindowAppearance};
-use kertas_core::settings::{
-    self, AppearanceSetting, Available, FontCheck, Layout, Problem, Settings,
-};
+use kertas_core::settings::{self, AppearanceSetting, Available, FontCheck, Problem, Settings};
 use kertas_core::themes::{self, FileProblem, Theme};
 
-use kertas_editor::file_watch;
+use crate::{EditorConfig, TextSettings, file_watch, zoom};
 
 /// The current settings and themes, and any problems reading them.
 pub struct AppSettings {
@@ -37,19 +34,10 @@ pub struct AppSettings {
 
 impl Global for AppSettings {}
 
-/// The `layout` setting when Kertas started. Changing it takes effect when
-/// Kertas restarts, so documents already open never have to be rearranged.
-struct LaunchLayout(Layout);
+/// The folder holding the settings file and the themes folder.
+struct ConfigFolder(PathBuf);
 
-impl Global for LaunchLayout {}
-
-/// How documents are arranged in this session: the `layout` setting when
-/// Kertas started.
-pub fn launch_layout(cx: &App) -> Layout {
-    cx.try_global::<LaunchLayout>()
-        .map(|launch| launch.0)
-        .unwrap_or_default()
-}
+impl Global for ConfigFolder {}
 
 /// The current settings.
 pub fn get(cx: &App) -> Settings {
@@ -77,8 +65,39 @@ pub fn theme(cx: &App) -> Theme {
 
 /// The colors for `window`: the `theme` setting's, in light or dark mode
 /// as the `appearance` setting picks.
-pub fn window_theme(window: &gpui::Window, cx: &App) -> kertas_editor::Theme {
-    kertas_editor::Theme::for_window(&theme(cx), get(cx).appearance, window)
+pub fn window_theme(window: &gpui::Window, cx: &App) -> crate::Theme {
+    crate::Theme::for_window(&theme(cx), get(cx).appearance, window)
+}
+
+/// The configuration for document views: the settings, at the current
+/// zoom.
+pub fn editor_config(cx: &App) -> EditorConfig {
+    let settings = get(cx);
+    EditorConfig {
+        text: TextSettings::from(&settings),
+        theme: theme(cx),
+        appearance: settings.appearance,
+        font_size: zoom::size(cx),
+        default_font_size: zoom::default_size(cx),
+        autosave: settings.autosave,
+        scrollbar: settings.scrollbar,
+        editing_hint: settings.editing_hint,
+    }
+}
+
+/// The first problem reading the settings file or the theme files, for the
+/// bar that reports them, with how many more there are.
+pub fn problems_message(cx: &App) -> Option<String> {
+    let state = cx.try_global::<AppSettings>()?;
+    let count = state.problems.len() + state.theme_problems.len();
+    let mut message = match state.problems.first() {
+        Some(first) => format!("Settings file, {first}"),
+        None => state.theme_problems.first()?.to_string(),
+    };
+    if count > 1 {
+        message.push_str(&format!(" (and {} more)", count - 1));
+    }
+    Some(message)
 }
 
 /// The installed font families, sorted, for the font settings.
@@ -92,16 +111,19 @@ pub fn installed_fonts(cx: &App) -> &[String] {
         .map_or(&[], |fonts| fonts.0.as_slice())
 }
 
-/// Loads the settings and starts watching the file for changes.
-pub fn init(cx: &mut App) {
+/// Loads the settings from `config.toml` in `folder`, and starts watching
+/// the file and the themes folder for changes. Then sets up zooming, which
+/// starts from the `font_size` setting.
+pub fn init(folder: PathBuf, cx: &mut App) {
+    cx.set_global(ConfigFolder(folder));
     let mut fonts = cx.text_system().all_font_names();
     fonts.retain(|name| !name.starts_with('.'));
     cx.set_global(InstalledFonts(fonts));
-    let path = settings_path();
+    let path = settings_path(cx);
     let state = load(path.clone(), cx);
     apply_appearance(&state.settings, cx);
-    cx.set_global(LaunchLayout(state.settings.layout));
     cx.set_global(state);
+    zoom::init(cx);
 
     // Watching needs the folder to exist, though the file is only created
     // when a setting is first changed.
@@ -120,7 +142,7 @@ pub fn init(cx: &mut App) {
             }
         })
         .detach();
-        let mut changes = file_watch::watch_folder(themes_folder());
+        let mut changes = file_watch::watch_folder(themes_folder(cx));
         cx.spawn(async move |cx| {
             while changes.changed().await {
                 cx.update(reload);
@@ -133,7 +155,7 @@ pub fn init(cx: &mut App) {
 /// Opens the folder of the user's themes in the Finder, creating it if
 /// needed.
 pub fn open_themes_folder(cx: &mut App) {
-    let folder = themes_folder();
+    let folder = themes_folder(cx);
     match fs::create_dir_all(&folder) {
         Ok(()) => cx.open_with_system(&folder),
         Err(err) => cx.update_global::<AppSettings, _>(|state, _| {
@@ -200,22 +222,27 @@ fn apply_appearance(settings: &Settings, cx: &mut App) {
     });
 }
 
-fn config_folder() -> PathBuf {
-    match std::env::var_os("KERTAS_CONFIG_DIR") {
-        Some(directory) => PathBuf::from(directory),
-        None => std::env::home_dir()
-            .unwrap_or_default()
-            .join("Library/Application Support/kertas"),
-    }
+/// The settings file in `folder`.
+pub fn settings_file(folder: &Path) -> PathBuf {
+    folder.join("config.toml")
 }
 
-fn settings_path() -> PathBuf {
-    config_folder().join("config.toml")
+/// The folder of the user's theme files, in `folder`.
+pub fn themes_folder_in(folder: &Path) -> PathBuf {
+    folder.join("themes")
+}
+
+fn config_folder(cx: &App) -> &Path {
+    &cx.global::<ConfigFolder>().0
+}
+
+fn settings_path(cx: &App) -> PathBuf {
+    settings_file(config_folder(cx))
 }
 
 /// The folder of the user's theme files.
-fn themes_folder() -> PathBuf {
-    config_folder().join("themes")
+pub fn themes_folder(cx: &App) -> PathBuf {
+    themes_folder_in(config_folder(cx))
 }
 
 fn load(path: PathBuf, cx: &App) -> AppSettings {
@@ -227,7 +254,7 @@ fn load(path: PathBuf, cx: &App) -> AppSettings {
             .find(|font| font.eq_ignore_ascii_case(name))
             .cloned()
     };
-    let (user, theme_problems) = themes::read_folder(&themes_folder());
+    let (user, theme_problems) = themes::read_folder(&themes_folder(cx));
     let themes = themes::combine(themes::builtin(), user);
     let (settings, problems) = read(&path, &installed, &themes);
     AppSettings {
@@ -240,13 +267,13 @@ fn load(path: PathBuf, cx: &App) -> AppSettings {
     }
 }
 
-/// Reads the settings file once, outside of GPUI, for `--convert`.
-/// Problems are ignored: the defaults stand in, as they do in the app.
-#[cfg(target_os = "macos")]
-pub fn read_once(installed: &FontCheck) -> Settings {
-    let user = themes::read_folder(&themes_folder()).0;
+/// Reads the settings file in `folder` once, outside of GPUI, as for a
+/// command-line conversion. Problems are ignored: the defaults stand in,
+/// as they do in the app.
+pub fn read_once(folder: &Path, installed: &FontCheck) -> Settings {
+    let user = themes::read_folder(&themes_folder_in(folder)).0;
     let themes = themes::combine(themes::builtin(), user);
-    read(&settings_path(), installed, &themes).0
+    read(&settings_file(folder), installed, &themes).0
 }
 
 fn read(path: &Path, installed: &FontCheck, themes: &[Theme]) -> (Settings, Vec<Problem>) {

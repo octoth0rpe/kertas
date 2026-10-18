@@ -35,7 +35,7 @@ cargo run
 
 The first build downloads GPUI from the Zed repository and takes a few minutes.
 
-The repository is a Cargo workspace. The app is the package at the root. `crates/kertas-core` holds the document model, Markdown parsing and settings, without any UI. `crates/kertas-editor` is the GPUI view that shows and edits a document, which another app can put in its own windows; `cargo run -p kertas-editor --example embed` shows one on its own.
+The repository is a Cargo workspace. The app is the package at the root. `crates/kertas-core` holds the document model, Markdown parsing and settings, without any UI. `crates/kertas-editor` is the GPUI view that shows and edits a document, which another app can put in its own windows; `cargo run -p kertas-editor --example embed` shows one on its own. It also holds what such an app can share with Kertas: the settings file and themes (in a folder the app chooses), zoom, the View menu, the settings window, the bar reporting problems, and the Markdown Syntax, Themes and editor shortcuts help texts.
 
 ### Settings
 

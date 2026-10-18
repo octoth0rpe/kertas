@@ -1,4 +1,3 @@
-mod app_settings;
 mod builtin;
 #[cfg(target_os = "macos")]
 mod cli_tool;
@@ -15,7 +14,6 @@ mod menus;
 mod native_tabs;
 #[cfg(target_os = "macos")]
 mod print;
-mod settings_window;
 #[cfg(debug_assertions)]
 mod smoke;
 #[cfg(target_os = "macos")]
@@ -24,7 +22,6 @@ mod tab_strip;
 #[cfg(target_os = "macos")]
 mod web_images;
 mod windows;
-mod zoom;
 
 use std::path::PathBuf;
 
@@ -32,6 +29,9 @@ use futures::StreamExt;
 use futures::channel::mpsc;
 use gpui::App;
 use gpui_platform::application;
+// The settings, zoom and the settings window are shared with other apps
+// that embed the editor, so they're in kertas-editor.
+use kertas_editor::{app_settings, settings_window, zoom};
 
 fn main() -> std::process::ExitCode {
     #[cfg(target_os = "macos")]
@@ -50,8 +50,8 @@ fn main() -> std::process::ExitCode {
     });
 
     app.run(move |cx: &mut App| {
-        app_settings::init(cx);
-        zoom::init(cx);
+        app_settings::init(config_folder(), cx);
+        settings_window::init(&[], cx);
         #[cfg(target_os = "macos")]
         web_images::init(cx);
         #[cfg(target_os = "macos")]
@@ -60,6 +60,7 @@ fn main() -> std::process::ExitCode {
         cx.bind_keys(kertas_editor::key_bindings());
         cx.bind_keys(document_window::key_bindings());
         cx.bind_keys(settings_window::key_bindings());
+        cx.bind_keys(zoom::key_bindings());
         #[cfg(target_os = "macos")]
         system_actions::init(cx);
         menus::init(cx);
@@ -100,4 +101,16 @@ fn main() -> std::process::ExitCode {
         let _ = window;
     });
     std::process::ExitCode::SUCCESS
+}
+
+/// The folder of Kertas's settings file and themes:
+/// `~/Library/Application Support/kertas`, or `$KERTAS_CONFIG_DIR` if
+/// that's set.
+pub fn config_folder() -> PathBuf {
+    match std::env::var_os("KERTAS_CONFIG_DIR") {
+        Some(directory) => PathBuf::from(directory),
+        None => std::env::home_dir()
+            .unwrap_or_default()
+            .join("Library/Application Support/kertas"),
+    }
 }

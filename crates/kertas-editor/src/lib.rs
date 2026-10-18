@@ -19,15 +19,26 @@
 //! This crate re-exports [`gpui`] and [`gpui_platform`], so an app uses
 //! the same GPUI as the view, and [`kertas_core`], whose settings and
 //! themes an [`EditorConfig`] is made from.
+//!
+//! An app can also share Kertas's settings, from its own settings file
+//! ([`app_settings`]), and with them zooming ([`zoom`]), the View menu
+//! ([`view_menu`]), the settings window ([`settings_window`]), the bar that
+//! reports problems ([`problems_bar`]), and help texts ([`help`]).
 
+pub mod app_settings;
 mod assets;
 mod document_view;
 mod editor_config;
 pub mod file_watch;
+pub mod help;
+mod problems_bar;
 mod rendered_block;
 mod revealed_block;
+pub mod settings_window;
 mod text_style;
 mod theme;
+pub mod view_menu;
+pub mod zoom;
 
 pub use gpui;
 pub use gpui_platform;
@@ -38,6 +49,7 @@ pub use document_view::{
     CARET_BLINK_INTERVAL, DocumentEvent, DocumentView, bar_button, key_bindings,
 };
 pub use editor_config::EditorConfig;
+pub use problems_bar::problems_bar;
 pub use rendered_block::natural_size;
 pub use text_style::TextSettings;
 pub use theme::Theme;
