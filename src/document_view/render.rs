@@ -22,7 +22,7 @@ use super::{
     SelectTab1, SelectTab2, SelectTab3, SelectTab4, SelectTab5, SelectTab6, SelectTab7, SelectTab8,
     SelectTab9, SelectUp, SelectWordLeft, SelectWordRight, WebImages, ZoomIn, ZoomOut,
 };
-use crate::app_settings::{self, AppSettings};
+use crate::app_settings::AppSettings;
 use crate::rendered_block::{
     ClickTarget, ReferenceTarget, note_marker_column, render_block, render_note,
 };
@@ -83,7 +83,7 @@ impl DocumentView {
     /// left edge is from the list's, and how wide it is.
     pub(super) fn text_column(&self, width: Pixels, rem: Pixels) -> (Pixels, Pixels) {
         let available = width - SIDE_PADDING * 2.;
-        let column = column_width(self.text_settings.text_width)
+        let column = column_width(self.config.text.text_width)
             .map_or(available, |column| column.to_pixels(rem).min(available));
         (SIDE_PADDING + (available - column) / 2., column)
     }
@@ -254,11 +254,16 @@ impl DocumentView {
         let revealed = open.revealed.clone();
         let layout_slot = open.revealed_layout.clone();
         let caret_visible = self.caret_visible;
-        let column_width = column_width(self.text_settings.text_width);
-        let look = Look::new(window.text_style().font(), self.theme, &self.text_settings);
+        let column_width = column_width(self.config.text.text_width);
+        let look = Look::new(
+            window.text_style().font(),
+            self.theme,
+            &self.config.text,
+            self.config.image_scale(),
+        );
         let view = cx.entity();
         let focus_handle = self.focus_handle.clone();
-        let hint = app_settings::get(cx).editing_hint;
+        let hint = self.config.editing_hint;
         let editable = !open.editor.read_only();
         let document: Option<Rc<Path>> = open.editor.document().path().map(Rc::from);
         let loading_images = self.loading_images.clone();
@@ -367,7 +372,8 @@ impl DocumentView {
             }
         })
         .size_full();
-        let scrollbar = app_settings::get(cx)
+        let scrollbar = self
+            .config
             .scrollbar
             .then(|| self.render_scrollbar(open, window, cx));
         div()
@@ -443,13 +449,13 @@ impl DocumentView {
             .on_action(|_: &SelectTab9, window, cx| select_tab(8, window, cx))
             // Only while possible, so the menu items are disabled at the
             // limits.
-            .when_some(zoom::larger(cx), |this, size| {
+            .when_some(zoom::larger(self.config.font_size), |this, size| {
                 this.on_action(move |_: &ZoomIn, _, cx| zoom::set(size, cx))
             })
-            .when_some(zoom::smaller(cx), |this, size| {
+            .when_some(zoom::smaller(self.config.font_size), |this, size| {
                 this.on_action(move |_: &ZoomOut, _, cx| zoom::set(size, cx))
             })
-            .when(zoom::is_zoomed(cx), |this| {
+            .when(self.config.is_zoomed(), |this| {
                 this.on_action(|_: &ResetZoom, _, cx| zoom::reset(cx))
             })
             .on_action(cx.listener(Self::unreveal))
@@ -593,7 +599,7 @@ impl DocumentView {
 impl Render for DocumentView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Document text is sized in rems, so this sets the zoom.
-        window.set_rem_size(px(zoom::size(cx) as f32));
+        window.set_rem_size(px(self.config.font_size as f32));
         self.remeasure_loaded_images(cx);
         // This frame's elements ask the list to scroll to what was
         // requested as it's laid out.
@@ -659,7 +665,7 @@ impl Render for DocumentView {
                     .flex_1()
                     .min_h(px(0.))
                     // List markers and the like follow the body font too.
-                    .when_some(self.text_settings.body_font.clone(), |this, font| {
+                    .when_some(self.config.text.body_font.clone(), |this, font| {
                         this.font_family(font)
                     })
                     // Clicks below the last block finish editing.

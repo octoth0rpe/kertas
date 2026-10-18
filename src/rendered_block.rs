@@ -43,6 +43,7 @@ struct TextStyle {
     tab_width: u32,
     list_indent: ListIndent,
     code_font: SharedString,
+    image_scale: f32,
     click: ClickTarget,
     /// How many accessibility nodes the block has so far, to number them.
     nodes: Rc<Cell<usize>>,
@@ -187,6 +188,7 @@ pub fn rendered_content(block: &RenderedBlock, look: &Look, click: ClickTarget) 
         tab_width: look.tab_width,
         list_indent: look.list_indent,
         code_font: look.code_font.clone(),
+        image_scale: look.image_scale,
         nodes: Rc::default(),
         click,
     };
@@ -334,6 +336,7 @@ pub fn render_note(
         tab_width: look.tab_width,
         list_indent: look.list_indent,
         code_font: look.code_font.clone(),
+        image_scale: look.image_scale,
         nodes: Rc::default(),
         click: click.clone(),
     };
@@ -642,6 +645,7 @@ fn text_with_images(text: &InlineText, style: &TextStyle, accessible: bool) -> A
                 link: text.link_around(image).cloned(),
                 source: text.source_offset(image.display.start),
                 theme: style.theme,
+                scale: style.image_scale,
                 click: style.click.clone(),
                 id: style.node_id("image"),
             }
@@ -673,6 +677,8 @@ struct DocumentImage {
     /// Where the image starts in the block's source.
     source: usize,
     theme: crate::theme::Theme,
+    /// How much it's scaled from its natural size, with zoom.
+    scale: f32,
     click: ClickTarget,
     id: ElementId,
 }
@@ -701,7 +707,7 @@ impl RenderOnce for DocumentImage {
                 loading.push(entry);
             }
         }
-        let scale = crate::zoom::image_scale(cx);
+        let scale = self.scale;
         let (click, follow, link, source) = (
             self.click.clone(),
             self.click.clone(),

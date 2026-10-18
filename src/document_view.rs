@@ -32,14 +32,13 @@ use kertas_core::model::Splice;
 use kertas_core::reveal::StyledSource;
 use kertas_core::titles;
 
-use crate::app_settings::{self, AppSettings};
+use crate::app_settings::AppSettings;
 use crate::builtin::Builtin;
+use crate::editor_config::EditorConfig;
 use crate::menus::OpenSettings;
 use crate::revealed_block::{CaretPlace, RevealedLayout};
-use crate::text_style::TextSettings;
 use crate::theme::Theme;
 use crate::windows;
-use crate::zoom::Zoom;
 
 actions!(
     kertas,
@@ -294,10 +293,11 @@ pub struct DocumentView {
     /// The folder shown after the file's name in the title, if another
     /// open file has the same name.
     title_hint: Option<String>,
+    /// What the app last told the view, which the document is laid out
+    /// with.
+    config: EditorConfig,
+    /// The config's theme, in the window's light or dark colors.
     theme: Theme,
-    /// The settings the document was last laid out with: the text width,
-    /// tab width and fonts.
-    text_settings: TextSettings,
     /// Whether the blinking caret is currently drawn.
     caret_visible: bool,
     /// A scroll from ↑ or ↓ in progress, with no caret.
@@ -324,38 +324,24 @@ pub struct DocumentView {
     _appearance_observer: Subscription,
     _activation_observer: Subscription,
     _settings_observer: Subscription,
-    _zoom_observer: Subscription,
     _tabs_observer: Subscription,
 }
 
 impl DocumentView {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(config: EditorConfig, window: &mut Window, cx: &mut Context<Self>) -> Self {
         // A tab stop, so Tab can come back to the document from the bars'
         // buttons.
         let focus_handle = cx.focus_handle().tab_stop(true);
         focus_handle.focus(window, cx);
-        // Follow the theme setting and the macOS appearance, switching live
-        // when either changes.
+        // Follow the macOS appearance, switching live when it changes.
         let appearance_observer = cx.observe_window_appearance(window, |this, window, cx| {
-            this.theme = Theme::current(window, cx);
+            this.theme = Theme::for_window(&this.config.theme, this.config.appearance, window);
             cx.notify();
         });
-        let zoom_observer = cx.observe_global_in::<Zoom>(window, |this, _, cx| {
-            this.layout_changed();
-            cx.notify();
-        });
-        let settings_observer = cx.observe_global_in::<AppSettings>(window, |this, window, cx| {
-            this.theme = Theme::current(window, cx);
-            // Turning autosave on saves changes already made.
-            if this.is_dirty() {
-                this.schedule_autosave(cx);
-            }
+        // The bar reporting problems in the settings file shows again when
+        // the file changes.
+        let settings_observer = cx.observe_global_in::<AppSettings>(window, |this, _, cx| {
             this.settings_problems_dismissed = false;
-            let text_settings = TextSettings::from(&app_settings::get(cx));
-            if text_settings != this.text_settings {
-                this.text_settings = text_settings;
-                this.layout_changed();
-            }
             cx.notify();
         });
         // Autosave when the window or tab loses focus.
@@ -381,8 +367,8 @@ impl DocumentView {
             title_hint: None,
             loading_images: Rc::default(),
             web_images: WebImages::Ask,
-            theme: Theme::current(window, cx),
-            text_settings: TextSettings::from(&app_settings::get(cx)),
+            theme: Theme::for_window(&config.theme, config.appearance, window),
+            config,
             caret_visible: true,
             line_scroll: None,
             dragging: false,
@@ -396,11 +382,35 @@ impl DocumentView {
             _appearance_observer: appearance_observer,
             _activation_observer: activation_observer,
             _settings_observer: settings_observer,
-            _zoom_observer: zoom_observer,
             // Redraw the tab strip when tabs are added, removed or renamed.
             _tabs_observer: cx
                 .observe_global_in::<SystemWindowTabController>(window, |_, _, cx| cx.notify()),
         }
+    }
+
+    /// Applies a new configuration from the app: when the settings or the
+    /// zoom change.
+    pub fn set_config(
+        &mut self,
+        config: EditorConfig,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if config == self.config {
+            return;
+        }
+        let relayout = config.text != self.config.text || config.font_size != self.config.font_size;
+        let autosave_changed = config.autosave != self.config.autosave;
+        self.theme = Theme::for_window(&config.theme, config.appearance, window);
+        self.config = config;
+        // Turning autosave on saves changes already made.
+        if autosave_changed && self.is_dirty() {
+            self.schedule_autosave(cx);
+        }
+        if relayout {
+            self.layout_changed();
+        }
+        cx.notify();
     }
 
     /// Shows `document`, replacing the current one.
@@ -605,7 +615,7 @@ impl DocumentView {
     /// The list indent the document is laid out with, for the smoke test.
     #[cfg(debug_assertions)]
     pub fn list_indent(&self) -> kertas_core::settings::ListIndent {
-        self.text_settings.list_indent
+        self.config.text.list_indent
     }
 
     /// The theme the view is drawn with, for the smoke test.

@@ -19,10 +19,13 @@ use gpui::{
 use kertas_core::settings::Layout;
 use kertas_core::titles;
 
-use crate::app_settings;
+use crate::app_settings::{self, AppSettings};
 use crate::document_view::{CloseWindow, DocumentView, New, Open, Quit};
+use crate::editor_config::EditorConfig;
 #[cfg(target_os = "macos")]
 use crate::native_tabs::{add_as_tab, ns_window};
+use crate::text_style::TextSettings;
+use crate::zoom::{self, Zoom};
 
 /// Groups document windows into native tabs.
 const TABBING_IDENTIFIER: &str = "kertas-documents";
@@ -31,12 +34,15 @@ const TABBING_IDENTIFIER: &str = "kertas-documents";
 /// `Windows` layout.
 const CASCADE_OFFSET: f32 = 24.;
 
-/// Registers the app-wide document actions.
+/// Registers the app-wide document actions, and keeps document views'
+/// configuration up to date.
 ///
 /// The handlers defer their work: an action is delivered while its window
 /// is locked for the dispatch, so updating that window from the handler
 /// itself would silently fail.
 pub fn register(cx: &mut App) {
+    cx.observe_global::<AppSettings>(update_configs).detach();
+    cx.observe_global::<Zoom>(update_configs).detach();
     cx.on_action(|_: &New, cx| {
         cx.defer(|cx| {
             // The startup message isn't really a tab, so New replaces it.
@@ -75,6 +81,36 @@ pub fn register(cx: &mut App) {
             }
         });
     });
+}
+
+/// What document views are told: the settings, at the current zoom.
+fn editor_config(cx: &App) -> EditorConfig {
+    let settings = app_settings::get(cx);
+    EditorConfig {
+        text: TextSettings::from(&settings),
+        theme: app_settings::theme(cx),
+        appearance: settings.appearance,
+        font_size: zoom::size(cx),
+        default_font_size: zoom::default_size(cx),
+        autosave: settings.autosave,
+        scrollbar: settings.scrollbar,
+        editing_hint: settings.editing_hint,
+    }
+}
+
+/// Gives every document view the configuration, after the settings or the
+/// zoom change.
+fn update_configs(cx: &mut App) {
+    let config = editor_config(cx);
+    for window in cx.windows() {
+        if let Some(window) = window.downcast::<DocumentView>() {
+            window
+                .update(cx, |view, window, cx| {
+                    view.set_config(config.clone(), window, cx)
+                })
+                .ok();
+        }
+    }
 }
 
 /// The frontmost document window, even if another window (such as
@@ -146,7 +182,10 @@ pub fn open_window(
                 tabbing_identifier: (layout == Layout::Tabs).then(|| TABBING_IDENTIFIER.to_owned()),
                 ..Default::default()
             },
-            |window, cx| cx.new(|cx| DocumentView::new(window, cx)),
+            |window, cx| {
+                let config = editor_config(cx);
+                cx.new(|cx| DocumentView::new(config, window, cx))
+            },
         )
         .ok()?;
 

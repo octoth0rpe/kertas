@@ -64,6 +64,23 @@ pub fn themes(cx: &App) -> &[Theme] {
         .map_or(themes::builtin(), |state| state.themes.as_slice())
 }
 
+/// The theme the `theme` setting picks.
+pub fn theme(cx: &App) -> Theme {
+    let name = get(cx).theme;
+    // The setting only names a theme there is.
+    themes(cx)
+        .iter()
+        .find(|theme| theme.name == name)
+        .unwrap_or_else(|| themes::kertas())
+        .clone()
+}
+
+/// The colors for `window`: the `theme` setting's, in light or dark mode
+/// as the `appearance` setting picks.
+pub fn window_theme(window: &gpui::Window, cx: &App) -> crate::theme::Theme {
+    crate::theme::Theme::for_window(&theme(cx), get(cx).appearance, window)
+}
+
 /// The installed font families, sorted, for the font settings.
 struct InstalledFonts(Vec<String>);
 

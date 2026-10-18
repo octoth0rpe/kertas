@@ -1,4 +1,4 @@
-//! Autosave (F6): with the `autosave` setting on, documents save once
+//! Autosave (F6): with autosave on, documents save once
 //! typing pauses, when their window or tab loses focus, and when they
 //! close.
 
@@ -9,12 +9,11 @@ use kertas_core::document::SaveError;
 
 use super::DocumentView;
 use super::files::capitalize;
-use crate::app_settings;
 
 impl DocumentView {
     /// Saves after the autosave pause, unless there's another edit first.
     pub(super) fn schedule_autosave(&mut self, cx: &mut Context<Self>) {
-        let Some(seconds) = app_settings::get(cx).autosave else {
+        let Some(seconds) = self.config.autosave else {
             return;
         };
         let Some(handle) = self.window_handle else {
@@ -46,7 +45,7 @@ impl DocumentView {
     /// the user saves it. If the file changed since it was last loaded or
     /// saved, the bar asks instead of saving over it.
     pub(super) fn autosave(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if app_settings::get(cx).autosave.is_none() || self.confirming {
+        if self.config.autosave.is_none() || self.confirming {
             return !self.is_dirty();
         }
         let Some(open) = &mut self.open else {

@@ -328,8 +328,8 @@ impl DocumentView {
     /// The thumb's top and height, and the track's height, if the
     /// scrollbar is shown, for the smoke test.
     #[cfg(debug_assertions)]
-    pub fn scrollbar_thumb(&self, window: &Window, cx: &gpui::App) -> Option<(f32, f32, f32)> {
-        if !crate::app_settings::get(cx).scrollbar {
+    pub fn scrollbar_thumb(&self, window: &Window) -> Option<(f32, f32, f32)> {
+        if !self.config.scrollbar {
             return None;
         }
         let thumb = self.placement(self.open.as_ref()?, window).thumb()?;

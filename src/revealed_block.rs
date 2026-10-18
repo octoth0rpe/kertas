@@ -483,6 +483,7 @@ mod tests {
             theme: Theme::light(),
             tab_width: 4,
             list_indent: kertas_core::settings::ListIndent::Standard,
+            image_scale: 1.,
         };
         for name in ["showcase.md", "10k.md"] {
             let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
