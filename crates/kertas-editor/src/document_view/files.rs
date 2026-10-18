@@ -298,21 +298,70 @@ impl DocumentView {
     }
 }
 
+/// Which heading [`DocumentView::go_to_heading`] goes to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeadingTarget<'a> {
+    /// The heading a `#name` link to `name` leads to, as
+    /// [`outline::Heading::anchor`](kertas_core::outline::Heading::anchor)
+    /// names it.
+    Anchor(&'a str),
+    /// The heading whose block holds this offset in the document's text,
+    /// such as the start of
+    /// [`outline::Heading::range`](kertas_core::outline::Heading::range).
+    Offset(usize),
+}
+
 impl DocumentView {
-    /// Scrolls the heading named `name` (as in a `#name` link) to the top
-    /// of the window (#91). If there's no such heading, beeps and stays
-    /// put. A footnote reference's line goes to the top once it's drawn
-    /// (#90).
+    /// Scrolls a heading to the top of the window, as a `#name` link does
+    /// (#116). It doesn't start editing: the caret stays where it was, or
+    /// there's still none. Returns false, and stays put, if there's no such
+    /// heading.
+    pub fn go_to_heading(&mut self, target: HeadingTarget, cx: &mut Context<Self>) -> bool {
+        let Some(open) = &mut self.open else {
+            return false;
+        };
+        let model = open.editor.model();
+        let index = match target {
+            HeadingTarget::Anchor(name) => anchors::find(model, name),
+            HeadingTarget::Offset(offset) => {
+                (offset <= model.text.len()).then(|| model.item_at(offset))
+            }
+        };
+        // Footnotes are drawn in the rows after the items.
+        let Some(index) = index.filter(|&index| index < model.items.len()) else {
+            return false;
+        };
+        open.scroll_request = None;
+        open.list_state.scroll_to(ListOffset {
+            item_ix: index,
+            offset_in_item: px(0.),
+        });
+        cx.notify();
+        true
+    }
+
+    /// Follows a `#name` link (#91): a heading or an HTML anchor goes to
+    /// the top of the window, as [`go_to_heading`](Self::go_to_heading)
+    /// does. A footnote goes to the top too, and a footnote reference's
+    /// line goes to the top once it's drawn (#90). If there's no such
+    /// anchor, beeps and stays put.
     pub fn go_to_anchor(&mut self, name: &str, cx: &mut Context<Self>) {
         let Some(open) = &mut self.open else {
             return;
         };
-        let Some(index) = anchors::find(open.editor.model(), name) else {
+        let model = open.editor.model();
+        let Some(index) = anchors::find(model, name) else {
             beep();
             return;
         };
-        open.scroll_request =
-            anchors::find_reference(open.editor.model(), name).map(ScrollRequest::Position);
+        let reference = anchors::find_reference(model, name);
+        if reference.is_none() && self.go_to_heading(HeadingTarget::Anchor(name), cx) {
+            return;
+        }
+        let Some(open) = &mut self.open else {
+            return;
+        };
+        open.scroll_request = reference.map(ScrollRequest::Position);
         open.list_state.scroll_to(ListOffset {
             item_ix: index,
             offset_in_item: px(0.),
