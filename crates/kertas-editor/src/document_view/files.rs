@@ -235,7 +235,8 @@ impl DocumentView {
     }
 
     /// Opens the file at `path`, replacing the current document. Shows an
-    /// alert if it can't be opened, and keeps the current document.
+    /// alert if it can't be opened, and keeps the current document. A file
+    /// that's empty or doesn't exist yet opens ready for typing.
     pub fn open_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         // A file that doesn't exist yet (e.g. `kt new.md`) starts as an
         // empty document that saving creates.
@@ -245,7 +246,14 @@ impl DocumentView {
             return;
         }
         match Document::open(path) {
-            Ok(document) => self.load(document, window, cx),
+            Ok(document) => {
+                // An empty file is ready for typing too.
+                let empty = document.buffer().is_empty();
+                self.load(document, window, cx);
+                if empty {
+                    self.move_caret(0, false, cx);
+                }
+            }
             Err(err) => show_open_error(&err, window, cx),
         }
     }
