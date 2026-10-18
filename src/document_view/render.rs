@@ -1,11 +1,11 @@
-//! Drawing the document view, its actions, and the settings problems bar.
+//! Drawing the document view, and its actions.
 
 use std::path::Path;
 use std::rc::Rc;
 
 use gpui::{
     AnyElement, Context, Div, ImgResourceLoader, Pixels, Rems, Role, SharedString, Stateful,
-    SystemWindowTabController, Window, div, list, prelude::*, px, relative, rems,
+    Window, div, list, prelude::*, px, relative, rems,
 };
 use kertas_core::blocks::BlockKind;
 use kertas_core::editor::{Motion, RevealTarget};
@@ -13,25 +13,21 @@ use kertas_core::settings::TextWidth;
 
 use super::heights::Heights;
 use super::{
-    Backspace, Delete, DeleteWordLeft, DeleteWordRight, DocumentView, IndentLines, IndentTab,
-    InsertTab, LineBreak, MoveBlockDown, MoveBlockUp, MoveDocumentEnd, MoveDocumentStart, MoveDown,
-    MoveLeft, MoveLineEnd, MoveLineStart, MoveRight, MoveUp, MoveWordLeft, MoveWordRight, Newline,
-    NextTab, OpenDocument, OutdentLines, OutdentTab, PageDown, PageUp, PreviousTab, ResetZoom,
+    Backspace, Delete, DeleteWordLeft, DeleteWordRight, DocumentEvent, DocumentView, IndentLines,
+    IndentTab, InsertTab, LineBreak, MoveBlockDown, MoveBlockUp, MoveDocumentEnd,
+    MoveDocumentStart, MoveDown, MoveLeft, MoveLineEnd, MoveLineStart, MoveRight, MoveUp,
+    MoveWordLeft, MoveWordRight, Newline, OpenDocument, OutdentLines, OutdentTab, PageDown, PageUp,
     Revealed, ScrollRequest, SelectBlockDown, SelectBlockUp, SelectDocumentEnd,
     SelectDocumentStart, SelectDown, SelectLeft, SelectLineEnd, SelectLineStart, SelectRight,
-    SelectTab1, SelectTab2, SelectTab3, SelectTab4, SelectTab5, SelectTab6, SelectTab7, SelectTab8,
-    SelectTab9, SelectUp, SelectWordLeft, SelectWordRight, WebImages, ZoomIn, ZoomOut,
+    SelectUp, SelectWordLeft, SelectWordRight, WebImages,
 };
-use crate::app_settings::AppSettings;
 use crate::rendered_block::{
     ClickTarget, ReferenceTarget, note_marker_column, render_block, render_note,
 };
 use crate::revealed_block::{
     CaretPlace, RevealedBlock, ScrollToCaret, TextInput, render_gap, render_revealed,
 };
-use crate::tab_strip::{render_tab_strip, select_tab};
 use crate::text_style::Look;
-use crate::zoom;
 
 /// The text column's maximum width for each `text_width` setting (A1), or
 /// `None` to use the whole window.
@@ -53,7 +49,7 @@ const SIDE_PADDING: Pixels = px(32.);
 /// showing `label`. `name` is what it's called for VoiceOver. It's
 /// reachable with Tab when no block is being edited, and ringed when it
 /// has keyboard focus.
-pub(super) fn bar_button(
+pub fn bar_button(
     theme: crate::theme::Theme,
     id: impl Into<SharedString>,
     label: impl Into<SharedString>,
@@ -97,61 +93,6 @@ impl DocumentView {
         // The first item has the side padding above it too.
         let top = if index == 0 { SIDE_PADDING } else { px(0.) };
         Some(gpui::point(bounds.left() + left, bounds.top() + top))
-    }
-
-    /// A bar at the bottom of the window reporting problems in the settings
-    /// file (G4) and theme files, until the user closes it.
-    fn render_settings_problems(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.settings_problems_dismissed {
-            return None;
-        }
-        let state = cx.try_global::<AppSettings>()?;
-        let count = state.problems.len() + state.theme_problems.len();
-        let mut message = match state.problems.first() {
-            Some(first) => format!("Settings file, {first}"),
-            None => state.theme_problems.first()?.to_string(),
-        };
-        if count > 1 {
-            message.push_str(&format!(" (and {} more)", count - 1));
-        }
-        let theme = self.theme;
-        Some(
-            div()
-                .id("settings-problems")
-                .role(Role::Status)
-                .aria_label(message.clone())
-                .flex()
-                .items_center()
-                .gap_2()
-                .px_3()
-                .py(px(6.))
-                .border_t_1()
-                .border_color(theme.rule)
-                .bg(theme.table_header_background)
-                .text_size(px(12.))
-                .line_height(px(16.))
-                .text_color(theme.muted_text)
-                .child(div().flex_1().child(message))
-                .child(
-                    bar_button(
-                        theme,
-                        "dismiss-settings-problems",
-                        "×",
-                        "Dismiss settings problems",
-                    )
-                    .px_1()
-                    .py_0()
-                    .border_color(gpui::transparent_black())
-                    .bg(gpui::transparent_black())
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.settings_problems_dismissed = true;
-                        // Focus would otherwise be left on nothing.
-                        this.focus_handle.focus(window, cx);
-                        cx.notify();
-                    })),
-                )
-                .into_any_element(),
-        )
     }
 
     /// A bar at the top of the window asking whether to load the
@@ -422,42 +363,11 @@ impl DocumentView {
         }
     }
 
-    /// The view's actions: files, tabs, zoom, movement and editing.
+    /// The view's actions: saving, movement and editing.
     fn with_actions(&self, element: Div, cx: &mut Context<Self>) -> Div {
         element
             .on_action(cx.listener(Self::save))
             .on_action(cx.listener(Self::save_as))
-            .on_action(cx.listener(Self::print))
-            .on_action(cx.listener(Self::close_window))
-            .on_action(|_: &NextTab, window, cx| {
-                SystemWindowTabController::select_next_tab(cx, window.window_handle().window_id())
-            })
-            .on_action(|_: &PreviousTab, window, cx| {
-                SystemWindowTabController::select_previous_tab(
-                    cx,
-                    window.window_handle().window_id(),
-                )
-            })
-            .on_action(|_: &SelectTab1, window, cx| select_tab(0, window, cx))
-            .on_action(|_: &SelectTab2, window, cx| select_tab(1, window, cx))
-            .on_action(|_: &SelectTab3, window, cx| select_tab(2, window, cx))
-            .on_action(|_: &SelectTab4, window, cx| select_tab(3, window, cx))
-            .on_action(|_: &SelectTab5, window, cx| select_tab(4, window, cx))
-            .on_action(|_: &SelectTab6, window, cx| select_tab(5, window, cx))
-            .on_action(|_: &SelectTab7, window, cx| select_tab(6, window, cx))
-            .on_action(|_: &SelectTab8, window, cx| select_tab(7, window, cx))
-            .on_action(|_: &SelectTab9, window, cx| select_tab(8, window, cx))
-            // Only while possible, so the menu items are disabled at the
-            // limits.
-            .when_some(zoom::larger(self.config.font_size), |this, size| {
-                this.on_action(move |_: &ZoomIn, _, cx| zoom::set(size, cx))
-            })
-            .when_some(zoom::smaller(self.config.font_size), |this, size| {
-                this.on_action(move |_: &ZoomOut, _, cx| zoom::set(size, cx))
-            })
-            .when(self.config.is_zoomed(), |this| {
-                this.on_action(|_: &ResetZoom, _, cx| zoom::reset(cx))
-            })
             .on_action(cx.listener(Self::unreveal))
             .on_action(cx.listener(|this, _: &PageUp, _, cx| this.scroll_page(false, cx)))
             .on_action(cx.listener(|this, _: &PageDown, _, cx| this.scroll_page(true, cx)))
@@ -614,25 +524,15 @@ impl Render for DocumentView {
                     .ok();
             });
         }
-        // Show unsaved changes in the window's close button.
-        let edited = self.is_dirty();
-        if self.shown_edited != Some(edited) {
-            window.set_window_edited(edited);
-            self.shown_edited = Some(edited);
+        // Tell the window about unsaved changes, e.g. for its close button.
+        let dirty = self.is_dirty();
+        if self.reported_dirty != Some(dirty) {
+            self.reported_dirty = Some(dirty);
+            cx.emit(DocumentEvent::DirtyChanged(dirty));
         }
-        let tab_strip = render_tab_strip(window, cx, self.theme, edited);
         let disk_bar = self.render_disk_change(cx);
         let web_images_bar = self.render_web_images_bar(cx);
-        let problems_bar = self.render_settings_problems(cx);
-
-        let name = match self.builtin {
-            Some(builtin) => builtin.title().to_owned(),
-            None => self
-                .open
-                .as_ref()
-                .map(|open| open.editor.document().display_name())
-                .unwrap_or_default(),
-        };
+        let name = self.display_name().unwrap_or_default();
         let content = match &self.open {
             Some(open) => self.render_document(open, request, window, cx),
             None => div()
@@ -653,7 +553,6 @@ impl Render for DocumentView {
             .line_height(relative(1.6))
             .flex()
             .flex_col()
-            .children(tab_strip)
             .children(disk_bar)
             .children(web_images_bar)
             .child(
@@ -675,6 +574,5 @@ impl Render for DocumentView {
                     )
                     .child(content),
             )
-            .children(problems_bar)
     }
 }

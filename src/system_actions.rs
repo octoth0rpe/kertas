@@ -6,7 +6,7 @@ use gpui::{App, AppContext, MenuItem, PromptLevel, actions};
 
 use crate::cli_tool;
 use crate::default_app;
-use crate::document_view::DocumentView;
+use crate::document_window::DocumentWindow;
 use crate::menus;
 
 actions!(
@@ -132,7 +132,7 @@ fn alert(message: &str, detail: &str, cx: &mut App) {
         .active_window()
         .into_iter()
         .chain(cx.window_stack().unwrap_or_default())
-        .find_map(|window| window.downcast::<DocumentView>());
+        .find_map(|window| window.downcast::<DocumentWindow>());
     let Some(window) = window else {
         return;
     };

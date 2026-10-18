@@ -17,55 +17,33 @@ mod line_scroll;
 mod render;
 mod scrollbar;
 
+pub use render::bar_button;
+
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::{
-    Context, FocusHandle, KeyBinding, ListAlignment, ListState, Pixels, Subscription,
-    SystemWindowTabController, Task, Window, WindowHandle, actions, px,
+    AnyWindowHandle, Context, EventEmitter, FocusHandle, Focusable, KeyBinding, ListAlignment,
+    ListState, Pixels, Subscription, Task, Window, actions, px,
 };
 use kertas_core::document::{DiskChange, Document};
 use kertas_core::editor::{Editor, RevealTarget};
 use kertas_core::model::Splice;
 use kertas_core::reveal::StyledSource;
-use kertas_core::titles;
 
-use crate::app_settings::AppSettings;
-use crate::builtin::Builtin;
 use crate::editor_config::EditorConfig;
-use crate::menus::OpenSettings;
 use crate::revealed_block::{CaretPlace, RevealedLayout};
 use crate::theme::Theme;
-use crate::windows;
 
 actions!(
     kertas,
     [
-        New,
-        Open,
         Save,
         SaveAs,
-        Print,
-        CloseWindow,
-        Quit,
-        NextTab,
-        PreviousTab,
         PageUp,
         PageDown,
-        SelectTab1,
-        SelectTab2,
-        SelectTab3,
-        SelectTab4,
-        SelectTab5,
-        SelectTab6,
-        SelectTab7,
-        SelectTab8,
-        SelectTab9,
-        ZoomIn,
-        ZoomOut,
-        ResetZoom,
         Unreveal,
         MoveLeft,
         MoveRight,
@@ -115,31 +93,8 @@ actions!(
 /// Key bindings for the document view (macOS conventions).
 pub fn key_bindings() -> Vec<KeyBinding> {
     vec![
-        KeyBinding::new("cmd-n", New, None),
-        KeyBinding::new("cmd-o", Open, None),
         KeyBinding::new("cmd-s", Save, None),
         KeyBinding::new("cmd-shift-s", SaveAs, None),
-        KeyBinding::new("cmd-p", Print, None),
-        KeyBinding::new("cmd-w", CloseWindow, None),
-        KeyBinding::new("cmd-q", Quit, None),
-        KeyBinding::new("cmd-,", OpenSettings, None),
-        KeyBinding::new("cmd-shift-]", NextTab, None),
-        KeyBinding::new("cmd-shift-[", PreviousTab, None),
-        KeyBinding::new("ctrl-tab", NextTab, None),
-        KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
-        KeyBinding::new("cmd-1", SelectTab1, None),
-        KeyBinding::new("cmd-2", SelectTab2, None),
-        KeyBinding::new("cmd-3", SelectTab3, None),
-        KeyBinding::new("cmd-4", SelectTab4, None),
-        KeyBinding::new("cmd-5", SelectTab5, None),
-        KeyBinding::new("cmd-6", SelectTab6, None),
-        KeyBinding::new("cmd-7", SelectTab7, None),
-        KeyBinding::new("cmd-8", SelectTab8, None),
-        KeyBinding::new("cmd-9", SelectTab9, None),
-        KeyBinding::new("cmd-=", ZoomIn, None),
-        KeyBinding::new("cmd-+", ZoomIn, None),
-        KeyBinding::new("cmd--", ZoomOut, None),
-        KeyBinding::new("cmd-0", ResetZoom, None),
         KeyBinding::new("escape", Unreveal, None),
         KeyBinding::new("left", MoveLeft, None),
         KeyBinding::new("right", MoveRight, None),
@@ -278,21 +233,34 @@ enum WebImages {
     Load,
 }
 
+/// What a document view tells the window it's in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DocumentEvent {
+    /// The document now has a different file or name: it was opened,
+    /// started, or saved to another file.
+    TitleChanged,
+    /// The document now has unsaved changes, or no longer does.
+    DirtyChanged(bool),
+    /// A link to another Markdown file was followed, and asks for it to be
+    /// opened, scrolled to the heading named `anchor` if there is one.
+    OpenFile {
+        path: PathBuf,
+        anchor: Option<String>,
+    },
+}
+
 pub struct DocumentView {
     focus_handle: FocusHandle,
     open: Option<OpenDocument>,
-    /// Set when showing one of Kertas's built-in documents, which are
-    /// view-only.
-    builtin: Option<Builtin>,
+    /// The name of text shown view-only, which has no file (see
+    /// [`DocumentView::show_text`]).
+    text_name: Option<String>,
     /// Images still loading in the document, whose blocks need measuring
     /// again once they arrive.
     loading_images: crate::rendered_block::LoadingImages,
     /// Whether the document's web images are loaded (#97). It's asked
     /// each time a document is opened, and never remembered.
     web_images: WebImages,
-    /// The folder shown after the file's name in the title, if another
-    /// open file has the same name.
-    title_hint: Option<String>,
     /// What the app last told the view, which the document is laid out
     /// with.
     config: EditorConfig,
@@ -312,19 +280,23 @@ pub struct DocumentView {
     pressed_task: Option<usize>,
     /// Whether a "save changes?" prompt is already showing.
     confirming: bool,
-    /// The edited state last shown in the window's close button.
-    shown_edited: Option<bool>,
-    /// Whether the user closed the bar reporting problems in the settings
-    /// file. It shows again when the file changes.
-    settings_problems_dismissed: bool,
+    /// The unsaved changes state last reported with
+    /// [`DocumentEvent::DirtyChanged`].
+    reported_dirty: Option<bool>,
     /// This view's window, to autosave in it later.
-    window_handle: Option<WindowHandle<DocumentView>>,
+    window_handle: AnyWindowHandle,
     /// Bumped by each edit, so only the last one's autosave timer saves.
     autosave_epoch: usize,
     _appearance_observer: Subscription,
     _activation_observer: Subscription,
-    _settings_observer: Subscription,
-    _tabs_observer: Subscription,
+}
+
+impl EventEmitter<DocumentEvent> for DocumentView {}
+
+impl Focusable for DocumentView {
+    fn focus_handle(&self, _: &gpui::App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
 }
 
 impl DocumentView {
@@ -338,33 +310,16 @@ impl DocumentView {
             this.theme = Theme::for_window(&this.config.theme, this.config.appearance, window);
             cx.notify();
         });
-        // The bar reporting problems in the settings file shows again when
-        // the file changes.
-        let settings_observer = cx.observe_global_in::<AppSettings>(window, |this, _, cx| {
-            this.settings_problems_dismissed = false;
-            cx.notify();
-        });
         // Autosave when the window or tab loses focus.
         let activation_observer = cx.observe_window_activation(window, |this, window, cx| {
-            if window.is_window_active() {
-                // The default Markdown app can change in Finder.
-                crate::menus::refresh(cx);
-            } else {
+            if !window.is_window_active() {
                 this.autosave(window, cx);
             }
-        });
-        // Closing the window (e.g. its close button) asks about unsaved
-        // changes first.
-        let view = cx.entity().downgrade();
-        window.on_window_should_close(cx, move |window, cx| {
-            view.update(cx, |this, cx| this.should_close(window, cx))
-                .unwrap_or(true)
         });
         Self {
             focus_handle,
             open: None,
-            builtin: None,
-            title_hint: None,
+            text_name: None,
             loading_images: Rc::default(),
             web_images: WebImages::Ask,
             theme: Theme::for_window(&config.theme, config.appearance, window),
@@ -375,16 +330,11 @@ impl DocumentView {
             pressed_task: None,
             blink_epoch: 0,
             confirming: false,
-            shown_edited: None,
-            settings_problems_dismissed: false,
-            window_handle: window.window_handle().downcast(),
+            reported_dirty: None,
+            window_handle: window.window_handle(),
             autosave_epoch: 0,
             _appearance_observer: appearance_observer,
             _activation_observer: activation_observer,
-            _settings_observer: settings_observer,
-            // Redraw the tab strip when tabs are added, removed or renamed.
-            _tabs_observer: cx
-                .observe_global_in::<SystemWindowTabController>(window, |_, _, cx| cx.notify()),
         }
     }
 
@@ -415,8 +365,8 @@ impl DocumentView {
 
     /// Shows `document`, replacing the current one.
     fn load(&mut self, document: Document, window: &mut Window, cx: &mut Context<Self>) {
-        // Built-in documents are view-only.
-        let editor = Editor::new(document, self.builtin.is_some());
+        // Named text has no file, and is view-only.
+        let editor = Editor::new(document, self.text_name.is_some());
         self.web_images = WebImages::Ask;
         // The footnotes follow the items (#90).
         let items = editor.model().items.len() + editor.model().notes.len();
@@ -442,50 +392,23 @@ impl DocumentView {
         });
         self.watch_file(window, cx);
         self.stop_blink();
-        self.update_window_title(window, cx);
+        cx.emit(DocumentEvent::TitleChanged);
         cx.notify();
     }
 
-    /// Updates the window's title after its document changes file, and
-    /// every other window's, since they may share a name (#95).
-    fn update_window_title(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.apply_window_title(window, cx);
-        cx.defer(windows::refresh_titles);
+    /// The document's name: its file's name, the name of text shown
+    /// view-only, or Untitled. `None` with no document.
+    pub fn display_name(&self) -> Option<String> {
+        let open = self.open.as_ref()?;
+        Some(match &self.text_name {
+            Some(name) => name.clone(),
+            None => open.editor.document().display_name(),
+        })
     }
 
-    /// Sets the folder shown after the file's name, to tell it from other
-    /// open files with the same name.
-    pub fn set_title_hint(
-        &mut self,
-        hint: Option<String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.title_hint != hint {
-            self.title_hint = hint;
-            self.apply_window_title(window, cx);
-        }
-    }
-
-    fn apply_window_title(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(open) = &self.open else {
-            return;
-        };
-        let name = match self.builtin {
-            Some(builtin) => builtin.title().to_owned(),
-            None => titles::title(
-                &open.editor.document().display_name(),
-                self.title_hint.as_deref(),
-            ),
-        };
-        window.set_window_title(&name);
-        window.set_document_path(open.editor.document().path());
-        // GPUI doesn't update tab titles from the window title.
-        SystemWindowTabController::update_tab_title(
-            cx,
-            window.window_handle().window_id(),
-            name.into(),
-        );
+    /// The configuration the view was last given.
+    pub fn config(&self) -> &EditorConfig {
+        &self.config
     }
 
     /// Re-measures every block after the column width or text size
@@ -618,8 +541,7 @@ impl DocumentView {
         self.config.text.list_indent
     }
 
-    /// The theme the view is drawn with, for the smoke test.
-    #[cfg(debug_assertions)]
+    /// The colors the view is drawn in.
     pub fn theme(&self) -> Theme {
         self.theme
     }
@@ -630,16 +552,13 @@ impl DocumentView {
             .is_some_and(|open| open.editor.is_dirty())
     }
 
-    /// Whether the bar reporting problems in the settings file is showing,
-    /// for the smoke test.
-    #[cfg(debug_assertions)]
-    pub fn settings_problems_shown(&self) -> bool {
-        !self.settings_problems_dismissed
-    }
-
-    /// The document's model, for the smoke test.
-    #[cfg(debug_assertions)]
+    /// The document's model, e.g. to print it.
     pub fn model(&self) -> Option<Rc<kertas_core::model::Model>> {
         self.open.as_ref().map(|open| open.editor.model().clone())
+    }
+
+    /// Whether the user chose to load the document's web images.
+    pub fn web_images_loaded(&self) -> bool {
+        self.web_images == WebImages::Load
     }
 }

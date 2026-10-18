@@ -1,4 +1,4 @@
-//! Opening, saving and closing documents, and printing.
+//! Opening, saving and closing documents.
 
 use std::path::{Path, PathBuf};
 
@@ -7,50 +7,20 @@ use kertas_core::anchors;
 use kertas_core::document::{Document, OpenError, SaveError};
 use kertas_core::links::{self, LinkTarget};
 
-use super::{CloseWindow, DocumentView, Print, Save, SaveAs, ScrollRequest};
-use crate::builtin::Builtin;
+use super::{DocumentEvent, DocumentView, Save, SaveAs, ScrollRequest};
 
 impl DocumentView {
-    /// File > Print…: the standard print panel, as a sheet on this window.
-    pub(super) fn print(&mut self, _: &Print, window: &mut Window, _: &mut Context<Self>) {
-        #[cfg(target_os = "macos")]
-        {
-            let Some(open) = &self.open else {
-                return;
-            };
-            let Some(mtm) = objc2::MainThreadMarker::new() else {
-                return;
-            };
-            let Some(ns_window) = crate::native_tabs::ns_window(window) else {
-                return;
-            };
-            let title = match self.builtin {
-                Some(builtin) => builtin.title().to_owned(),
-                None => open.editor.document().display_name(),
-            };
-            crate::print::print(
-                open.editor.model(),
-                open.editor.document().path(),
-                self.web_images == super::WebImages::Load,
-                &self.config.text,
-                &title,
-                &ns_window,
-                mtm,
-            );
-        }
-        #[cfg(not(target_os = "macos"))]
-        let _ = window;
-    }
-
-    /// Shows one of Kertas's built-in documents, view-only.
-    pub fn open_builtin(&mut self, builtin: Builtin, window: &mut Window, cx: &mut Context<Self>) {
-        self.builtin = Some(builtin);
-        self.load(Document::from_text(&builtin.text()), window, cx);
-    }
-
-    /// The built-in document shown, if any.
-    pub fn builtin(&self) -> Option<Builtin> {
-        self.builtin
+    /// Shows `text` view-only, named `name`, replacing the current
+    /// document.
+    pub fn show_text(
+        &mut self,
+        text: &str,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.text_name = Some(name.to_owned());
+        self.load(Document::from_text(text), window, cx);
     }
 
     /// Starts a new untitled document, ready for typing.
@@ -64,17 +34,15 @@ impl DocumentView {
         self.open.as_ref()?.editor.document().path()
     }
 
-    /// Whether the window shows the startup message rather than a document.
-    /// New starts its document in such a window instead of adding a tab.
+    /// Whether the view shows the startup message rather than a document.
     pub fn is_blank(&self) -> bool {
-        self.builtin.is_none() && self.open.is_none()
+        self.open.is_none()
     }
 
-    /// Whether the window holds nothing worth keeping: no document, or an
-    /// untitled one that's still empty. Opening a file reuses such a window
-    /// instead of adding a tab.
+    /// Whether the view holds nothing worth keeping: no document, or an
+    /// untitled one that's still empty.
     pub fn is_pristine(&self) -> bool {
-        self.builtin.is_none()
+        self.text_name.is_none()
             && self.open.as_ref().is_none_or(|open| {
                 let document = open.editor.document();
                 document.path().is_none() && document.buffer().is_empty()
@@ -151,7 +119,7 @@ impl DocumentView {
                 }
                 // Save As moves the document to another file.
                 self.watch_file(window, cx);
-                self.update_window_title(window, cx);
+                cx.emit(DocumentEvent::TitleChanged);
                 cx.notify();
                 true
             }
@@ -206,39 +174,30 @@ impl DocumentView {
         })
     }
 
-    /// Whether the window may close now. With unsaved changes, asks first
-    /// and closes the window itself once that's resolved.
-    pub(super) fn should_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+    /// Whether the document can close straight away: it has no unsaved
+    /// changes, or autosave just saved them. If not, ask with
+    /// [`DocumentView::confirm_close`].
+    pub fn ready_to_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         // With autosave on, changes are saved rather than asked about.
-        if !self.is_dirty() || self.autosave(window, cx) {
-            return true;
-        }
-        let confirmed = self.confirm_discard(window, cx);
-        cx.spawn_in(window, async move |this, cx| {
-            if confirmed.await {
-                this.update_in(cx, |this, window, _| {
-                    // Don't ask again on the way out.
-                    if let Some(open) = &mut this.open {
-                        open.editor.discard_changes();
-                    }
-                    window.remove_window();
-                })
-                .ok();
-            }
-        })
-        .detach();
-        false
+        !self.is_dirty() || self.autosave(window, cx)
     }
 
-    pub(super) fn close_window(
-        &mut self,
-        _: &CloseWindow,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.should_close(window, cx) {
-            window.remove_window();
-        }
+    /// Asks whether to save unsaved changes before the document closes.
+    /// Resolves to whether it may close: they were saved, or the user
+    /// chose not to save them, and then they aren't asked about again.
+    pub fn confirm_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<bool> {
+        let confirmed = self.confirm_discard(window, cx);
+        cx.spawn_in(window, async move |this, cx| {
+            if !confirmed.await {
+                return false;
+            }
+            this.update(cx, |this, _| {
+                if let Some(open) = &mut this.open {
+                    open.editor.discard_changes();
+                }
+            })
+            .is_ok()
+        })
     }
 
     /// Opens the file at `path`, replacing the current document. Shows an
@@ -257,13 +216,13 @@ impl DocumentView {
         }
     }
 
-    /// Follows a clicked link: Markdown files open in Kertas, as File > Open
-    /// does, and anything else opens in its own app. Shows an alert if the
+    /// Follows a clicked link: Markdown files are passed on with
+    /// [`DocumentEvent::OpenFile`], and anything else opens in its own app. Shows an alert if the
     /// link can't be followed.
     pub fn follow_link(&mut self, destination: &str, window: &mut Window, cx: &mut Context<Self>) {
         let (message, detail) = match links::resolve(destination, self.document_path()) {
             LinkTarget::Markdown(path, anchor) => {
-                cx.defer(move |cx| crate::windows::open_path_at(path, anchor, cx));
+                cx.emit(DocumentEvent::OpenFile { path, anchor });
                 return;
             }
             LinkTarget::File(path) => {

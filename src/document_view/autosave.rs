@@ -16,20 +16,20 @@ impl DocumentView {
         let Some(seconds) = self.config.autosave else {
             return;
         };
-        let Some(handle) = self.window_handle else {
-            return;
-        };
+        let handle = self.window_handle;
         self.autosave_epoch += 1;
         let epoch = self.autosave_epoch;
-        cx.spawn(async move |_, cx| {
+        cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(Duration::from_secs(seconds.into()))
                 .await;
             handle
-                .update(cx, |view, window, cx| {
-                    if view.autosave_epoch == epoch {
-                        view.autosave(window, cx);
-                    }
+                .update(cx, |_, window, cx| {
+                    this.update(cx, |view, cx| {
+                        if view.autosave_epoch == epoch {
+                            view.autosave(window, cx);
+                        }
+                    })
                 })
                 .ok();
         })
@@ -71,7 +71,7 @@ impl DocumentView {
         }
         match open.editor.save() {
             Ok(()) => {
-                self.update_window_title(window, cx);
+                cx.emit(super::DocumentEvent::TitleChanged);
                 cx.notify();
                 true
             }

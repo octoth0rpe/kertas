@@ -17,9 +17,10 @@ const SETTLE: Duration = Duration::from_millis(100);
 
 impl DocumentView {
     /// Starts watching the document's file, if it has one and it isn't
-    /// already watched. Built-in and untitled documents aren't watched.
+    /// already watched. Text shown view-only and untitled documents aren't
+    /// watched.
     pub(super) fn watch_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.builtin.is_some() {
+        if self.text_name.is_some() {
             return;
         }
         let Some(open) = &mut self.open else {

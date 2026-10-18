@@ -8,7 +8,7 @@ use std::borrow::Cow;
 
 use gpui::{App, Keystroke, WindowHandle};
 
-use crate::document_view::DocumentView;
+use crate::document_window::DocumentWindow;
 use crate::windows;
 
 /// A built-in document.
@@ -76,11 +76,11 @@ pub fn open(builtin: Builtin, cx: &mut App) {
     let existing = cx
         .windows()
         .into_iter()
-        .filter_map(|window| window.downcast::<DocumentView>())
-        .find(|window: &WindowHandle<DocumentView>| {
+        .filter_map(|window| window.downcast::<DocumentWindow>())
+        .find(|window: &WindowHandle<DocumentWindow>| {
             window
                 .read(cx)
-                .is_ok_and(|view| view.builtin() == Some(builtin))
+                .is_ok_and(|this| this.builtin() == Some(builtin))
         });
     match existing {
         Some(window) => {
@@ -89,9 +89,14 @@ pub fn open(builtin: Builtin, cx: &mut App) {
                 .ok();
         }
         None => {
-            windows::open_window(cx, |view, window, cx| {
-                view.open_builtin(builtin, window, cx)
-            });
+            if let Some(window) = windows::open_window(cx, |_, _, _| {}) {
+                window
+                    .0
+                    .update(cx, |this, window, cx| {
+                        this.open_builtin(builtin, window, cx)
+                    })
+                    .ok();
+            }
         }
     }
 }
@@ -135,14 +140,16 @@ pub fn shortcut_label(keystroke: &Keystroke) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::document_view::key_bindings;
 
     #[test]
     fn every_shortcut_is_documented() {
         let document = Builtin::KeyboardShortcuts.text();
         let document = document.as_ref();
         let mut missing = Vec::new();
-        for binding in key_bindings() {
+        let bindings = crate::document_view::key_bindings()
+            .into_iter()
+            .chain(crate::document_window::key_bindings());
+        for binding in bindings {
             for keystroke in binding.keystrokes() {
                 let label = shortcut_label(keystroke.inner());
                 // Tabs 2 to 8 are written as a range, "⌘1 … ⌘9".

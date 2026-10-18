@@ -9,9 +9,8 @@ use kertas_core::themes::Theme;
 
 use crate::app_settings::{self, AppSettings};
 use crate::builtin::{self, Builtin};
-use crate::document_view::{
-    CloseWindow, New, Open, Print, Quit, ResetZoom, Save, SaveAs, ZoomIn, ZoomOut,
-};
+use crate::document_view::{Save, SaveAs};
+use crate::document_window::{CloseWindow, New, Open, Print, Quit, ResetZoom, ZoomIn, ZoomOut};
 use crate::settings_window;
 
 actions!(

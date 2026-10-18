@@ -14,7 +14,7 @@ use gpui::{
 use kertas_core::settings::{DEFAULT_THEME, Kind, SETTINGS, Setting, Settings};
 
 use crate::app_settings::{self, AppSettings};
-use crate::document_view::{CloseWindow, DocumentView};
+use crate::document_window::{CloseWindow, DocumentWindow};
 use crate::theme::Theme;
 
 /// The settings window, if it's open.
@@ -38,7 +38,7 @@ pub fn open(cx: &mut App) {
         .window_stack()
         .unwrap_or_default()
         .into_iter()
-        .find_map(|window| window.downcast::<DocumentView>())
+        .find_map(|window| window.downcast::<DocumentWindow>())
     {
         document
             .update(cx, |_, window, _| window.activate_window())
