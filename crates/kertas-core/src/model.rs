@@ -467,7 +467,7 @@ mod tests {
     fn typing_in_large_document_is_fast() {
         let text = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/spikes/fixtures/10k.md"
+            "/../../spikes/fixtures/10k.md"
         ))
         .unwrap();
         let model = Model::new(&text);

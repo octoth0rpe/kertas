@@ -144,11 +144,12 @@ impl Theme {
     }
 }
 
-const KERTAS: &str = include_str!("builtin/themes/kertas.toml");
+/// Kertas's own theme file.
+pub const KERTAS_FILE: &str = include_str!("builtin/themes/kertas.toml");
 
 /// The theme files built into Kertas, in the order they're listed.
 const BUILTIN: &[&str] = &[
-    KERTAS,
+    KERTAS_FILE,
     include_str!("builtin/themes/solarized.toml"),
     include_str!("builtin/themes/gruvbox.toml"),
     include_str!("builtin/themes/catppuccin.toml"),
@@ -292,7 +293,7 @@ pub fn kertas() -> &'static Theme {
     static THEME: OnceLock<Theme> = OnceLock::new();
     // It gives every color, so nothing falls back to it.
     THEME.get_or_init(|| {
-        read(KERTAS, &|_| Palette::BLACK)
+        read(KERTAS_FILE, &|_| Palette::BLACK)
             .expect("Kertas's theme is valid")
             .0
     })
@@ -502,7 +503,7 @@ mod tests {
 
     #[test]
     fn a_missing_half_is_kertas() {
-        let light = KERTAS
+        let light = KERTAS_FILE
             .split("[dark]")
             .next()
             .unwrap()
@@ -522,9 +523,9 @@ mod tests {
 
     #[test]
     fn reports_unknown_keys() {
-        let text = format!("{KERTAS}hue = \"#000000\"\n");
+        let text = format!("{KERTAS_FILE}hue = \"#000000\"\n");
         assert_eq!(problems(&text), ["line 41: unknown color `dark.hue`"]);
-        let text = format!("font = \"Charter\"\n{KERTAS}");
+        let text = format!("font = \"Charter\"\n{KERTAS_FILE}");
         assert_eq!(problems(&text), ["line 1: unknown key `font`"]);
     }
 
@@ -535,9 +536,13 @@ mod tests {
         std::fs::remove_dir_all(&folder).ok();
         assert_eq!(read_folder(&folder), (vec![], vec![]));
         std::fs::create_dir_all(&folder).unwrap();
-        let light = KERTAS.split("[dark]").next().unwrap();
+        let light = KERTAS_FILE.split("[dark]").next().unwrap();
         std::fs::write(folder.join("b.toml"), light.replace("Kertas", "Night")).unwrap();
-        std::fs::write(folder.join("a.toml"), KERTAS.replace("Kertas", "night")).unwrap();
+        std::fs::write(
+            folder.join("a.toml"),
+            KERTAS_FILE.replace("Kertas", "night"),
+        )
+        .unwrap();
         std::fs::write(folder.join("c.toml"), "[light]\n").unwrap();
         std::fs::write(folder.join("notes.txt"), "not a theme").unwrap();
         let (themes, problems) = read_folder(&folder);

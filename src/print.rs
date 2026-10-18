@@ -9,11 +9,11 @@
 use std::ops::Range;
 
 use crate::theme::Theme;
-use kertas::links::ImageLocation;
-use kertas::model::Model;
-use kertas::print_layout::{Alignment, Frame, PrintLayout};
-use kertas::rendered::heading_scale;
-use kertas::settings::Settings;
+use kertas_core::links::ImageLocation;
+use kertas_core::model::Model;
+use kertas_core::print_layout::{Alignment, Frame, PrintLayout};
+use kertas_core::rendered::heading_scale;
+use kertas_core::settings::Settings;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{AnyThread, MainThreadMarker};

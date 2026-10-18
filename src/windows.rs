@@ -16,8 +16,8 @@ use gpui::{
     WindowBounds, WindowHandle, WindowOptions, point, prelude::*, px, size,
 };
 
-use kertas::settings::Layout;
-use kertas::titles;
+use kertas_core::settings::Layout;
+use kertas_core::titles;
 
 use crate::app_settings;
 use crate::document_view::{CloseWindow, DocumentView, New, Open, Quit};
@@ -303,7 +303,7 @@ pub fn parse_url(url: &str) -> Option<UrlRequest> {
         .or_else(|| url.strip_prefix("file://localhost"))
         .or_else(|| url.strip_prefix("file://"))?;
     path.starts_with('/')
-        .then(|| UrlRequest::Open(kertas::links::percent_decode(path)))
+        .then(|| UrlRequest::Open(kertas_core::links::percent_decode(path)))
 }
 
 /// Handles a URL sent to Kertas.

@@ -2398,6 +2398,7 @@ dependencies = [
  "futures",
  "gpui",
  "gpui_platform",
+ "kertas-core",
  "libc",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
@@ -2405,8 +2406,16 @@ dependencies = [
  "objc2-core-graphics",
  "objc2-foundation 0.3.2",
  "objc2-uniform-type-identifiers",
- "pulldown-cmark",
  "raw-window-handle",
+ "ropey",
+ "toml_edit 0.25.17+spec-1.1.0",
+]
+
+[[package]]
+name = "kertas-core"
+version = "0.4.0"
+dependencies = [
+ "pulldown-cmark",
  "ropey",
  "toml_edit 0.25.17+spec-1.1.0",
  "unicode-segmentation",

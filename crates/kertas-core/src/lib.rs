@@ -1,4 +1,5 @@
-//! Core of the Kertas Markdown editor.
+//! Core of the Kertas Markdown editor: the document model, Markdown
+//! parsing and settings, without any UI. Doesn't depend on GPUI.
 
 pub mod anchors;
 pub mod autolinks;

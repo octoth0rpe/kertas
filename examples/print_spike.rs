@@ -20,9 +20,9 @@ use objc2_app_kit::{
 use objc2_core_foundation::CGSize;
 use objc2_foundation::{NSArray, NSMutableAttributedString, NSNumber, NSRange, NSString, NSURL};
 
-use kertas::inline::InlineText;
-use kertas::model::Model;
-use kertas::rendered::RenderedBlock;
+use kertas_core::inline::InlineText;
+use kertas_core::model::Model;
+use kertas_core::rendered::RenderedBlock;
 
 const BODY: f64 = 11.;
 const CODE: f64 = 9.5;

@@ -25,10 +25,10 @@ if ! command -v cargo-about >/dev/null 2>&1; then
     exit 1
 fi
 
-# The libraries in Kertas's About tab, as "name version" lines. Kertas itself
-# isn't one of them.
+# The libraries in Kertas's About tab, as "name version" lines. Kertas's own
+# crates aren't among them.
 libraries() {
-    sed -n 's/^| \([^ |]*\) | \([^ |]*\) | .*/\1 \2/p' | grep -v '^kertas ' | sort
+    sed -n 's/^| \([^ |]*\) | \([^ |]*\) | .*/\1 \2/p' | grep -Ev '^kertas(-[a-z]+)? ' | sort
 }
 
 if [ "${1:-}" = "--check" ]; then
@@ -47,7 +47,7 @@ cargo about generate --locked -c scripts/about.toml scripts/acknowledgements.hbs
     2> "$root/target/acknowledgements.log" |
     # Some license files have Windows line endings.
     tr -d '\r' |
-    grep -v '^| kertas | ' > "$out.tmp" || {
+    grep -Ev '^\| kertas(-[a-z]+)? \| ' > "$out.tmp" || {
     cat "$root/target/acknowledgements.log" >&2
     rm -f "$out.tmp"
     exit 1
@@ -56,4 +56,11 @@ cargo about generate --locked -c scripts/about.toml scripts/acknowledgements.hbs
 sed '/^@@@ licenses.md @@@$/,$d' "$out.tmp" > "$out"
 sed '1,/^@@@ licenses.md @@@$/d' "$out.tmp" > "$licenses"
 rm "$out.tmp"
+# Kertas's own crates aren't listed with the libraries, nor is a notice
+# only they use.
+perl -0pi -e '
+    s/(?<=\*\*|, )kertas(?:-[a-z]+)? [^,*]+, //g;
+    s/, kertas(?:-[a-z]+)? [^,*]+(?=\*\*)//g;
+    s/\*\*kertas(?:-[a-z]+)? [^,*]+\*\* \([^)]*\)\n\n````\n.*?\n````\n\n//sg;
+' "$licenses"
 echo "Wrote $out ($(libraries < "$out" | wc -l | tr -d ' ') libraries) and $licenses"

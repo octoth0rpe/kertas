@@ -4,8 +4,8 @@
 use std::rc::Rc;
 
 use gpui::{Context, ListOffset, Pixels, Window, point, px};
-use kertas::editor::{Motion, RevealTarget, Selection};
-use kertas::reveal::styled_source;
+use kertas_core::editor::{Motion, RevealTarget, Selection};
+use kertas_core::reveal::styled_source;
 
 use crate::revealed_block::{CaretPlace, RevealedLayout};
 

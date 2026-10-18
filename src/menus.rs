@@ -4,8 +4,8 @@
 //! the settings change, to keep their checkmarks current.
 
 use gpui::{Action, App, Menu, MenuItem, NoAction, SharedString, actions};
-use kertas::settings::{AppearanceSetting, DEFAULT_THEME, Settings, TextWidth};
-use kertas::themes::Theme;
+use kertas_core::settings::{AppearanceSetting, DEFAULT_THEME, Settings, TextWidth};
+use kertas_core::themes::Theme;
 
 use crate::app_settings::{self, AppSettings};
 use crate::builtin::{self, Builtin};

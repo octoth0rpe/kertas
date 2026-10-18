@@ -5,7 +5,7 @@
 //! setting also changes the current size.
 
 use gpui::{App, Global};
-use kertas::settings::FONT_SIZES;
+use kertas_core::settings::FONT_SIZES;
 
 use crate::app_settings::{self, AppSettings};
 
