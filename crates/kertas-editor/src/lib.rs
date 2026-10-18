@@ -10,7 +10,11 @@
 //! starts an untitled document with [`DocumentView::start_untitled`]. The
 //! view saves itself on its [`actions::Save`] and [`actions::SaveAs`]
 //! actions, and reloads its file when another app changes it. It tells
-//! the app what it doesn't handle itself with [`DocumentEvent`]s.
+//! the app what it doesn't handle itself with [`DocumentEvent`]s, among
+//! them [`DocumentEvent::Edited`] once typing pauses, when the app can
+//! read the view's [`text`](DocumentView::text),
+//! [`headings`](DocumentView::headings) and
+//! [`word count`](DocumentView::word_count).
 //!
 //! The app binds the view's keys with [`key_bindings`] and loads its
 //! icons with [`Assets`]. `examples/embed.rs` shows a window that holds
@@ -50,7 +54,7 @@ pub use kertas_core;
 
 pub use assets::Assets;
 pub use document_view::{
-    CARET_BLINK_INTERVAL, DocumentEvent, DocumentView, bar_button, key_bindings,
+    CARET_BLINK_INTERVAL, DocumentEvent, DocumentView, EDIT_PAUSE, bar_button, key_bindings,
 };
 pub use editor_config::EditorConfig;
 pub use problems_bar::problems_bar;

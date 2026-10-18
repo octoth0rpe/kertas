@@ -27,8 +27,27 @@ pub fn slug(heading: &str) -> String {
         .collect()
 }
 
+/// Numbers headings' anchors as GitHub does: the first heading with a slug
+/// gets it as it is, and repeats get `-1`, `-2` and so on.
+#[derive(Default)]
+pub(crate) struct HeadingAnchors(HashMap<String, usize>);
+
+impl HeadingAnchors {
+    /// The anchor of the next heading, in document order, with `text`.
+    pub(crate) fn next(&mut self, text: &str) -> String {
+        let slug = slug(text);
+        let count = self.0.entry(slug.clone()).or_default();
+        let anchor = match *count {
+            0 => slug,
+            n => format!("{slug}-{n}"),
+        };
+        *count += 1;
+        anchor
+    }
+}
+
 /// Something a `#name` link can lead to.
-enum Target {
+pub(crate) enum Target {
     /// A heading, by its text.
     Heading(String),
     /// An HTML tag's `id`, or an `<a name>`.
@@ -38,23 +57,14 @@ enum Target {
 /// The anchors in `model`, in document order, with the index of the item
 /// each one is in. Repeated headings get `-1`, `-2` and so on, as on GitHub.
 pub fn anchors(model: &Model) -> Vec<(String, usize)> {
-    let mut seen: HashMap<String, usize> = HashMap::new();
+    let mut headings = HeadingAnchors::default();
     let mut anchors = Vec::new();
     for (index, item) in model.items.iter().enumerate() {
         let mut targets = Vec::new();
         collect(&item.rendered, &mut targets);
         for target in targets {
             let anchor = match target {
-                Target::Heading(text) => {
-                    let slug = slug(&text);
-                    let count = seen.entry(slug.clone()).or_default();
-                    let anchor = match *count {
-                        0 => slug,
-                        n => format!("{slug}-{n}"),
-                    };
-                    *count += 1;
-                    anchor
-                }
+                Target::Heading(text) => headings.next(&text),
                 Target::Html(id) => id,
             };
             anchors.push((anchor, index));
@@ -127,7 +137,7 @@ fn lookup(anchors: &[(String, usize)], name: &str) -> Option<usize> {
 
 /// The link targets in `block`, in order, including those in quotes,
 /// lists and tables.
-fn collect(block: &RenderedBlock, out: &mut Vec<Target>) {
+pub(crate) fn collect(block: &RenderedBlock, out: &mut Vec<Target>) {
     let inline = |text: &InlineText, out: &mut Vec<Target>| {
         out.extend(text.anchors.iter().cloned().map(Target::Html));
     };

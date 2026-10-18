@@ -130,6 +130,7 @@ grep -q "^Quitting. Still paused. " "$work/autosave/showcase.md" || {
     echo "smoke.sh: FAILED: quitting didn't autosave" >&2
     exit 1
 }
+run edited showcase.md
 run quit showcase.md --exits
 run bench 10k.md
 echo "All smoke tests passed."

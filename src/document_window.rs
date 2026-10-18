@@ -157,6 +157,8 @@ impl DocumentWindow {
                 self.apply_title(window, cx);
                 cx.notify();
             }
+            // Kertas shows nothing that follows the text.
+            TabsEvent::Document(_, DocumentEvent::Edited) => {}
             TabsEvent::Document(_, DocumentEvent::OpenFile { path, anchor }) => {
                 let (path, anchor) = (path.clone(), anchor.clone());
                 cx.defer(move |cx| windows::open_path_at(path, anchor, cx));
