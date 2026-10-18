@@ -11,7 +11,7 @@ use gpui::{
     SharedString, Stateful, Subscription, Toggled, Window, WindowBounds, WindowHandle, WindowKind,
     WindowOptions, actions, anchored, deferred, div, prelude::*, px, size,
 };
-use kertas::settings::{DEFAULT_THEME, Kind, SETTINGS, Setting, Settings};
+use kertas_core::settings::{DEFAULT_THEME, Kind, SETTINGS, Setting, Settings};
 
 use crate::app_settings::{self, AppSettings};
 use crate::document_view::{CloseWindow, DocumentView};

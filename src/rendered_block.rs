@@ -11,13 +11,13 @@ use gpui::{
     StyledText, TextLayout, Toggled, WeakEntity, Window, canvas, div, img, point, prelude::*, px,
     rems, size, svg,
 };
-use kertas::inline::{Image, InlineText, Link};
-use kertas::links::ImageLocation;
-use kertas::model::Note;
-use kertas::rendered::{AlertKind, ColumnAlignment, ListItem, RenderedBlock, Table, Task};
-use kertas::settings::ListIndent;
-use kertas::tabs::ExpandedTabs;
-use kertas::{html_tags, links};
+use kertas_core::inline::{Image, InlineText, Link};
+use kertas_core::links::ImageLocation;
+use kertas_core::model::Note;
+use kertas_core::rendered::{AlertKind, ColumnAlignment, ListItem, RenderedBlock, Table, Task};
+use kertas_core::settings::ListIndent;
+use kertas_core::tabs::ExpandedTabs;
+use kertas_core::{html_tags, links};
 
 use crate::assets::alert_icon;
 use crate::document_view::DocumentView;

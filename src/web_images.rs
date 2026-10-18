@@ -15,8 +15,8 @@ use futures::future::BoxFuture;
 use gpui::App;
 use gpui::http_client::http::HeaderValue;
 use gpui::http_client::{AsyncBody, HttpClient, Request, Response, Uri, Url, anyhow};
-use kertas::links;
-use kertas::model::Model;
+use kertas_core::links;
+use kertas_core::model::Model;
 use objc2_foundation::{
     NSData, NSError, NSHTTPURLResponse, NSString, NSURL, NSURLResponse, NSURLSession,
 };

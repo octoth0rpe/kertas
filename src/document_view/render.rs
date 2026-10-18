@@ -7,9 +7,9 @@ use gpui::{
     AnyElement, Context, Div, ImgResourceLoader, Pixels, Rems, Role, SharedString, Stateful,
     SystemWindowTabController, Window, div, list, prelude::*, px, relative, rems,
 };
-use kertas::blocks::BlockKind;
-use kertas::editor::{Motion, RevealTarget};
-use kertas::settings::TextWidth;
+use kertas_core::blocks::BlockKind;
+use kertas_core::editor::{Motion, RevealTarget};
+use kertas_core::settings::TextWidth;
 
 use super::heights::Heights;
 use super::{

@@ -5,7 +5,7 @@
 use std::borrow::Cow;
 
 use gpui::{AssetSource, Result, SharedString};
-use kertas::rendered::AlertKind;
+use kertas_core::rendered::AlertKind;
 
 const FILES: &[(&str, &[u8])] = &[
     (

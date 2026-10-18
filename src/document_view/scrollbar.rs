@@ -16,7 +16,7 @@ use gpui::{
     MouseUpEvent, Pixels, Role, ScrollWheelEvent, Window, canvas, div, fill, point, prelude::*, px,
     size,
 };
-use kertas::scroll_estimate::ScrollEstimate;
+use kertas_core::scroll_estimate::ScrollEstimate;
 
 use super::heights::{Heights, ScrollbarMode};
 use super::{DocumentView, OpenDocument};

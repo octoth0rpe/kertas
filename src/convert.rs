@@ -9,8 +9,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use kertas::document::Document;
-use kertas::model::Model;
+use kertas_core::document::Document;
+use kertas_core::model::Model;
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSFontManager};
 

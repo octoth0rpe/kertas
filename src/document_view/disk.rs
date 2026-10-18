@@ -5,7 +5,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use gpui::{AnyElement, Context, Window, div, prelude::*, px};
-use kertas::document::{DiskChange, DiskChangeKind};
+use kertas_core::document::{DiskChange, DiskChangeKind};
 
 use super::{DocumentView, Save, SaveAs, caret::reveal};
 use crate::file_watch;

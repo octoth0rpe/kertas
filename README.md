@@ -35,6 +35,8 @@ cargo run
 
 The first build downloads GPUI from the Zed repository and takes a few minutes.
 
+The repository is a Cargo workspace. The app is the package at the root, and `crates/kertas-core` holds the document model, Markdown parsing and settings, without any UI.
+
 ### Settings
 
 Settings live in `~/Library/Application Support/kertas/config.toml`. The file is optional, and edits to it apply straight away:

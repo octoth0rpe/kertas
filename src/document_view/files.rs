@@ -3,9 +3,9 @@
 use std::path::{Path, PathBuf};
 
 use gpui::{Context, ListOffset, PromptLevel, Task, Window, px};
-use kertas::anchors;
-use kertas::document::{Document, OpenError, SaveError};
-use kertas::links::{self, LinkTarget};
+use kertas_core::anchors;
+use kertas_core::document::{Document, OpenError, SaveError};
+use kertas_core::links::{self, LinkTarget};
 
 use super::{CloseWindow, DocumentView, Print, Save, SaveAs, ScrollRequest};
 use crate::builtin::Builtin;

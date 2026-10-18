@@ -26,11 +26,11 @@ use gpui::{
     Context, FocusHandle, KeyBinding, ListAlignment, ListState, Pixels, Subscription,
     SystemWindowTabController, Task, Window, WindowHandle, actions, px,
 };
-use kertas::document::{DiskChange, Document};
-use kertas::editor::{Editor, RevealTarget};
-use kertas::model::Splice;
-use kertas::reveal::StyledSource;
-use kertas::titles;
+use kertas_core::document::{DiskChange, Document};
+use kertas_core::editor::{Editor, RevealTarget};
+use kertas_core::model::Splice;
+use kertas_core::reveal::StyledSource;
+use kertas_core::titles;
 
 use crate::app_settings::{self, AppSettings};
 use crate::builtin::Builtin;
@@ -528,7 +528,7 @@ impl DocumentView {
 
     /// How many items are revealed, and the selection, for the smoke test.
     #[cfg(debug_assertions)]
-    pub fn reveal_state(&self) -> (usize, Option<kertas::editor::Selection>) {
+    pub fn reveal_state(&self) -> (usize, Option<kertas_core::editor::Selection>) {
         self.open.as_ref().map_or((0, None), |open| {
             (open.revealed.len(), open.editor.selection())
         })
@@ -604,7 +604,7 @@ impl DocumentView {
 
     /// The list indent the document is laid out with, for the smoke test.
     #[cfg(debug_assertions)]
-    pub fn list_indent(&self) -> kertas::settings::ListIndent {
+    pub fn list_indent(&self) -> kertas_core::settings::ListIndent {
         self.text_settings.list_indent
     }
 
@@ -629,7 +629,7 @@ impl DocumentView {
 
     /// The document's model, for the smoke test.
     #[cfg(debug_assertions)]
-    pub fn model(&self) -> Option<Rc<kertas::model::Model>> {
+    pub fn model(&self) -> Option<Rc<kertas_core::model::Model>> {
         self.open.as_ref().map(|open| open.editor.model().clone())
     }
 }

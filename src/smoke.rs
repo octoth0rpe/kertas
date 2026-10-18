@@ -723,10 +723,10 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
         // listed, and adding, editing and removing them applies live.
         let folder = path.with_file_name("themes");
         let mine = folder.join("Mine.toml");
-        let kertas_file = include_str!("builtin/themes/kertas.toml");
+        let kertas_file = kertas_core::themes::KERTAS_FILE;
         let dark_background = format!(
             "background = \"#{:06x}\"",
-            kertas::themes::kertas().dark.background.0 >> 8
+            kertas_core::themes::kertas().dark.background.0 >> 8
         );
         let with_background = |name: &str, color: &str| {
             kertas_file
@@ -767,7 +767,7 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
             cx.update(|cx| {
                 app_settings::themes(cx)
                     .iter()
-                    .any(|theme| theme.dark.background == kertas::themes::Color(0x304050ff))
+                    .any(|theme| theme.dark.background == kertas_core::themes::Color(0x304050ff))
             })
         })
         .await;
@@ -873,7 +873,7 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
             wait_for(cx, APPLY, |cx| {
                 window
                     .read_with(cx, |view, _| view.list_indent())
-                    .is_ok_and(|indent| indent == kertas::settings::ListIndent::Wide)
+                    .is_ok_and(|indent| indent == kertas_core::settings::ListIndent::Wide)
             })
             .await,
         );
@@ -1058,9 +1058,9 @@ fn smoke_settings_window(window: WindowHandle<DocumentView>, cx: &mut App) {
             let back = theme(cx);
             checks.check(
                 &format!("Tab, ⇧Tab and Space choose settings ({light:?}, {dark:?}, {back:?})"),
-                light == kertas::settings::AppearanceSetting::Light
-                    && dark == kertas::settings::AppearanceSetting::Dark
-                    && back == kertas::settings::AppearanceSetting::Light,
+                light == kertas_core::settings::AppearanceSetting::Light
+                    && dark == kertas_core::settings::AppearanceSetting::Dark
+                    && back == kertas_core::settings::AppearanceSetting::Light,
             );
             settings
                 .update(cx, |_, window, cx| {

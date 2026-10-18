@@ -756,7 +756,7 @@ mod tests {
     fn showcase_renders_everything_except_definitions() {
         let text = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/spikes/fixtures/showcase.md"
+            "/../../spikes/fixtures/showcase.md"
         ))
         .unwrap();
         let raw: Vec<String> = render(&text)
@@ -822,7 +822,7 @@ mod tests {
     fn large_document_renders_quickly() {
         let text = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/spikes/fixtures/10k.md"
+            "/../../spikes/fixtures/10k.md"
         ))
         .unwrap();
         let start = std::time::Instant::now();

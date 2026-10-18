@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use kertas::document::Document;
+use kertas_core::document::Document;
 
 /// A fresh, empty directory for one test.
 fn test_dir(name: &str) -> PathBuf {

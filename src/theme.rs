@@ -2,12 +2,12 @@
 //!
 //! The `theme` setting picks a theme, and the `appearance` setting its
 //! light or dark colors, or follows the macOS appearance. Themes come from
-//! theme files; see [`kertas::themes`].
+//! theme files; see [`kertas_core::themes`].
 
 use gpui::{App, Hsla, Window, WindowAppearance, rgba};
-use kertas::rendered::AlertKind;
-use kertas::settings::AppearanceSetting;
-use kertas::themes::{self, Appearance, Color, Palette};
+use kertas_core::rendered::AlertKind;
+use kertas_core::settings::AppearanceSetting;
+use kertas_core::themes::{self, Appearance, Color, Palette};
 
 use crate::app_settings;
 

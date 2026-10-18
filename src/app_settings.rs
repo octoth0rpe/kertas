@@ -15,8 +15,10 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use gpui::{App, BorrowAppContext, Global, WindowAppearance};
-use kertas::settings::{self, AppearanceSetting, Available, FontCheck, Layout, Problem, Settings};
-use kertas::themes::{self, FileProblem, Theme};
+use kertas_core::settings::{
+    self, AppearanceSetting, Available, FontCheck, Layout, Problem, Settings,
+};
+use kertas_core::themes::{self, FileProblem, Theme};
 
 use crate::file_watch;
 

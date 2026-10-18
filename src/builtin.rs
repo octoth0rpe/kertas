@@ -45,7 +45,7 @@ impl Builtin {
             Self::Themes => include_str!("builtin/themes.md")
                 .replace(
                     "{example}",
-                    &include_str!("builtin/themes/kertas.toml").replacen(
+                    &kertas_core::themes::KERTAS_FILE.replacen(
                         "# Kertas's own theme, after GitHub's light and dark colors.\n\
                          name = \"Kertas\"",
                         "# My own theme, starting from Kertas's colors.\nname = \"My Theme\"",
@@ -161,15 +161,15 @@ mod tests {
     #[test]
     fn themes_documents_every_color() {
         let text = Builtin::Themes.text();
-        for &(key, _) in kertas::themes::COLORS {
+        for &(key, _) in kertas_core::themes::COLORS {
             assert!(text.contains(&format!("| `{key}` |")), "{key}");
         }
         let example = text.split("```toml\n").nth(1).unwrap();
         let example = example.split("```").next().unwrap();
-        let (theme, problems) = kertas::themes::parse(example).unwrap();
+        let (theme, problems) = kertas_core::themes::parse(example).unwrap();
         assert_eq!(theme.name, "My Theme");
         assert_eq!(problems, vec![]);
-        assert_eq!(theme.light, kertas::themes::kertas().light);
+        assert_eq!(theme.light, kertas_core::themes::kertas().light);
     }
 
     #[test]
@@ -203,12 +203,15 @@ mod tests {
     #[test]
     fn markdown_syntax_links_reach_their_headings() {
         let text = Builtin::MarkdownSyntax.text();
-        let model = kertas::model::Model::new(&text);
+        let model = kertas_core::model::Model::new(&text);
         let mut targets = text.split("](#").skip(1).peekable();
         assert!(targets.peek().is_some(), "it has links within it");
         for target in targets {
             let name = &target[..target.find(')').unwrap()];
-            assert!(kertas::anchors::find(&model, name).is_some(), "#{name}");
+            assert!(
+                kertas_core::anchors::find(&model, name).is_some(),
+                "#{name}"
+            );
         }
     }
 

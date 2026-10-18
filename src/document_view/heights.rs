@@ -17,7 +17,7 @@
 use std::rc::Rc;
 
 use gpui::{Bounds, ListOffset, ListState, Pixels, point, px};
-use kertas::scroll_estimate::ScrollEstimate;
+use kertas_core::scroll_estimate::ScrollEstimate;
 
 /// Documents with up to this many items have every item measured up
 /// front, so their heights are all known from the start. The list measures
