@@ -12,8 +12,7 @@
 //! known only once it has all been drawn.
 //!
 //! Owning the heights outright would take a document element of Kertas's
-//! own in place of GPUI's list; `docs/planning/document-element.md` records
-//! why that isn't done yet, and what would change the decision.
+//! own in place of GPUI's list, which isn't worth it yet.
 
 use std::rc::Rc;
 

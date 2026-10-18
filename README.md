@@ -4,7 +4,7 @@ A simple Markdown viewer and editor where reading and writing happen in the same
 
 Most Markdown tools split the screen: raw source on one side, rendered preview on the other. Kertas shows one document. It looks rendered, and you edit it in place. Click into the text and you're editing it. No mode switch and no second pane.
 
-> **Status:** version 0.2, an early release for macOS on Apple Silicon. Kertas opens, edits and saves Markdown files in one pane. See [Installing Kertas.app](#installing-kertasapp) to build it, and [REQUIREMENTS.md](REQUIREMENTS.md) for the working spec and what's planned.
+> **Status:** version 0.4, an early release for macOS on Apple Silicon. Kertas opens, edits and saves Markdown files in one pane. See [Installing Kertas.app](#installing-kertasapp) to build it, and [REQUIREMENTS.md](REQUIREMENTS.md) for the working spec and what's planned.
 
 ## Goals
 
@@ -76,19 +76,19 @@ Release builds are roughly ten times faster.
 
 ### Installing Kertas.app
 
-To build and install a release on an Apple Silicon Mac that has only [Homebrew](https://brew.sh), paste this into Terminal, with the URL of Kertas's git repository in place of `<repo-url>`:
+To build and install a release on an Apple Silicon Mac that has only [Homebrew](https://brew.sh), paste this into Terminal:
 
 ```sh
 brew install rustup
 export PATH="$(brew --prefix rustup)/bin:$PATH"
-git clone --branch v0.2.0 <repo-url> kertas
+git clone https://github.com/octoth0rpe/kertas.git
 cd kertas
 rustup toolchain install
 scripts/bundle-macos.sh --install
 open ~/Applications/Kertas.app
 ```
 
-`rustup toolchain install` installs the Rust version that `rust-toolchain.toml` pins. The `export PATH` line lasts only for that Terminal window, since Homebrew doesn't put rustup on the `PATH`. The first build downloads every dependency and takes several minutes. A note from `git clone` about a "detached HEAD" is normal: it means you're on the release tag rather than a branch. To update later, open a new Terminal window, run the `export PATH` line, then in `kertas` run `git fetch --tags`, `git checkout <new tag>` and `scripts/bundle-macos.sh --install`.
+`rustup toolchain install` installs the Rust version that `rust-toolchain.toml` pins. The `export PATH` line lasts only for that Terminal window, since Homebrew doesn't put rustup on the `PATH`. The first build downloads every dependency and takes several minutes. The `main` branch is always the latest release, and each release also has a tag, such as `v0.4.0`. To update later, open a new Terminal window, run the `export PATH` line, then in `kertas` run `git pull` and `scripts/bundle-macos.sh --install`.
 
 For development:
 

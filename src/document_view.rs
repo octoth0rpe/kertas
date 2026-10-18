@@ -1,8 +1,7 @@
 //! The view that shows a document in a window.
 //!
 //! Every block is rendered except the one containing the caret, which is
-//! revealed as styled Markdown source and edited in place (C4). See
-//! `docs/planning/caret-and-reveal.md`.
+//! revealed as styled Markdown source and edited in place (C4).
 //!
 //! The view's code is split by concern: opening and saving files
 //! ([`files`]), the caret and selection ([`caret`]), editing and the

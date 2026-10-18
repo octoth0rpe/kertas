@@ -4,10 +4,11 @@ version = "0.4.0"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
+repository = "https://github.com/octoth0rpe/kertas"
 publish = false
 
 [dependencies]
-# GPUI is pinned to a Zed commit; see docs/planning/gpui-research.md.
+# GPUI is pinned to a Zed commit.
 # Bump deliberately and expect breaking changes.
 gpui = { git = "https://github.com/zed-industries/zed", rev = "c66312b200d113694fca08c1d468669028a09a0e" }
 # `runtime_shaders` compiles Metal shaders at runtime, so building doesn't require full Xcode.

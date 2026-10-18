@@ -4,7 +4,7 @@
 //!
 //!   cargo run --example print_spike -- input.md output.pdf
 //!
-//! Not part of Kertas; see docs/planning/spike-17-print.md.
+//! Not part of Kertas.
 
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;

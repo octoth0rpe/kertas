@@ -94,7 +94,7 @@ Deliberately **not** supported:
 | ID | Requirement | Priority |
 |----|-------------|----------|
 | T1 | Written in Rust. | MUST |
-| T2 | UI built with GPUI (the GPU-accelerated framework from Zed). See [docs/planning/gpui-research.md](docs/planning/gpui-research.md). | MUST |
+| T2 | UI built with GPUI (the GPU-accelerated framework from Zed). | MUST |
 | T3 | No HTML, JavaScript or embedded web views. All rendering is native through GPUI. | MUST |
 | T4 | Runs on macOS, Windows and Linux (Wayland and X11). | MUST |
 | T5 | High performance is a primary goal: GPU-rendered, smooth scrolling, no perceptible input latency (see N1 and N2). | MUST |
@@ -142,7 +142,7 @@ Deliberately **not** settings:
 
 - ~~**Q1 — How does the single pane reveal syntax?**~~ **Decided:** everything is rendered except the block containing the cursor, which shows as raw Markdown (C4, §1.1).
 - ~~**Q2 — Platform:**~~ **Decided:** native desktop app for macOS, Windows and Linux (T4).
-- ~~**Q3 — Stack:**~~ **Decided:** Rust + GPUI (T1–T3). Built on plain GPUI pinned to a Zed commit, not gpui-component ([spike #3](docs/planning/spike-3-text-input.md)). Markdown parser: `pulldown-cmark`.
+- ~~**Q3 — Stack:**~~ **Decided:** Rust + GPUI (T1–T3). Built on plain GPUI pinned to a Zed commit, not gpui-component. Markdown parser: `pulldown-cmark`.
 - ~~**Q4 — Scope of files:**~~ **Decided:** individual files only, with no folder sidebar. A sidebar may come in a possible future "pro" version.
 - ~~**Q5 — Tabs / multiple windows**~~ **Decided:** both are supported, chosen by a setting (§8.2). The default is tabs.
 - **Q6 — Kertas's own license.** Decided (2026-10-17): MIT (`LICENSE`). Dependencies under Apache-2.0 (GPUI) and MPL-2.0 are fine; they keep their own licenses, and Help → Licenses carries their notices. For a possible pro version: as the copyright holder, you can build a closed one under any license. MIT lets others do the same, and lets outside contributions made under MIT go into it. Dependencies are constrained by T6–T7 regardless.
