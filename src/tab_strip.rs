@@ -9,7 +9,7 @@ use gpui::{
     SystemWindowTabController, Window, div, prelude::*, px,
 };
 
-use crate::document_view::{CloseWindow, DocumentView};
+use crate::document_window::{CloseWindow, DocumentWindowHandle};
 use crate::theme::Theme;
 
 const STRIP_HEIGHT: f32 = 30.;
@@ -17,7 +17,7 @@ const MAX_TAB_WIDTH: f32 = 240.;
 
 /// The tab strip for `window`, if it's in a tab group with other windows.
 /// `self_dirty` is whether this window's own document has unsaved changes
-/// (its view is being rendered, so it can't be read here).
+/// (its window is being rendered, so it can't be read here).
 pub fn render_tab_strip(
     window: &Window,
     cx: &App,
@@ -36,8 +36,7 @@ pub fn render_tab_strip(
         let dirty = if active {
             self_dirty
         } else {
-            tab.handle
-                .downcast::<DocumentView>()
+            DocumentWindowHandle::downcast(tab.handle)
                 .and_then(|handle| handle.read(cx).ok())
                 .is_some_and(|view| view.is_dirty())
         };

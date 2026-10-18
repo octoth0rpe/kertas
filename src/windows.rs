@@ -13,14 +13,15 @@ use std::path::{Path, PathBuf};
 
 use gpui::{
     App, Bounds, Context, PathPromptOptions, SystemWindowTabController, TitlebarOptions, Window,
-    WindowBounds, WindowHandle, WindowOptions, point, prelude::*, px, size,
+    WindowBounds, WindowOptions, point, prelude::*, px, size,
 };
 
 use kertas_core::settings::Layout;
 use kertas_core::titles;
 
 use crate::app_settings::{self, AppSettings};
-use crate::document_view::{CloseWindow, DocumentView, New, Open, Quit};
+use crate::document_view::DocumentView;
+use crate::document_window::{CloseWindow, DocumentWindow, DocumentWindowHandle, New, Open, Quit};
 use crate::editor_config::EditorConfig;
 #[cfg(target_os = "macos")]
 use crate::native_tabs::{add_as_tab, ns_window};
@@ -103,7 +104,7 @@ fn editor_config(cx: &App) -> EditorConfig {
 fn update_configs(cx: &mut App) {
     let config = editor_config(cx);
     for window in cx.windows() {
-        if let Some(window) = window.downcast::<DocumentView>() {
+        if let Some(window) = DocumentWindowHandle::downcast(window) {
             window
                 .update(cx, |view, window, cx| {
                     view.set_config(config.clone(), window, cx)
@@ -115,21 +116,21 @@ fn update_configs(cx: &mut App) {
 
 /// The frontmost document window, even if another window (such as
 /// Settings) is active.
-fn frontmost_document_window(cx: &App) -> Option<WindowHandle<DocumentView>> {
+fn frontmost_document_window(cx: &App) -> Option<DocumentWindowHandle> {
     cx.active_window()
         .into_iter()
         .chain(cx.window_stack().unwrap_or_default())
-        .find_map(|window| window.downcast::<DocumentView>())
+        .find_map(DocumentWindowHandle::downcast)
 }
 
 /// Gives every document window its title, adding the folder to files that
 /// share a name with another open file (#95). Call it when a window opens
 /// a file, saves to a new one, or closes.
 pub fn refresh_titles(cx: &mut App) {
-    let windows: Vec<WindowHandle<DocumentView>> = cx
+    let windows: Vec<DocumentWindowHandle> = cx
         .windows()
         .into_iter()
-        .filter_map(|window| window.downcast::<DocumentView>())
+        .filter_map(DocumentWindowHandle::downcast)
         .collect();
     let paths: Vec<Option<PathBuf>> = windows
         .iter()
@@ -144,8 +145,9 @@ pub fn refresh_titles(cx: &mut App) {
     let hints = titles::folder_hints(&paths);
     for (window, hint) in windows.into_iter().zip(hints) {
         window
-            .update(cx, |view, window, cx| {
-                view.set_title_hint(hint, window, cx);
+            .0
+            .update(cx, |this, window, cx| {
+                this.set_title_hint(hint, window, cx);
                 // Its tab strip shows the other tabs' titles.
                 cx.notify();
             })
@@ -157,7 +159,7 @@ pub fn refresh_titles(cx: &mut App) {
 pub fn open_window(
     cx: &mut App,
     setup: impl FnOnce(&mut DocumentView, &mut Window, &mut Context<DocumentView>),
-) -> Option<WindowHandle<DocumentView>> {
+) -> Option<DocumentWindowHandle> {
     let previous = frontmost_document_window(cx);
     let previous_bounds =
         previous.and_then(|window| window.update(cx, |_, window, _| window.bounds()).ok());
@@ -184,10 +186,12 @@ pub fn open_window(
             },
             |window, cx| {
                 let config = editor_config(cx);
-                cx.new(|cx| DocumentView::new(config, window, cx))
+                let view = cx.new(|cx| DocumentView::new(config, window, cx));
+                cx.new(|cx| DocumentWindow::new(view, window, cx))
             },
         )
         .ok()?;
+    let window = DocumentWindowHandle(window);
 
     #[cfg(target_os = "macos")]
     crate::native_tabs::disable_automatic_tabbing();
@@ -242,10 +246,10 @@ pub fn open_path_at(path: PathBuf, anchor: Option<String>, cx: &mut App) {
             view.go_to_anchor(anchor, cx);
         }
     };
-    let windows: Vec<WindowHandle<DocumentView>> = cx
+    let windows: Vec<DocumentWindowHandle> = cx
         .windows()
         .into_iter()
-        .filter_map(|window| window.downcast::<DocumentView>())
+        .filter_map(DocumentWindowHandle::downcast)
         .collect();
 
     let already_open = windows.iter().find(|window| {
@@ -268,10 +272,10 @@ pub fn open_path_at(path: PathBuf, anchor: Option<String>, cx: &mut App) {
     // Prefer the active window. Right after launch there may not be one
     // yet, so fall back to any empty window.
     let pristine =
-        |window: &WindowHandle<DocumentView>| window.read(cx).is_ok_and(|view| view.is_pristine());
+        |window: &DocumentWindowHandle| window.read(cx).is_ok_and(|view| view.is_pristine());
     let pristine_window = cx
         .active_window()
-        .and_then(|window| window.downcast::<DocumentView>())
+        .and_then(DocumentWindowHandle::downcast)
         .filter(pristine)
         .or_else(|| windows.iter().copied().find(pristine));
     match pristine_window {

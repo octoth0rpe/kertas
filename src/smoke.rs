@@ -22,19 +22,22 @@ use std::path::Path;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use gpui::{Action, App, AsyncApp, EntityInputHandler, WindowHandle};
+use gpui::{Action, App, AsyncApp, EntityInputHandler};
 
 use crate::document_view::{
-    Backspace, CloseWindow, Delete, DeleteWordLeft, DocumentView, IndentLines, IndentTab,
-    InsertTab, LineBreak, MoveBlockDown, MoveBlockUp, MoveDocumentEnd, MoveDocumentStart, MoveDown,
-    MoveLeft, MoveRight, MoveUp, New, Newline, OutdentTab, Quit, Redo, Save, SelectAll,
-    SelectBlockDown, SelectDown, SelectTab1, SelectTab3, SelectTab9, SelectUp, Undo, Unreveal,
+    Backspace, Delete, DeleteWordLeft, DocumentView, IndentLines, IndentTab, InsertTab, LineBreak,
+    MoveBlockDown, MoveBlockUp, MoveDocumentEnd, MoveDocumentStart, MoveDown, MoveLeft, MoveRight,
+    MoveUp, Newline, OutdentTab, Redo, Save, SelectAll, SelectBlockDown, SelectDown, SelectUp,
+    Undo, Unreveal,
+};
+use crate::document_window::{
+    CloseWindow, DocumentWindowHandle, New, Quit, SelectTab1, SelectTab3, SelectTab9,
 };
 
 const STEP: Duration = Duration::from_millis(16);
 
 /// Starts the smoke test if `KERTAS_SMOKE` is set.
-pub fn start_if_requested(window: WindowHandle<DocumentView>, cx: &mut App) {
+pub fn start_if_requested(window: DocumentWindowHandle, cx: &mut App) {
     let Ok(mode) = std::env::var("KERTAS_SMOKE") else {
         return;
     };
@@ -106,7 +109,7 @@ fn dispatch(window: impl Into<gpui::AnyWindowHandle>, cx: &mut AsyncApp, action:
 /// Clicks in `window` at `position`, as the mouse would: it moves there,
 /// then the button goes down and, a few frames later, up.
 async fn mouse_click(
-    window: WindowHandle<DocumentView>,
+    window: DocumentWindowHandle,
     cx: &mut AsyncApp,
     position: gpui::Point<gpui::Pixels>,
 ) {
@@ -179,7 +182,7 @@ fn window_count(cx: &mut AsyncApp) -> usize {
 }
 
 /// How many tabs are in `window`'s tab group, per GPUI's tab controller.
-fn tab_count(window: WindowHandle<DocumentView>, cx: &mut AsyncApp) -> usize {
+fn tab_count(window: DocumentWindowHandle, cx: &mut AsyncApp) -> usize {
     window
         .update(cx, |_, window, cx| {
             let id = window.window_handle().window_id();
@@ -201,7 +204,7 @@ fn repeat(steps: &mut Vec<Step>, action: &dyn Action, count: usize) {
     steps.extend((0..count).map(|_| Step::Action(action.boxed_clone())));
 }
 
-fn smoke_steps(window: WindowHandle<DocumentView>, mode: &str, cx: &mut App) {
+fn smoke_steps(window: DocumentWindowHandle, mode: &str, cx: &mut App) {
     let mut steps = Vec::new();
     if mode != "write" {
         movement_steps(&mut steps);
@@ -342,7 +345,7 @@ const BENCH_MAX_FRAME_MS: f64 = 120.;
 /// `KERTAS_SMOKE=bench`: types `BENCH_INSERTS` characters in the middle of
 /// the document, one per frame, and reports the median and 95th percentile
 /// time per insert and until its frame is drawn.
-fn smoke_bench(window: WindowHandle<DocumentView>, cx: &mut App) {
+fn smoke_bench(window: DocumentWindowHandle, cx: &mut App) {
     // macOS slows drawing for windows that aren't in front.
     cx.activate(true);
     cx.spawn(async move |cx| {
@@ -439,7 +442,7 @@ fn percentiles(values: &mut [f64]) -> (f64, f64) {
 
 /// `KERTAS_SMOKE=tabs`: New opens windows as tabs, ⌘-numbers switch tabs,
 /// the tabs close again, and New replaces the startup message.
-fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
+fn smoke_tabs(window: DocumentWindowHandle, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
         for _ in 0..3 {
@@ -585,8 +588,7 @@ fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
         );
         let docs = cx.update(|cx| {
             cx.windows().into_iter().find(|other| {
-                other
-                    .downcast::<DocumentView>()
+                DocumentWindowHandle::downcast(*other)
                     .and_then(|other| other.read(cx).ok())
                     .and_then(|view| view.document_path())
                     .is_some_and(|path| path.ends_with("docs/README.md"))
@@ -610,9 +612,9 @@ fn smoke_tabs(window: WindowHandle<DocumentView>, cx: &mut App) {
 /// directory: edits to the settings file apply live, problems are
 /// reported, changing a setting keeps the file's comments, the View menu
 /// and zoom work, and the layout setting waits for a restart.
-fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
+fn smoke_settings(window: DocumentWindowHandle, cx: &mut App) {
     use crate::app_settings::{self, AppSettings};
-    use crate::document_view::{ResetZoom, ZoomIn, ZoomOut};
+    use crate::document_window::{ResetZoom, ZoomIn, ZoomOut};
     use crate::theme::Theme;
 
     let path = std::path::PathBuf::from(std::env::var_os("KERTAS_CONFIG_DIR").unwrap_or_default())
@@ -657,7 +659,8 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
         // and Space presses it.
         let shown = |cx: &mut AsyncApp| {
             window
-                .read_with(cx, |view, _| view.settings_problems_shown())
+                .0
+                .read_with(cx, |this, _| this.settings_problems_shown())
                 .unwrap_or(false)
         };
         let shown_before = shown(cx);
@@ -813,7 +816,7 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
         // waits for a frame: zoom commands are only available when the last
         // frame allowed them.
         async fn zoom(
-            window: WindowHandle<DocumentView>,
+            window: DocumentWindowHandle,
             cx: &mut AsyncApp,
             action: Box<dyn Action>,
         ) -> u32 {
@@ -895,7 +898,7 @@ fn smoke_settings(window: WindowHandle<DocumentView>, cx: &mut App) {
 
 /// `KERTAS_SMOKE=help`: the Help and Kertas menus open built-in documents once
 /// each, they can't be edited, and they close without asking.
-fn smoke_help(window: WindowHandle<DocumentView>, cx: &mut App) {
+fn smoke_help(window: DocumentWindowHandle, cx: &mut App) {
     use crate::builtin::Builtin;
     use crate::menus::{
         OpenAbout, OpenHelp, OpenKeyboardShortcuts, OpenLicenses, OpenMarkdownSyntax,
@@ -908,11 +911,12 @@ fn smoke_help(window: WindowHandle<DocumentView>, cx: &mut App) {
             cx.update(|cx| {
                 cx.windows()
                     .into_iter()
-                    .filter_map(|window| window.downcast::<DocumentView>())
+                    .filter_map(DocumentWindowHandle::downcast)
                     .find(|window| {
                         window
+                            .0
                             .read(cx)
-                            .is_ok_and(|view| view.builtin() == Some(Builtin::Help))
+                            .is_ok_and(|this| this.builtin() == Some(Builtin::Help))
                     })
             })
         };
@@ -991,7 +995,7 @@ fn smoke_help(window: WindowHandle<DocumentView>, cx: &mut App) {
 /// `KERTAS_SMOKE=settings-window`: ⌘, opens one settings sheet; New from it
 /// still opens a tab; Esc closes it; and Quit with it open quits. The
 /// caller checks that the process ends.
-fn smoke_settings_window(window: WindowHandle<DocumentView>, cx: &mut App) {
+fn smoke_settings_window(window: DocumentWindowHandle, cx: &mut App) {
     use crate::menus::OpenSettings;
 
     cx.spawn(async move |cx| {
@@ -1025,7 +1029,7 @@ fn smoke_settings_window(window: WindowHandle<DocumentView>, cx: &mut App) {
         let settings = cx.update(|cx| {
             cx.windows()
                 .into_iter()
-                .find(|other| other.downcast::<DocumentView>().is_none())
+                .find(|other| DocumentWindowHandle::downcast(*other).is_none())
         });
         if let Some(settings) = settings {
             dispatch(settings, cx, Box::new(New));
@@ -1084,7 +1088,7 @@ fn smoke_settings_window(window: WindowHandle<DocumentView>, cx: &mut App) {
 /// `KERTAS_SMOKE=reveal`: Page Down scrolls without moving the caret,
 /// clicking a block below a revealed one keeps it in place (C7), and
 /// dragging selects across blocks and reveals them all.
-fn smoke_reveal(window: WindowHandle<DocumentView>, cx: &mut App) {
+fn smoke_reveal(window: DocumentWindowHandle, cx: &mut App) {
     use crate::document_view::PageDown;
 
     cx.spawn(async move |cx| {
@@ -1166,7 +1170,7 @@ fn smoke_reveal(window: WindowHandle<DocumentView>, cx: &mut App) {
 /// keeps its size and only moves down while paging through, reaches the
 /// bottom at the end, and dragging it to the middle shows the middle.
 /// Clicking the track pages, and the setting hides it.
-fn smoke_scrollbar(window: WindowHandle<DocumentView>, cx: &mut App) {
+fn smoke_scrollbar(window: DocumentWindowHandle, cx: &mut App) {
     use crate::document_view::PageDown;
 
     cx.spawn(async move |cx| {
@@ -1323,7 +1327,7 @@ fn smoke_scrollbar(window: WindowHandle<DocumentView>, cx: &mut App) {
 /// `KERTAS_SMOKE=scrollbar-drag`, on `showcase.md` (#88): a short
 /// document's thumb is exact, and dragging it from top to bottom moves the
 /// document on every step, all the way to the end, without pausing.
-fn smoke_scrollbar_drag(window: WindowHandle<DocumentView>, cx: &mut App) {
+fn smoke_scrollbar_drag(window: DocumentWindowHandle, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
         pause(cx, 10).await;
@@ -1459,7 +1463,7 @@ fn smoke_scrollbar_drag(window: WindowHandle<DocumentView>, cx: &mut App) {
 /// soon after it's let go, the wheel takes over, and ↓ at the end stays
 /// there; ⌘↑ and ⌘↓ scroll to the ends, without placing a caret; → starts editing the first block on screen, not the document's
 /// start; and after Escape, ↓ scrolls from wherever the window is.
-fn smoke_reading(window: WindowHandle<DocumentView>, cx: &mut App) {
+fn smoke_reading(window: DocumentWindowHandle, cx: &mut App) {
     use crate::document_view::PageDown;
 
     cx.spawn(async move |cx| {
@@ -1663,7 +1667,7 @@ fn smoke_reading(window: WindowHandle<DocumentView>, cx: &mut App) {
 /// back up, or jumping to either end, keeps the caret on screen after
 /// every step, in the first frame drawn after it (so scrolling a frame
 /// late fails).
-fn smoke_caret(window: WindowHandle<DocumentView>, cx: &mut App) {
+fn smoke_caret(window: DocumentWindowHandle, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
         pause(cx, 10).await;
@@ -1720,7 +1724,7 @@ fn smoke_caret(window: WindowHandle<DocumentView>, cx: &mut App) {
 /// `KERTAS_SMOKE=images`, on `showcase.md` with its `images` folder (#92):
 /// the showcase's PNG and SVG load at their natural sizes, the missing one
 /// doesn't, and the images are reported to VoiceOver by their alt text.
-fn smoke_images(window: WindowHandle<DocumentView>, cx: &mut App) {
+fn smoke_images(window: DocumentWindowHandle, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
         pause(cx, 10).await;
@@ -1780,7 +1784,7 @@ fn smoke_images(window: WindowHandle<DocumentView>, cx: &mut App) {
 /// before loading it; Load Images loads it and the bar goes away;
 /// reopening the document asks again, and closing the bar leaves the
 /// image unloaded. A document with no web images doesn't ask.
-fn smoke_web_images(window: WindowHandle<DocumentView>, cx: &mut App) {
+fn smoke_web_images(window: DocumentWindowHandle, cx: &mut App) {
     use std::io::{Read, Write};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1917,7 +1921,7 @@ fn smoke_web_images(window: WindowHandle<DocumentView>, cx: &mut App) {
 /// `#setup` link scrolls its heading to the top; a link to a missing
 /// heading stays put; `#middle` reaches an `<a id>`; and clicking
 /// `other.md#deep-dive` opens other.md scrolled to that heading.
-fn smoke_anchors(window: WindowHandle<DocumentView>, cx: &mut App) {
+fn smoke_anchors(window: DocumentWindowHandle, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
         pause(cx, 10).await;
@@ -1941,7 +1945,7 @@ fn smoke_anchors(window: WindowHandle<DocumentView>, cx: &mut App) {
         let other = path.with_file_name("other.md");
         std::fs::write(&other, other_text).ok();
 
-        let top_item = |window: WindowHandle<DocumentView>, cx: &mut AsyncApp| {
+        let top_item = |window: DocumentWindowHandle, cx: &mut AsyncApp| {
             window
                 .read_with(cx, |view, _| view.scroll_top().map(|(item, _)| item))
                 .ok()
@@ -2011,7 +2015,7 @@ fn smoke_anchors(window: WindowHandle<DocumentView>, cx: &mut App) {
             cx.update(|cx| {
                 cx.windows()
                     .into_iter()
-                    .filter_map(|handle| handle.downcast::<DocumentView>())
+                    .filter_map(DocumentWindowHandle::downcast)
                     .find(|handle| {
                         handle
                             .read(cx)
@@ -2027,7 +2031,7 @@ fn smoke_anchors(window: WindowHandle<DocumentView>, cx: &mut App) {
         let other_window = cx.update(|cx| {
             cx.windows()
                 .into_iter()
-                .filter_map(|handle| handle.downcast::<DocumentView>())
+                .filter_map(DocumentWindowHandle::downcast)
                 .find(|handle| {
                     handle
                         .read(cx)
@@ -2072,7 +2076,7 @@ fn smoke_anchors(window: WindowHandle<DocumentView>, cx: &mut App) {
 /// in rows after the document's blocks; clicking a reference scrolls to its
 /// note; a back-link scrolls to its reference, even deep in a long list;
 /// and clicking a note's text reveals its definition where it is.
-fn smoke_footnotes(window: WindowHandle<DocumentView>, cx: &mut App) {
+fn smoke_footnotes(window: DocumentWindowHandle, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
         pause(cx, 10).await;
@@ -2168,7 +2172,7 @@ fn smoke_footnotes(window: WindowHandle<DocumentView>, cx: &mut App) {
 /// opens it in a tab and leaves the link's block rendered; clicking a
 /// checkbox toggles it, as one undo step, and leaves its list rendered;
 /// clicking plain text still reveals its block.
-fn smoke_clicks(window: WindowHandle<DocumentView>, cx: &mut App) {
+fn smoke_clicks(window: DocumentWindowHandle, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
         pause(cx, 10).await;
@@ -2200,8 +2204,7 @@ fn smoke_clicks(window: WindowHandle<DocumentView>, cx: &mut App) {
         let opened = wait_until(cx, |cx| {
             cx.update(|cx| {
                 cx.windows().into_iter().any(|handle| {
-                    handle
-                        .downcast::<DocumentView>()
+                    DocumentWindowHandle::downcast(handle)
                         .and_then(|handle| handle.read(cx).ok())
                         .and_then(|view| view.document_path())
                         .is_some_and(|open| open.file_name() == other.file_name())
@@ -2310,7 +2313,7 @@ async fn a11y_tree(window: gpui::AnyWindowHandle, cx: &mut AsyncApp) -> String {
 
 /// `KERTAS_SMOKE=a11y`, on `a11y.md`: what VoiceOver is told about the
 /// document, the tab strip and the settings sheet (N5).
-fn smoke_a11y(window: WindowHandle<DocumentView>, cx: &mut App) {
+fn smoke_a11y(window: DocumentWindowHandle, cx: &mut App) {
     use crate::menus::OpenSettings;
 
     cx.spawn(async move |cx| {
@@ -2402,7 +2405,7 @@ fn smoke_a11y(window: WindowHandle<DocumentView>, cx: &mut App) {
         let settings = cx.update(|cx| {
             cx.windows()
                 .into_iter()
-                .find(|other| other.downcast::<DocumentView>().is_none())
+                .find(|other| DocumentWindowHandle::downcast(*other).is_none())
         });
         let tree = match settings {
             Some(settings) => a11y_tree(settings, cx).await,
@@ -2453,7 +2456,7 @@ fn smoke_a11y(window: WindowHandle<DocumentView>, cx: &mut App) {
 
 /// `KERTAS_SMOKE=print`, with `KERTAS_PRINT_PDF` set: prints the document to
 /// that PDF without any panels.
-fn smoke_print(window: WindowHandle<DocumentView>, cx: &mut App) {
+fn smoke_print(window: DocumentWindowHandle, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
         pause(cx, 10).await;
@@ -2495,7 +2498,7 @@ async fn wait_until(cx: &mut AsyncApp, done: impl FnMut(&mut AsyncApp) -> bool) 
 /// with `read`, before the next frame (and anything it was told to do
 /// before that frame) can change what was drawn.
 async fn after_frames<T: 'static>(
-    window: WindowHandle<DocumentView>,
+    window: DocumentWindowHandle,
     cx: &mut AsyncApp,
     frames: usize,
     read: impl FnOnce(&DocumentView) -> T + 'static,
@@ -2548,7 +2551,7 @@ async fn wait_for(
 /// no unsaved changes it reloads, as one undo step; with unsaved changes
 /// the bar asks, and Keep Mine and Reload work; Kertas's own saves aren't
 /// reported; a deleted file is reported, and saving puts it back.
-fn smoke_disk(window: WindowHandle<DocumentView>, cx: &mut App) {
+fn smoke_disk(window: DocumentWindowHandle, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
         pause(cx, 10).await;
@@ -2683,7 +2686,7 @@ fn smoke_disk(window: WindowHandle<DocumentView>, cx: &mut App) {
 /// failed autosave pauses it until a manual save; switching tabs saves;
 /// and finally Quit saves without asking. The caller checks that the
 /// process ends and the last text was saved.
-fn smoke_autosave(window: WindowHandle<DocumentView>, cx: &mut App) {
+fn smoke_autosave(window: DocumentWindowHandle, cx: &mut App) {
     use std::os::unix::fs::PermissionsExt;
 
     cx.spawn(async move |cx| {
@@ -2800,7 +2803,7 @@ fn smoke_autosave(window: WindowHandle<DocumentView>, cx: &mut App) {
 
 /// `KERTAS_SMOKE=quit`: Quit, with an unedited document, exits the app. The
 /// caller checks that the process ends.
-fn smoke_quit(window: WindowHandle<DocumentView>, cx: &mut App) {
+fn smoke_quit(window: DocumentWindowHandle, cx: &mut App) {
     cx.spawn(async move |cx| {
         pause(cx, 20).await;
         println!("dispatching Quit");

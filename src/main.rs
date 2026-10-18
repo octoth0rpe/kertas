@@ -10,6 +10,7 @@ mod default_app;
 #[cfg(target_os = "macos")]
 mod dock_icon;
 mod document_view;
+mod document_window;
 mod editor_config;
 #[cfg(target_os = "macos")]
 mod file_watch;
@@ -65,6 +66,7 @@ fn main() -> std::process::ExitCode {
         dock_icon::init();
         windows::register(cx);
         cx.bind_keys(document_view::key_bindings());
+        cx.bind_keys(document_window::key_bindings());
         cx.bind_keys(settings_window::key_bindings());
         #[cfg(target_os = "macos")]
         system_actions::init(cx);
