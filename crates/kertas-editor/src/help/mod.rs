@@ -30,6 +30,42 @@ pub fn themes(app: &str, themes_folder: &Path) -> String {
 /// own in its Keyboard Shortcuts document.
 pub const EDITOR_SHORTCUTS: &str = include_str!("shortcuts.md");
 
+/// How a keystroke is written in a Keyboard Shortcuts document, e.g.
+/// `⇧⌘S`. Modifiers come in the macOS order: ⌃ ⌥ ⇧ ⌘. An app can use it
+/// to check that its document lists every key binding.
+pub fn shortcut_label(keystroke: &gpui::Keystroke) -> String {
+    let modifiers = &keystroke.modifiers;
+    let mut label = String::new();
+    for (held, symbol) in [
+        (modifiers.control, "⌃"),
+        (modifiers.alt, "⌥"),
+        (modifiers.shift, "⇧"),
+        (modifiers.platform, "⌘"),
+    ] {
+        if held {
+            label.push_str(symbol);
+        }
+    }
+    let key = match keystroke.key.as_str() {
+        "left" => "←".to_owned(),
+        "right" => "→".to_owned(),
+        "up" => "↑".to_owned(),
+        "down" => "↓".to_owned(),
+        "enter" => "↩".to_owned(),
+        "tab" => "⇥".to_owned(),
+        "backspace" => "⌫".to_owned(),
+        "delete" => "⌦".to_owned(),
+        "escape" => "Esc".to_owned(),
+        "home" => "Home".to_owned(),
+        "pageup" => "Page Up".to_owned(),
+        "pagedown" => "Page Down".to_owned(),
+        "end" => "End".to_owned(),
+        key => key.to_uppercase(),
+    };
+    label.push_str(&key);
+    label
+}
+
 /// `path` with the home folder written as `~`.
 fn home_relative(path: &Path) -> String {
     match std::env::home_dir().and_then(|home| path.strip_prefix(home).ok().map(Path::to_owned)) {
