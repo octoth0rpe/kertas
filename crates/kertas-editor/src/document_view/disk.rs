@@ -80,6 +80,7 @@ impl DocumentView {
         let Some(reload) = open.editor.reload(change) else {
             return;
         };
+        let changed = reload.splice.is_some();
         if let Some(splice) = reload.splice {
             open.splice(&splice);
         }
@@ -88,6 +89,9 @@ impl DocumentView {
         *open.revealed_layout.borrow_mut() = None;
         open.goal_x = None;
         reveal(open);
+        if changed {
+            self.schedule_edited(cx);
+        }
         cx.notify();
     }
 

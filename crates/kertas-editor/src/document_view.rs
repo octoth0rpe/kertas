@@ -32,6 +32,7 @@ use kertas_core::document::{DiskChange, Document};
 use kertas_core::editor::{Editor, RevealTarget};
 use kertas_core::model::Splice;
 use kertas_core::reveal::StyledSource;
+use kertas_core::{outline, words};
 
 use crate::editor_config::EditorConfig;
 use crate::revealed_block::{CaretPlace, RevealedLayout};
@@ -100,6 +101,10 @@ pub fn key_bindings() -> Vec<KeyBinding> {
 /// How long the caret stays on, and then off, while blinking. Public so
 /// other text controls in a host app can blink in step with the editor.
 pub const CARET_BLINK_INTERVAL: Duration = Duration::from_millis(530);
+
+/// How long the text must stay unchanged before [`DocumentEvent::Edited`]
+/// is sent.
+pub const EDIT_PAUSE: Duration = Duration::from_millis(300);
 
 /// An open document: its editor, and the layout state that shows it.
 struct OpenDocument {
@@ -191,6 +196,11 @@ pub enum DocumentEvent {
     TitleChanged,
     /// The document now has unsaved changes, or no longer does.
     DirtyChanged(bool),
+    /// The text changed: it was edited, or reloaded from its file. It's
+    /// sent once changes pause for [`EDIT_PAUSE`], so the app can keep
+    /// something like an outline or a word count in step with the text
+    /// without working on every keystroke.
+    Edited,
     /// A link to another Markdown file was followed, and asks for it to be
     /// opened, scrolled to the heading named `anchor` if there is one.
     OpenFile {
@@ -237,6 +247,9 @@ pub struct DocumentView {
     window_handle: AnyWindowHandle,
     /// Bumped by each edit, so only the last one's autosave timer saves.
     autosave_epoch: usize,
+    /// Bumped by each change to the text, so only the last one's timer
+    /// sends [`DocumentEvent::Edited`].
+    edited_epoch: usize,
     _appearance_observer: Subscription,
     _activation_observer: Subscription,
 }
@@ -283,6 +296,7 @@ impl DocumentView {
             reported_dirty: None,
             window_handle: window.window_handle(),
             autosave_epoch: 0,
+            edited_epoch: 0,
             _appearance_observer: appearance_observer,
             _activation_observer: activation_observer,
         }
@@ -485,14 +499,46 @@ impl DocumentView {
         Some((top.item_ix, top.offset_in_item))
     }
 
-    /// The document's text, for the smoke test.
-    #[cfg(debug_assertions)]
-    #[doc(hidden)]
+    /// The document's text. Empty with no document.
     pub fn text(&self) -> String {
         self.open
             .as_ref()
             .map(|open| open.editor.text().to_owned())
             .unwrap_or_default()
+    }
+
+    /// The document's headings, in order (see [`outline::headings`]).
+    /// None with no document.
+    pub fn headings(&self) -> Vec<outline::Heading> {
+        self.open
+            .as_ref()
+            .map(|open| outline::headings(open.editor.model()))
+            .unwrap_or_default()
+    }
+
+    /// How many words the document has (see [`words::count_in`]). 0 with
+    /// no document.
+    pub fn word_count(&self) -> usize {
+        self.open
+            .as_ref()
+            .map_or(0, |open| words::count_in(open.editor.model()))
+    }
+
+    /// Sends [`DocumentEvent::Edited`] after the [`EDIT_PAUSE`], unless the
+    /// text changes again first.
+    fn schedule_edited(&mut self, cx: &mut Context<Self>) {
+        self.edited_epoch += 1;
+        let epoch = self.edited_epoch;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(EDIT_PAUSE).await;
+            this.update(cx, |view, cx| {
+                if view.edited_epoch == epoch {
+                    cx.emit(DocumentEvent::Edited);
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// The list indent the document is laid out with, for the smoke test.

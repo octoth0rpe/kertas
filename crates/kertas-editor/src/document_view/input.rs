@@ -42,6 +42,7 @@ impl DocumentView {
         *open.revealed_layout.borrow_mut() = None;
         self.set_selection(change.selection, cx);
         self.schedule_autosave(cx);
+        self.schedule_edited(cx);
     }
 
     /// Notes that the mouse went down on the checkbox whose `[ ]` starts
@@ -71,6 +72,7 @@ impl DocumentView {
         open.splice(&splice);
         super::caret::reveal(open);
         self.schedule_autosave(cx);
+        self.schedule_edited(cx);
         cx.notify();
     }
 

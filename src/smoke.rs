@@ -63,6 +63,7 @@ pub fn start_if_requested(window: DocumentWindowHandle, cx: &mut App) {
         "print" => smoke_print(window, cx),
         "disk" => smoke_disk(window, cx),
         "autosave" => smoke_autosave(window, cx),
+        "edited" => smoke_edited(window, cx),
         "bench" => smoke_bench(window, cx),
         _ => smoke_steps(window, &mode, cx),
     }
@@ -2905,6 +2906,77 @@ fn smoke_autosave(window: DocumentWindowHandle, cx: &mut App) {
         checks.report();
         println!("dispatching Quit");
         dispatch(window, cx, Box::new(Quit));
+    })
+    .detach();
+}
+
+/// `KERTAS_SMOKE=edited`: a burst of typing sends one
+/// [`DocumentEvent::Edited`] once it pauses, after which the headings and
+/// word count are up to date; a reload from the file sends one too.
+fn smoke_edited(window: DocumentWindowHandle, cx: &mut App) {
+    use kertas_editor::{DocumentEvent, EDIT_PAUSE};
+
+    cx.spawn(async move |cx| {
+        let mut checks = Checks::default();
+        pause(cx, 10).await;
+        let Some(view) = tab_views(window, cx).into_iter().next() else {
+            checks.check("there's a tab", false);
+            return checks.finish(cx);
+        };
+        let edited = Rc::new(Cell::new(0));
+        let _subscription = cx.update(|cx| {
+            let edited = edited.clone();
+            cx.subscribe(&view, move |_, event, _| {
+                if *event == DocumentEvent::Edited {
+                    edited.set(edited.get() + 1);
+                }
+            })
+        });
+        let words_before = cx.update(|cx| view.read(cx).word_count());
+        for text in ["# Fresh ", "heading", "\n\n"] {
+            window
+                .update(cx, |view, window, cx| {
+                    if text.starts_with('#') {
+                        view.click(0, false, window, cx);
+                    }
+                    view.replace_text_in_range(None, text, window, cx);
+                })
+                .ok();
+            pause(cx, 1).await;
+        }
+        checks.check("not sent while typing", edited.get() == 0);
+        let sent = wait_until(cx, |_| edited.get() > 0).await;
+        cx.background_executor().timer(EDIT_PAUSE * 2).await;
+        checks.check("sent once after the pause", sent && edited.get() == 1);
+        let (first, words) = cx.update(|cx| {
+            let view = view.read(cx);
+            let first = view.headings().first().map(|heading| heading.text.clone());
+            (first, view.word_count())
+        });
+        checks.check(
+            "the headings are up to date",
+            first.as_deref() == Some("Fresh heading"),
+        );
+        checks.check("so is the word count", words == words_before + 2);
+
+        dispatch(window, cx, Box::new(Save));
+        pause(cx, 5).await;
+        let path = cx.update(|cx| view.read(cx).document_path().map(Path::to_owned));
+        if let Some(path) = path {
+            std::fs::write(&path, "# Theirs\n\nText.\n").ok();
+        }
+        let reloaded = wait_until(cx, |_| edited.get() == 2).await;
+        let first = cx.update(|cx| {
+            view.read(cx)
+                .headings()
+                .first()
+                .map(|heading| heading.text.clone())
+        });
+        checks.check(
+            "a reload sends it too",
+            reloaded && first.as_deref() == Some("Theirs"),
+        );
+        checks.finish(cx);
     })
     .detach();
 }
