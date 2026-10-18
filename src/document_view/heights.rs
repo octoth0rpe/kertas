@@ -23,7 +23,7 @@ use kertas_core::scroll_estimate::ScrollEstimate;
 /// front, so their heights are all known from the start. The list measures
 /// them all again whenever the zoom or the window's width changes, which
 /// costs about 0.5 ms per item in a release build. Measured on
-/// spikes/fixtures/10k.md (2,727 items, M2 Air): with every item measured,
+/// tests/fixtures/10k.md (2,727 items, M2 Air): with every item measured,
 /// a zoom step took 1.33 s and loading 456 ms; with only the items drawn
 /// measured (10k.md is over the limit), 30 ms and 161 ms
 /// (architecture-review-v0.3.md §7b). So 400 costs a zoom step about

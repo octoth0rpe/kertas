@@ -39,7 +39,7 @@ fn check(text: &str) -> Vec<String> {
 fn fixtures_are_covered() {
     for name in ["showcase.md", "10k.md"] {
         let text = std::fs::read_to_string(format!(
-            "{}/../../spikes/fixtures/{name}",
+            "{}/../../tests/fixtures/{name}",
             env!("CARGO_MANIFEST_DIR")
         ))
         .unwrap();
