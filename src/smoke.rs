@@ -64,6 +64,7 @@ pub fn start_if_requested(window: DocumentWindowHandle, cx: &mut App) {
         "disk" => smoke_disk(window, cx),
         "autosave" => smoke_autosave(window, cx),
         "edited" => smoke_edited(window, cx),
+        "rename" => smoke_rename(window, cx),
         "bench" => smoke_bench(window, cx),
         _ => smoke_steps(window, &mode, cx),
     }
@@ -2976,6 +2977,114 @@ fn smoke_edited(window: DocumentWindowHandle, cx: &mut App) {
             "a reload sends it too",
             reloaded && first.as_deref() == Some("Theirs"),
         );
+        checks.finish(cx);
+    })
+    .detach();
+}
+
+/// `KERTAS_SMOKE=rename`: renaming a document's file keeps it open as it
+/// is (unsaved changes, undo, caret, scroll position), never overwrites,
+/// and watching follows the file.
+fn smoke_rename(window: DocumentWindowHandle, cx: &mut App) {
+    use kertas_editor::DocumentEvent;
+
+    cx.spawn(async move |cx| {
+        let mut checks = Checks::default();
+        pause(cx, 10).await;
+        let Some(view) = tab_views(window, cx).into_iter().next() else {
+            checks.check("there's a tab", false);
+            return checks.finish(cx);
+        };
+        let Some(old) = cx.update(|cx| view.read(cx).document_path().map(Path::to_owned)) else {
+            checks.check("the document has a file", false);
+            return checks.finish(cx);
+        };
+        let titles = Rc::new(Cell::new(0));
+        let _subscription = cx.update(|cx| {
+            let titles = titles.clone();
+            cx.subscribe(&view, move |_, event, _| {
+                if *event == DocumentEvent::TitleChanged {
+                    titles.set(titles.get() + 1);
+                }
+            })
+        });
+        let original = cx.update(|cx| view.read(cx).text());
+        window
+            .update(cx, |view, window, cx| view.click(0, false, window, cx))
+            .ok();
+        dispatch(window, cx, Box::new(MoveDocumentEnd));
+        window
+            .update(cx, |view, window, cx| {
+                view.replace_text_in_range(None, "Renamed.", window, cx)
+            })
+            .ok();
+        pause(cx, 10).await;
+        checks.check(
+            "the edit is unsaved",
+            cx.update(|cx| view.read(cx).is_dirty()),
+        );
+        let before = cx.update(|cx| {
+            let view = view.read(cx);
+            (view.reveal_state(), view.scroll_top())
+        });
+
+        let taken = old.with_file_name("taken.md");
+        std::fs::write(&taken, "Taken.\n").ok();
+        let refused = window
+            .update(cx, |view, window, cx| {
+                view.rename_file(taken.clone(), window, cx)
+            })
+            .map(|result| result.is_err())
+            .unwrap_or(false);
+        checks.check(
+            "never overwrites",
+            refused
+                && old.exists()
+                && std::fs::read_to_string(&taken).unwrap_or_default() == "Taken.\n",
+        );
+
+        let new = old.with_file_name("renamed.md");
+        let renamed = window
+            .update(cx, |view, window, cx| {
+                view.rename_file(new.clone(), window, cx)
+            })
+            .map(|result| result.is_ok())
+            .unwrap_or(false);
+        pause(cx, 5).await;
+        let (path, name, dirty, after) = cx.update(|cx| {
+            let view = view.read(cx);
+            (
+                view.document_path().map(Path::to_owned),
+                view.display_name(),
+                view.is_dirty(),
+                (view.reveal_state(), view.scroll_top()),
+            )
+        });
+        checks.check(
+            "moves the file",
+            renamed && !old.exists() && path.as_deref() == Some(new.as_path()),
+        );
+        checks.check(
+            "sends TitleChanged",
+            titles.get() == 1 && name.as_deref() == Some("renamed.md"),
+        );
+        checks.check("keeps the unsaved changes", dirty);
+        checks.check("keeps the caret and scroll position", after == before);
+        dispatch(window, cx, Box::new(Undo));
+        pause(cx, 5).await;
+        checks.check(
+            "keeps the undo history",
+            cx.update(|cx| view.read(cx).text()) == original,
+        );
+
+        dispatch(window, cx, Box::new(Save));
+        pause(cx, 5).await;
+        std::fs::write(&new, "# Elsewhere\n").ok();
+        let reloaded = wait_until(cx, |cx| {
+            cx.update(|cx| view.read(cx).text()) == "# Elsewhere\n"
+        })
+        .await;
+        checks.check("watching follows the file", reloaded);
         checks.finish(cx);
     })
     .detach();

@@ -200,6 +200,40 @@ impl DocumentView {
         })
     }
 
+    /// Moves the document's file to `path`, keeping the document open as
+    /// it is: its text, unsaved changes, undo history, caret and scroll
+    /// position. Watching for changes by other apps follows the file, and
+    /// the view sends [`DocumentEvent::TitleChanged`].
+    ///
+    /// It never overwrites: if something is already at `path`, it fails
+    /// and nothing changes (see
+    /// [`kertas_core::document::Document::rename`]). Nothing is shown to
+    /// the user; that's up to the app.
+    pub fn rename_file(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> std::io::Result<()> {
+        let Some(open) = &mut self.open else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "no document is open",
+            ));
+        };
+        if self.text_name.is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "the document has no file",
+            ));
+        }
+        open.editor.rename(path)?;
+        self.watch_file(window, cx);
+        cx.emit(DocumentEvent::TitleChanged);
+        cx.notify();
+        Ok(())
+    }
+
     /// Opens the file at `path`, replacing the current document. Shows an
     /// alert if it can't be opened, and keeps the current document.
     pub fn open_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
