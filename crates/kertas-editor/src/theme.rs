@@ -48,13 +48,14 @@ impl Theme {
         Self::from(theme.palette(appearance))
     }
 
-    /// Kertas's light colors, which printing uses.
+    /// The built-in Kertas theme's light colors.
     pub fn light() -> Self {
         Self::from(&themes::kertas().light)
     }
 
-    /// Kertas's dark colors, which the smoke tests check for.
+    /// The built-in Kertas theme's dark colors, for the smoke tests.
     #[cfg(debug_assertions)]
+    #[doc(hidden)]
     pub fn dark() -> Self {
         Self::from(&themes::kertas().dark)
     }

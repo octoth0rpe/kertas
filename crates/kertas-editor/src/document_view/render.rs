@@ -87,6 +87,7 @@ impl DocumentView {
     /// Where item `index`'s text starts in the window: the top left of its
     /// text column, for the smoke test to click on.
     #[cfg(debug_assertions)]
+    #[doc(hidden)]
     pub fn text_origin(&self, index: usize, window: &Window) -> Option<gpui::Point<gpui::Pixels>> {
         let bounds = self.open.as_ref()?.list_state.bounds_for_item(index)?;
         let (left, _) = self.text_column(bounds.size.width, window.rem_size());
@@ -145,6 +146,7 @@ impl DocumentView {
     /// Whether the bar is asking whether to load web images, for the smoke
     /// test.
     #[cfg(debug_assertions)]
+    #[doc(hidden)]
     pub fn web_images_asked(&self) -> bool {
         self.open
             .as_ref()
@@ -153,6 +155,7 @@ impl DocumentView {
 
     /// Answers the web images bar as its buttons do, for the smoke test.
     #[cfg(debug_assertions)]
+    #[doc(hidden)]
     pub fn answer_web_images_bar(
         &mut self,
         load: bool,

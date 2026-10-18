@@ -115,6 +115,7 @@ impl DocumentView {
     /// Whether the bar at the top is asking about a change to the file,
     /// for the smoke test.
     #[cfg(debug_assertions)]
+    #[doc(hidden)]
     pub fn disk_change_shown(&self) -> bool {
         self.open
             .as_ref()

@@ -87,6 +87,7 @@ impl DocumentView {
 impl DocumentView {
     /// Whether autosave is paused after failing, for the smoke test.
     #[cfg(debug_assertions)]
+    #[doc(hidden)]
     pub fn autosave_paused(&self) -> bool {
         self.open.as_ref().is_some_and(|open| open.autosave_paused)
     }

@@ -26,7 +26,7 @@ use std::time::Duration;
 
 use gpui::{
     AnyWindowHandle, Context, EventEmitter, FocusHandle, Focusable, KeyBinding, ListAlignment,
-    ListState, Pixels, Subscription, Task, Window, actions, px,
+    ListState, Pixels, Subscription, Task, Window, px,
 };
 use kertas_core::document::{DiskChange, Document};
 use kertas_core::editor::{Editor, RevealTarget};
@@ -37,58 +37,7 @@ use crate::editor_config::EditorConfig;
 use crate::revealed_block::{CaretPlace, RevealedLayout};
 use crate::theme::Theme;
 
-actions!(
-    kertas,
-    [
-        Save,
-        SaveAs,
-        PageUp,
-        PageDown,
-        Unreveal,
-        MoveLeft,
-        MoveRight,
-        MoveUp,
-        MoveDown,
-        MoveWordLeft,
-        MoveWordRight,
-        MoveLineStart,
-        MoveLineEnd,
-        MoveDocumentStart,
-        MoveDocumentEnd,
-        SelectLeft,
-        SelectRight,
-        SelectUp,
-        SelectDown,
-        SelectWordLeft,
-        SelectWordRight,
-        SelectLineStart,
-        SelectLineEnd,
-        SelectDocumentStart,
-        SelectDocumentEnd,
-        SelectAll,
-        Backspace,
-        Delete,
-        DeleteWordLeft,
-        DeleteWordRight,
-        DeleteToLineStart,
-        Newline,
-        LineBreak,
-        IndentTab,
-        OutdentTab,
-        IndentLines,
-        OutdentLines,
-        InsertTab,
-        MoveBlockUp,
-        MoveBlockDown,
-        SelectBlockUp,
-        SelectBlockDown,
-        Cut,
-        Copy,
-        Paste,
-        Undo,
-        Redo,
-    ]
-);
+pub use crate::actions::*;
 
 /// Key bindings for the document view (macOS conventions).
 pub fn key_bindings() -> Vec<KeyBinding> {
@@ -427,6 +376,7 @@ impl DocumentView {
 
     /// How many items the document has, for the smoke test.
     #[cfg(debug_assertions)]
+    #[doc(hidden)]
     pub fn item_count(&self) -> usize {
         self.open
             .as_ref()
@@ -436,6 +386,7 @@ impl DocumentView {
     /// Where item `index`'s block starts in the document, for the smoke
     /// test.
     #[cfg(debug_assertions)]
+    #[doc(hidden)]
     pub fn item_start(&self, index: usize) -> Option<usize> {
         Some(
             self.open
@@ -452,6 +403,7 @@ impl DocumentView {
     /// Where item `index` starts in the document and its top on screen,
     /// for the smoke test.
     #[cfg(debug_assertions)]
+    #[doc(hidden)]
     pub fn item_position(&self, index: usize) -> Option<(usize, Pixels)> {
         let open = self.open.as_ref()?;
         let item = open.editor.model().items.get(index)?;
@@ -461,6 +413,7 @@ impl DocumentView {
 
     /// How many items are revealed, and the selection, for the smoke test.
     #[cfg(debug_assertions)]
+    #[doc(hidden)]
     pub fn reveal_state(&self) -> (usize, Option<kertas_core::editor::Selection>) {
         self.open.as_ref().map_or((0, None), |open| {
             (open.revealed.len(), open.editor.selection())
@@ -470,6 +423,7 @@ impl DocumentView {
     /// Whether the caret's line is inside the window, for the smoke test.
     /// `None` without a caret, `Some(false)` if its block isn't laid out.
     #[cfg(debug_assertions)]
+    #[doc(hidden)]
     pub fn caret_on_screen(&self) -> Option<bool> {
         let open = self.open.as_ref()?;
         let selection = open.editor.selection()?;
@@ -492,6 +446,7 @@ impl DocumentView {
     /// The index of the item holding document `offset`, for the smoke
     /// test.
     #[cfg(debug_assertions)]
+    #[doc(hidden)]
     pub fn item_at(&self, offset: usize) -> usize {
         self.open
             .as_ref()
@@ -501,6 +456,7 @@ impl DocumentView {
     /// The first footnote's row and how many there are, for the smoke
     /// test.
     #[cfg(debug_assertions)]
+    #[doc(hidden)]
     pub fn note_rows(&self) -> (usize, usize) {
         self.open.as_ref().map_or((0, 0), |open| {
             let model = open.editor.model();
@@ -511,6 +467,7 @@ impl DocumentView {
     /// Whether row `index` is at least partly inside the window, for the
     /// smoke test.
     #[cfg(debug_assertions)]
+    #[doc(hidden)]
     pub fn row_on_screen(&self, index: usize) -> bool {
         self.open.as_ref().is_some_and(|open| {
             heights::Heights::measured(&open.list_state)
@@ -521,6 +478,7 @@ impl DocumentView {
 
     /// The list's scroll position, for the smoke test.
     #[cfg(debug_assertions)]
+    #[doc(hidden)]
     pub fn scroll_top(&self) -> Option<(usize, Pixels)> {
         let top = self.open.as_ref()?.list_state.logical_scroll_top();
         Some((top.item_ix, top.offset_in_item))
@@ -528,6 +486,7 @@ impl DocumentView {
 
     /// The document's text, for the smoke test.
     #[cfg(debug_assertions)]
+    #[doc(hidden)]
     pub fn text(&self) -> String {
         self.open
             .as_ref()
@@ -537,6 +496,7 @@ impl DocumentView {
 
     /// The list indent the document is laid out with, for the smoke test.
     #[cfg(debug_assertions)]
+    #[doc(hidden)]
     pub fn list_indent(&self) -> kertas_core::settings::ListIndent {
         self.config.text.list_indent
     }

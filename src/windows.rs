@@ -20,13 +20,13 @@ use kertas_core::settings::Layout;
 use kertas_core::titles;
 
 use crate::app_settings::{self, AppSettings};
-use crate::document_view::DocumentView;
 use crate::document_window::{CloseWindow, DocumentWindow, DocumentWindowHandle, New, Open, Quit};
-use crate::editor_config::EditorConfig;
 #[cfg(target_os = "macos")]
 use crate::native_tabs::{add_as_tab, ns_window};
-use crate::text_style::TextSettings;
 use crate::zoom::{self, Zoom};
+use kertas_editor::DocumentView;
+use kertas_editor::EditorConfig;
+use kertas_editor::TextSettings;
 
 /// Groups document windows into native tabs.
 const TABBING_IDENTIFIER: &str = "kertas-documents";

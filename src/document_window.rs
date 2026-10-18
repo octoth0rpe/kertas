@@ -17,11 +17,11 @@ use kertas_core::titles;
 
 use crate::app_settings::AppSettings;
 use crate::builtin::Builtin;
-use crate::document_view::{DocumentEvent, DocumentView, bar_button};
 use crate::menus::OpenSettings;
 use crate::tab_strip::{render_tab_strip, select_tab};
-use crate::theme::Theme;
 use crate::{windows, zoom};
+use kertas_editor::Theme;
+use kertas_editor::{DocumentEvent, DocumentView, bar_button};
 
 actions!(
     kertas,

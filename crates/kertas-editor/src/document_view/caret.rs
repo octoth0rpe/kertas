@@ -18,6 +18,7 @@ use super::{
 
 impl DocumentView {
     /// Places the caret at document `offset` after a click.
+    #[doc(hidden)]
     pub fn click(
         &mut self,
         offset: usize,
@@ -47,11 +48,13 @@ impl DocumentView {
     }
 
     /// Stops extending the selection when the mouse moves.
+    #[doc(hidden)]
     pub fn end_drag(&mut self) {
         self.dragging = false;
     }
 
     /// Extends the selection to document `offset` while dragging.
+    #[doc(hidden)]
     pub fn drag_to(&mut self, offset: usize, cx: &mut Context<Self>) {
         let unchanged = self
             .open
@@ -204,7 +207,7 @@ impl DocumentView {
     }
 
     /// Hides the caret and shows every block rendered.
-    pub fn finish_editing(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn finish_editing(&mut self, cx: &mut Context<Self>) {
         let Some(open) = &mut self.open else {
             return;
         };
@@ -390,6 +393,7 @@ impl DocumentView {
     // first block on screen rather than wherever the caret last was.
 
     /// Whether there's a caret: whether a block is being edited.
+    #[doc(hidden)]
     pub fn has_caret(&self) -> bool {
         self.open
             .as_ref()

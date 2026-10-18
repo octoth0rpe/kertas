@@ -24,14 +24,15 @@ use std::time::{Duration, Instant};
 
 use gpui::{Action, App, AsyncApp, EntityInputHandler};
 
-use crate::document_view::{
-    Backspace, Delete, DeleteWordLeft, DocumentView, IndentLines, IndentTab, InsertTab, LineBreak,
-    MoveBlockDown, MoveBlockUp, MoveDocumentEnd, MoveDocumentStart, MoveDown, MoveLeft, MoveRight,
-    MoveUp, Newline, OutdentTab, Redo, Save, SelectAll, SelectBlockDown, SelectDown, SelectUp,
-    Undo, Unreveal,
-};
 use crate::document_window::{
     CloseWindow, DocumentWindowHandle, New, Quit, SelectTab1, SelectTab3, SelectTab9,
+};
+use kertas_editor::DocumentView;
+use kertas_editor::actions::{
+    Backspace, Delete, DeleteWordLeft, IndentLines, IndentTab, InsertTab, LineBreak, MoveBlockDown,
+    MoveBlockUp, MoveDocumentEnd, MoveDocumentStart, MoveDown, MoveLeft, MoveRight, MoveUp,
+    Newline, OutdentTab, Redo, Save, SelectAll, SelectBlockDown, SelectDown, SelectUp, Undo,
+    Unreveal,
 };
 
 const STEP: Duration = Duration::from_millis(16);
@@ -615,7 +616,7 @@ fn smoke_tabs(window: DocumentWindowHandle, cx: &mut App) {
 fn smoke_settings(window: DocumentWindowHandle, cx: &mut App) {
     use crate::app_settings::{self, AppSettings};
     use crate::document_window::{ResetZoom, ZoomIn, ZoomOut};
-    use crate::theme::Theme;
+    use kertas_editor::Theme;
 
     let path = std::path::PathBuf::from(std::env::var_os("KERTAS_CONFIG_DIR").unwrap_or_default())
         .join("config.toml");
@@ -1089,7 +1090,7 @@ fn smoke_settings_window(window: DocumentWindowHandle, cx: &mut App) {
 /// clicking a block below a revealed one keeps it in place (C7), and
 /// dragging selects across blocks and reveals them all.
 fn smoke_reveal(window: DocumentWindowHandle, cx: &mut App) {
-    use crate::document_view::PageDown;
+    use kertas_editor::actions::PageDown;
 
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
@@ -1171,7 +1172,7 @@ fn smoke_reveal(window: DocumentWindowHandle, cx: &mut App) {
 /// bottom at the end, and dragging it to the middle shows the middle.
 /// Clicking the track pages, and the setting hides it.
 fn smoke_scrollbar(window: DocumentWindowHandle, cx: &mut App) {
-    use crate::document_view::PageDown;
+    use kertas_editor::actions::PageDown;
 
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
@@ -1464,7 +1465,7 @@ fn smoke_scrollbar_drag(window: DocumentWindowHandle, cx: &mut App) {
 /// there; ⌘↑ and ⌘↓ scroll to the ends, without placing a caret; → starts editing the first block on screen, not the document's
 /// start; and after Escape, ↓ scrolls from wherever the window is.
 fn smoke_reading(window: DocumentWindowHandle, cx: &mut App) {
-    use crate::document_view::PageDown;
+    use kertas_editor::actions::PageDown;
 
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
@@ -1757,7 +1758,7 @@ fn smoke_images(window: DocumentWindowHandle, cx: &mut App) {
             .await;
             let size = match &loaded {
                 Some(Ok(image)) => {
-                    let (width, height) = crate::rendered_block::natural_size(image, name);
+                    let (width, height) = kertas_editor::natural_size(image, name);
                     Some((width as i32, height as i32))
                 }
                 _ => None,
@@ -1886,7 +1887,7 @@ fn smoke_web_images(window: DocumentWindowHandle, cx: &mut App) {
         .await;
         let size = match &loaded {
             Some(Ok(image)) => {
-                let (width, height) = crate::rendered_block::natural_size(image, &url);
+                let (width, height) = kertas_editor::natural_size(image, &url);
                 Some((width as i32, height as i32))
             }
             _ => None,
@@ -2469,7 +2470,7 @@ fn smoke_print(window: DocumentWindowHandle, cx: &mut App) {
             .flatten();
         let printed = cx.update(|cx| {
             let mtm = objc2::MainThreadMarker::new()?;
-            let settings = crate::text_style::TextSettings::from(&crate::app_settings::get(cx));
+            let settings = kertas_editor::TextSettings::from(&crate::app_settings::get(cx));
             Some(crate::print::save_pdf(
                 &*model?,
                 document.as_deref(),
@@ -2575,7 +2576,7 @@ fn smoke_disk(window: DocumentWindowHandle, cx: &mut App) {
         // Scrolled down, a block added at the top keeps the same text in
         // view.
         for _ in 0..2 {
-            dispatch(window, cx, Box::new(crate::document_view::PageDown));
+            dispatch(window, cx, Box::new(kertas_editor::actions::PageDown));
             pause(cx, 5).await;
         }
         let scroll = |cx: &mut AsyncApp| {

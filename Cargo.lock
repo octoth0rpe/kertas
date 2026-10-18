@@ -2399,6 +2399,7 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "kertas-core",
+ "kertas-editor",
  "libc",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
@@ -2418,6 +2419,18 @@ dependencies = [
  "ropey",
  "toml_edit 0.25.17+spec-1.1.0",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "kertas-editor"
+version = "0.4.0"
+dependencies = [
+ "futures",
+ "gpui",
+ "gpui_platform",
+ "kertas-core",
+ "libc",
+ "objc2-app-kit 0.3.2",
 ]
 
 [[package]]

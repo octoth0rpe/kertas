@@ -8,12 +8,12 @@
 
 use std::ops::Range;
 
-use crate::text_style::TextSettings;
-use crate::theme::Theme;
 use kertas_core::links::ImageLocation;
 use kertas_core::model::Model;
 use kertas_core::print_layout::{Alignment, Frame, PrintLayout};
 use kertas_core::rendered::heading_scale;
+use kertas_editor::TextSettings;
+use kertas_editor::Theme;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{AnyThread, MainThreadMarker};

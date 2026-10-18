@@ -10,7 +10,7 @@ use gpui::{
 };
 
 use crate::document_window::{CloseWindow, DocumentWindowHandle};
-use crate::theme::Theme;
+use kertas_editor::Theme;
 
 const STRIP_HEIGHT: f32 = 30.;
 const MAX_TAB_WIDTH: f32 = 240.;
