@@ -108,4 +108,4 @@ The icon is built from `macos/icon-light.svg` and `macos/icon-dark.svg`. After c
 
 ## License
 
-_TBD_
+Kertas is under the MIT License (`LICENSE`). The libraries and other open-source work it includes keep their own licenses, listed in the About tab and Help → Licenses (see above). The alert icons are GitHub's Octicons, also MIT (`assets/alerts/LICENSE`).
