@@ -65,7 +65,7 @@ Run it after adding or updating a dependency, or let git do it: after `git confi
 
 `scripts/smoke.sh` runs the smoke tests (`src/smoke.rs`): Kertas drives itself through editing, tabs, settings, help, revealing blocks, printing and quitting, on scratch copies of the fixtures. It takes about two and a half minutes, opens windows and takes keyboard focus, so leave the keyboard alone while it runs.
 
-Speed is checked too, so Kertas doesn't get slower without anyone noticing. Baselines on an M2 MacBook Air (2026-10-13), debug build, with `spikes/fixtures/10k.md`:
+Speed is checked too, so Kertas doesn't get slower without anyone noticing. Baselines on an M2 MacBook Air (2026-10-13), debug build, with `tests/fixtures/10k.md`:
 
 | Check | Typical | Fails above |
 |---|---|---|

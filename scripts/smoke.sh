@@ -13,7 +13,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
 cargo build --quiet
 kertas="${CARGO_TARGET_DIR:-$root/target}/debug/kertas"
-fixtures="$root/spikes/fixtures"
+fixtures="$root/tests/fixtures"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 

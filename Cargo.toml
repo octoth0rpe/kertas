@@ -2,8 +2,6 @@
 members = [".", "crates/kertas-core"]
 # So cargo test, clippy and build cover every crate.
 default-members = [".", "crates/kertas-core"]
-# The plain GPUI spike is a workspace of its own.
-exclude = ["spikes"]
 resolver = "3"
 
 [workspace.package]
@@ -60,11 +58,3 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 block2 = "0.6"
 libc = "0.2"
 raw-window-handle = "0.6"
-
-# The printing spikes (#17): examples/print_spike.rs and textkit2_spike.rs.
-[target.'cfg(target_os = "macos")'.dev-dependencies]
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSAttributedString", "NSColor", "NSFont", "NSFontManager", "NSParagraphStyle", "NSPrintInfo", "NSPrintOperation", "NSResponder", "NSText", "NSBezierPath", "NSGraphicsContext", "NSLayoutManager", "NSTextContentManager", "NSTextElement", "NSTextLayoutFragment", "NSTextLayoutManager", "NSTextRange", "NSTextStorage", "NSTextTable", "NSTextView", "NSView", "objc2-core-foundation", "objc2-core-graphics"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSAttributedString", "NSDictionary", "NSGeometry", "NSRange", "NSString", "NSURL", "NSValue"] }
-objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes"] }
-objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "CGContext"] }
-
