@@ -1,6 +1,6 @@
 //! A document laid out for printing (#17): its text, with styled runs and
 //! paragraphs, ready to turn into a native styled-text document on each
-//! platform. See docs/planning/spike-17-print.md.
+//! platform.
 //!
 //! The layout always uses light colors (black on white), whatever the
 //! app's theme. Hard line breaks within a paragraph, and the lines of code

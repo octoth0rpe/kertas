@@ -5,7 +5,7 @@
 //!
 //!   cargo run --example textkit2_spike -- output.pdf
 //!
-//! Not part of Kertas; see docs/planning/spike-17-textkit2.md.
+//! Not part of Kertas.
 
 use std::cell::Cell;
 

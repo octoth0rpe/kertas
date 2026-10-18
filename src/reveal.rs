@@ -3,7 +3,7 @@
 //! A revealed block shows its Markdown source. Prose blocks use the same
 //! fonts and inline styles as when rendered, with the syntax characters
 //! dimmed. Blocks whose alignment matters (code, tables, HTML, front
-//! matter) are shown in monospace. See `docs/planning/caret-and-reveal.md`.
+//! matter) are shown in monospace.
 
 use std::ops::Range;
 

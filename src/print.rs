@@ -4,8 +4,7 @@
 //! The document is laid out for printing by [`PrintLayout`], turned into an
 //! `NSAttributedString` here, and printed from an offscreen `NSTextView`.
 //! The view uses TextKit 1: TextKit 2 silently drops tables
-//! (`NSTextTable`) and code boxes (`NSTextBlock`) when printing. See
-//! docs/planning/spike-17-print.md and spike-17-textkit2.md.
+//! (`NSTextTable`) and code boxes (`NSTextBlock`) when printing.
 
 use std::ops::Range;
 

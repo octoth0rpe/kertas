@@ -1,6 +1,5 @@
 //! Markdown-aware editing: what Enter and Shift-Enter insert, indenting
 //! list items and code, and where the caret goes when moving to a block.
-//! See the Enter addendum in `docs/planning/caret-and-reveal.md`.
 //!
 //! These are pure functions of the source text, like [`crate::movement`].
 
