@@ -6,7 +6,7 @@
 
 use std::borrow::Cow;
 
-use gpui::{App, Keystroke};
+use gpui::App;
 
 use kertas_editor::help;
 
@@ -103,45 +103,11 @@ pub fn open(builtin: Builtin, cx: &mut App) {
     }
 }
 
-/// How a keystroke is written in the Keyboard Shortcuts document, e.g.
-/// `⇧⌘S`. Modifiers come in the macOS order: ⌃ ⌥ ⇧ ⌘.
-#[cfg_attr(not(test), expect(dead_code, reason = "used by tests"))]
-pub fn shortcut_label(keystroke: &Keystroke) -> String {
-    let modifiers = &keystroke.modifiers;
-    let mut label = String::new();
-    for (held, symbol) in [
-        (modifiers.control, "⌃"),
-        (modifiers.alt, "⌥"),
-        (modifiers.shift, "⇧"),
-        (modifiers.platform, "⌘"),
-    ] {
-        if held {
-            label.push_str(symbol);
-        }
-    }
-    let key = match keystroke.key.as_str() {
-        "left" => "←".to_owned(),
-        "right" => "→".to_owned(),
-        "up" => "↑".to_owned(),
-        "down" => "↓".to_owned(),
-        "enter" => "↩".to_owned(),
-        "tab" => "⇥".to_owned(),
-        "backspace" => "⌫".to_owned(),
-        "delete" => "⌦".to_owned(),
-        "escape" => "Esc".to_owned(),
-        "home" => "Home".to_owned(),
-        "pageup" => "Page Up".to_owned(),
-        "pagedown" => "Page Down".to_owned(),
-        "end" => "End".to_owned(),
-        key => key.to_uppercase(),
-    };
-    label.push_str(&key);
-    label
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::Keystroke;
+    use kertas_editor::help::shortcut_label;
 
     #[test]
     fn every_shortcut_is_documented() {
