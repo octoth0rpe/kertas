@@ -9,6 +9,7 @@ pub mod definitions;
 pub mod document;
 pub mod editing;
 pub mod editor;
+pub mod find;
 pub mod history;
 pub mod html_tags;
 pub mod inline;

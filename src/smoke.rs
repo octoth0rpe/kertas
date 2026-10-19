@@ -14,7 +14,7 @@
 //! - `tabs`, `windows`, `settings`, `settings-window`, `help`, `reveal`, `clicks`,
 //!   `anchors`, `footnotes`, `images`, `caret`, `reading`, `scrollbar`,
 //!   `scrollbar-drag`, `a11y`, `print`, `disk`, `autosave`, `quit`,
-//!   `web-images`: see
+//!   `web-images`, `marks`, `hover`, `find`: see
 //!   each function.
 
 use std::cell::{Cell, RefCell};
@@ -66,6 +66,7 @@ pub fn start_if_requested(window: DocumentWindowHandle, cx: &mut App) {
         "edited" => smoke_edited(window, cx),
         "marks" => smoke_marks(window, cx),
         "hover" => smoke_hover(window, cx),
+        "find" => smoke_find(window, cx),
         "rename" => smoke_rename(window, cx),
         "bench" => smoke_bench(window, cx),
         _ => smoke_steps(window, &mode, cx),
@@ -3350,6 +3351,138 @@ fn smoke_marks(window: DocumentWindowHandle, cx: &mut App) {
                 menus.borrow()
             ),
             *menus.borrow() == [(7, 0..2), (7, 0..2)] && caret.is_none(),
+        );
+        checks.finish(cx);
+    })
+    .detach();
+}
+
+/// The find bar (#122): ⌘F, typing a query, ↩ and ⌘G from match to match
+/// with wrapping, Esc leaving the match selected, and ⌘E.
+fn smoke_find(window: DocumentWindowHandle, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        let mut checks = Checks::default();
+        pause(cx, 10).await;
+        let handle = gpui::AnyWindowHandle::from(window);
+        let text = window
+            .read_with(cx, |view, _| view.text())
+            .unwrap_or_default();
+        // "bold" as it's shown: in `**bold**`, "a bold claim" and `*bold*`.
+        let starts: Vec<usize> = text.match_indices("bold").map(|(at, _)| at).collect();
+        let status = |cx: &mut AsyncApp| {
+            window
+                .read_with(cx, |view, _| (view.find_shown(), view.find_status()))
+                .unwrap_or_default()
+        };
+        let selection = |cx: &mut AsyncApp| {
+            window
+                .read_with(cx, |view, _| view.reveal_state().1)
+                .ok()
+                .flatten()
+                .map(|selection| selection.range())
+        };
+
+        press_key(handle, cx, "cmd-f").await;
+        window
+            .update(cx, |view, _, cx| view.type_find_query("one more", cx))
+            .ok();
+        pause(cx, 5).await;
+        let shown = after_frames(window, cx, 2, |view| {
+            let last = view.item_count() - 1;
+            (view.row_on_screen(last), view.reveal_state())
+        })
+        .await;
+        checks.check(
+            &format!("typing scrolls to a match far below, without selecting it ({shown:?})"),
+            shown.is_some_and(|(on_screen, (revealed, selection))| {
+                on_screen && revealed == 0 && selection.is_none()
+            }),
+        );
+        window
+            .update(cx, |view, _, cx| view.type_find_query("bold", cx))
+            .ok();
+        pause(cx, 3).await;
+        let found = status(cx);
+        // With no caret, from the top of the window, which is at the end.
+        checks.check(
+            &format!("typing finds every match, from the top of the window ({found:?})"),
+            found == (true, (Some(2), 3)),
+        );
+
+        press_key(handle, cx, "enter").await;
+        let found = status(cx);
+        let selected = selection(cx);
+        checks.check(
+            &format!("↩ wraps around to the first match and selects it ({found:?}, {selected:?})"),
+            found.1 == (Some(0), 3) && selected == Some(starts[0]..starts[0] + 4),
+        );
+        press_key(handle, cx, "cmd-g").await;
+        let found = status(cx);
+        let selected = selection(cx);
+        checks.check(
+            &format!("⌘G goes to the next ({found:?}, {selected:?})"),
+            found.1 == (Some(1), 3) && selected == Some(starts[1]..starts[1] + 4),
+        );
+        press_key(handle, cx, "cmd-g").await;
+        pause(cx, 5).await;
+        let on_screen = after_frames(window, cx, 2, |view| view.caret_on_screen())
+            .await
+            .flatten();
+        let found = status(cx);
+        checks.check(
+            &format!(
+                "⌘G goes to the last match, far below, and shows it ({found:?}, {on_screen:?})"
+            ),
+            found.1 == (Some(2), 3) && on_screen == Some(true),
+        );
+        press_key(handle, cx, "cmd-g").await;
+        let found = status(cx);
+        checks.check(
+            &format!("⌘G wraps around to the first ({found:?})"),
+            found.1 == (Some(0), 3),
+        );
+        press_key(handle, cx, "cmd-shift-g").await;
+        let found = status(cx);
+        checks.check(
+            &format!("⇧⌘G wraps around to the last ({found:?})"),
+            found.1 == (Some(2), 3),
+        );
+        let unchanged = window
+            .read_with(cx, |view, _| view.text() == text)
+            .unwrap_or(false);
+        checks.check("keys typed in the bar don't edit the document", unchanged);
+
+        press_key(handle, cx, "escape").await;
+        let found = status(cx);
+        let selected = selection(cx);
+        checks.check(
+            &format!("Esc closes the bar, leaving the match selected ({found:?}, {selected:?})"),
+            !found.0 && selected == Some(starts[2]..starts[2] + 4),
+        );
+
+        window
+            .update(cx, |view, _, cx| view.type_find_query("no such text", cx))
+            .ok();
+        press_key(handle, cx, "cmd-g").await;
+        let found = status(cx);
+        checks.check(
+            &format!("a query with no matches finds nothing ({found:?})"),
+            found.1 == (None, 0),
+        );
+
+        // ⌘E on "claim".
+        let claim = text.find("claim").unwrap_or(0);
+        window
+            .update(cx, |view, window, cx| {
+                view.select_range(claim..claim + 5, window, cx)
+            })
+            .ok();
+        pause(cx, 3).await;
+        press_key(handle, cx, "cmd-e").await;
+        let found = status(cx);
+        checks.check(
+            &format!("⌘E looks for the selection ({found:?})"),
+            found == (true, (Some(0), 1)),
         );
         checks.finish(cx);
     })

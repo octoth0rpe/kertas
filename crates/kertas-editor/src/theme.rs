@@ -28,6 +28,10 @@ pub struct Theme {
     /// Background and border that mark the revealed block.
     pub revealed_background: Hsla,
     pub revealed_border: Hsla,
+    /// Background of the text find matches, and of the match it's at
+    /// (#122): the warning color, faintly and more strongly.
+    pub find_match: Hsla,
+    pub find_current: Hsla,
     /// GitHub alerts' colors, in [`AlertKind`] order.
     alerts: [Hsla; 5],
 }
@@ -90,6 +94,14 @@ impl From<&Palette> for Theme {
             accent_text: color(palette.accent_text),
             revealed_background: color(palette.revealed_background),
             revealed_border: color(palette.revealed_border),
+            find_match: Hsla {
+                a: 0.25,
+                ..color(palette.alert_warning)
+            },
+            find_current: Hsla {
+                a: 0.55,
+                ..color(palette.alert_warning)
+            },
             alerts: [
                 color(palette.alert_note),
                 color(palette.alert_tip),

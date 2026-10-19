@@ -133,6 +133,7 @@ grep -q "^Quitting. Still paused. " "$work/autosave/showcase.md" || {
 run edited showcase.md
 run marks marks.md
 run hover marks.md
+run find find.md
 run rename showcase.md
 run quit showcase.md --exits
 run bench 10k.md

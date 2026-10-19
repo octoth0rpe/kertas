@@ -4,6 +4,7 @@ What's new in each version of Kertas, newest first.
 
 ## Unreleased
 
+- **Edit → Find (⌘F)** finds text in the document. Every match is highlighted, ⌘G and ⇧⌘G go from one to the next, and **Match Case** and **Whole Words** narrow the search. It finds the text as you see it, so **bold** finds "bold" in `**bold**`.
 - **View → Fade Other Blocks** draws every block but the one you're editing faded, to keep your eye on what you're writing. Faded text stays readable in every theme, so some themes fade less than others. It's off unless you turn it on.
 - **View → Typewriter Scrolling** keeps the line you're typing on in the middle of the window, scrolling the text up as you write. You can still scroll away, and the next keystroke brings it back.
 

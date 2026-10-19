@@ -23,7 +23,8 @@ use super::{
     SelectUp, SelectWordLeft, SelectWordRight, WebImages,
 };
 use crate::rendered_block::{
-    ClickTarget, ReferenceTarget, note_marker_column, render_block, render_note, wavy_marks,
+    ClickTarget, ReferenceTarget, note_marker_column, overlapping, render_block, render_note,
+    wavy_marks,
 };
 use crate::revealed_block::{
     CaretPlace, RevealedBlock, ScrollToCaret, TextInput, render_gap, render_revealed,
@@ -237,6 +238,12 @@ impl DocumentView {
         let link_check = self.link_check.clone();
         let marks = self.marks.clone();
         let underlined_marks = self.marks.clone();
+        let highlights = Rc::new(self.find_highlights());
+        let revealed_highlights = highlights.clone();
+        let scroll_to_match = match request {
+            Some(ScrollRequest::Match(offset)) => Some(offset),
+            _ => None,
+        };
         // What this frame scrolls to (see `ScrollRequest`).
         let viewport_height = open.list_state.viewport_bounds().size.height;
         let reference = match request {
@@ -266,6 +273,8 @@ impl DocumentView {
             reference,
             link_check: link_check.clone(),
             marks: marks.clone(),
+            highlights: highlights.clone(),
+            scroll_to_match,
         };
         let note_column = note_marker_column(look.list_indent, &model.notes);
         let fade = self.fade.clone();
@@ -312,6 +321,9 @@ impl DocumentView {
                     let underlined = wavy_marks(&underlined_marks, range.clone())
                         .map(|(mark, color)| (local(mark.start)..local(mark.end), color))
                         .collect();
+                    let highlighted = overlapping(&revealed_highlights, range.clone())
+                        .map(|(found, color)| (local(found.start)..local(found.end), color))
+                        .collect();
                     let block = RevealedBlock {
                         source: &model.text[range.clone()],
                         styled,
@@ -319,6 +331,7 @@ impl DocumentView {
                         caret,
                         marked,
                         underlined,
+                        highlighted,
                         first: index == 0,
                     };
                     let scroll_to_caret = caret_place.filter(|_| *head).map(|place| {
@@ -560,6 +573,10 @@ impl Render for DocumentView {
         // Document text is sized in rems, so this sets the zoom.
         window.set_rem_size(px(self.config.font_size as f32));
         self.move_marks();
+        // Closed, the bar looks again only when it's asked to.
+        if self.find_shown() {
+            self.refresh_matches(cx);
+        }
         self.remeasure_loaded_images(cx);
         // This frame's elements ask the list to scroll to what was
         // requested as it's laid out.
@@ -583,6 +600,7 @@ impl Render for DocumentView {
         let disk_bar = self.render_disk_change(cx);
         let hover = self.render_hover(window, cx);
         let web_images_bar = self.render_web_images_bar(cx);
+        let find_bar = self.render_find_bar(cx);
         let name = self.display_name().unwrap_or_default();
         let now = Instant::now();
         self.update_fade(now, window);
@@ -598,10 +616,11 @@ impl Render for DocumentView {
                 .into_any_element(),
         };
 
-        self.with_actions(div().track_focus(&self.focus_handle), cx)
-            .size_full()
-            .bg(self.theme.background)
-            .text_color(self.theme.text)
+        let document = self
+            .with_actions(div().track_focus(&self.focus_handle), cx)
+            .flex_1()
+            .min_h(px(0.))
+            .w_full()
             .text_size(rems(1.))
             .line_height(relative(1.6))
             .flex()
@@ -628,6 +647,21 @@ impl Render for DocumentView {
                     .on_scroll_wheel(cx.listener(|this, _, _, cx| this.close_hover(cx)))
                     .child(content),
             )
-            .children(hover)
+            .children(hover);
+        // The find bar is outside the document's element, so the keys
+        // typed in it don't edit the document. Finding works from either.
+        div()
+            .size_full()
+            .bg(self.theme.background)
+            .text_color(self.theme.text)
+            .flex()
+            .flex_col()
+            .on_action(cx.listener(Self::show_find))
+            .on_action(cx.listener(Self::hide_find))
+            .on_action(cx.listener(Self::use_selection_for_find))
+            .on_action(cx.listener(Self::find_next))
+            .on_action(cx.listener(Self::find_previous))
+            .children(find_bar)
+            .child(document)
     }
 }

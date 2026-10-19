@@ -49,6 +49,9 @@ pub struct RevealedBlock<'a> {
     /// The host's marks drawn with a wavy underline, in block-relative
     /// offsets, and their colors.
     pub underlined: Vec<(Range<usize>, Hsla)>,
+    /// The find bar's matches, in block-relative offsets, and their
+    /// backgrounds (#122).
+    pub highlighted: Vec<(Range<usize>, Hsla)>,
     pub first: bool,
 }
 
@@ -455,6 +458,7 @@ fn text_runs(block: &RevealedBlock, look: &Look, heading: Option<u8>) -> Vec<Tex
             block
                 .underlined
                 .iter()
+                .chain(&block.highlighted)
                 .flat_map(|(range, _)| [range.start, range.end]),
         );
         for piece in split_at(span.range.clone(), &cuts) {
@@ -471,6 +475,9 @@ fn text_runs(block: &RevealedBlock, look: &Look, heading: Option<u8>) -> Vec<Tex
             // Text being composed is underlined as the input method's.
             if within(&marked) {
                 piece_run.underline = Some(underline(run.color));
+            }
+            if let Some((_, color)) = block.highlighted.iter().find(|(range, _)| within(range)) {
+                piece_run.background_color = Some(*color);
             }
             if within(&block.selection) {
                 piece_run.background_color = Some(theme.selection);
@@ -552,6 +559,7 @@ mod tests {
                             caret: None,
                             marked: marked.clone(),
                             underlined: Vec::new(),
+                            highlighted: Vec::new(),
                             first: false,
                         };
                         let covered: usize = text_runs(&block, &look, heading)
