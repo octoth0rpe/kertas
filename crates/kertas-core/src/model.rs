@@ -4,7 +4,7 @@
 use std::ops::Range;
 use std::rc::Rc;
 
-use crate::blocks::{BlockKind, Blocks, item_ranges, normalize_label};
+use crate::blocks::{BlockKind, Blocks, Syntax, item_ranges, normalize_label};
 use crate::definitions::Definitions;
 use crate::rendered::{RenderedBlock, render_block};
 
@@ -74,13 +74,29 @@ pub struct Splice {
 
 impl Model {
     pub fn new(text: &str) -> Self {
-        Self::build(text, None).0
+        Self::new_with(text, Syntax::default())
+    }
+
+    /// The model for `text`, read with `syntax`.
+    pub fn new_with(text: &str, syntax: Syntax) -> Self {
+        Self::build(text, syntax, None).0
     }
 
     /// The model for `text` after an edit, reusing unchanged items from
     /// `self`, and which items changed.
     pub fn updated(&self, text: &str) -> (Self, Splice) {
-        Self::build(text, Some(self))
+        Self::build(text, self.syntax(), Some(self))
+    }
+
+    /// The model for the same text read with `syntax`, and which items
+    /// changed: all of them, if the syntax did.
+    pub fn with_syntax(&self, syntax: Syntax) -> (Self, Splice) {
+        Self::build(&self.text, syntax, Some(self))
+    }
+
+    /// The syntax the document is read with.
+    pub fn syntax(&self) -> Syntax {
+        self.definitions.syntax()
     }
 
     /// The index of the item containing `offset`.
@@ -137,8 +153,8 @@ impl Model {
         }
     }
 
-    fn build(text: &str, old: Option<&Model>) -> (Self, Splice) {
-        let blocks = Blocks::parse(text);
+    fn build(text: &str, syntax: Syntax, old: Option<&Model>) -> (Self, Splice) {
+        let blocks = Blocks::parse_with(text, syntax);
         let definitions = blocks.definitions().clone();
         let ranges = item_ranges(text, &blocks);
 

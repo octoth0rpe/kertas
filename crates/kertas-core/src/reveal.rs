@@ -205,6 +205,43 @@ mod tests {
     }
 
     #[test]
+    fn wiki_link_brackets_are_syntax() {
+        let source = "See [[Michael Smith|Mikey]] and [[Ada]].";
+        let syntax = crate::blocks::Syntax { wiki_links: true };
+        let styled = styled_source(
+            source,
+            BlockKind::Paragraph,
+            &Definitions::from_text_with("", syntax),
+        );
+        let spans: Vec<String> = styled
+            .spans
+            .iter()
+            .map(|span| {
+                let text = &source[span.range.clone()];
+                match span.style {
+                    SpanStyle::Syntax => format!("~{text}"),
+                    SpanStyle::Content(style) if style.link => format!("L:{text}"),
+                    SpanStyle::Content(_) => text.to_owned(),
+                }
+            })
+            .collect();
+        assert_eq!(
+            spans,
+            [
+                "See ",
+                "~[[Michael Smith|",
+                "L:Mikey",
+                "~]]",
+                " and ",
+                "~[[",
+                "L:Ada",
+                "~]]",
+                "."
+            ]
+        );
+    }
+
+    #[test]
     fn list_markers_are_syntax() {
         let (_, spans) = describe("- one\n- two");
         assert_eq!(spans, ["~- ", "one", "~\n- ", "two"]);

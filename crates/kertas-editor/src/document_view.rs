@@ -207,10 +207,11 @@ pub enum DocumentEvent {
     /// [`Edited`](Self::Edited) instead, after the pause.
     CaretMoved,
     /// A link to `destination`, as written, was clicked, and the host
-    /// decides what it opens. It's sent only once the host asks for it
+    /// decides what it opens. `wiki` says it's a `[[wiki link]]`, whose
+    /// destination is its target. It's sent only once the host asks for it
     /// with [`DocumentView::set_links_to_host`]; otherwise links are
     /// followed.
-    LinkClicked { destination: String },
+    LinkClicked { destination: String, wiki: bool },
     /// A link to another Markdown file was followed, and asks for it to be
     /// opened, scrolled to the heading named `anchor` if there is one.
     OpenFile {
@@ -328,13 +329,21 @@ impl DocumentView {
         }
         let relayout = config.text != self.config.text || config.font_size != self.config.font_size;
         let autosave_changed = config.autosave != self.config.autosave;
+        let syntax_changed = config.syntax() != self.config.syntax();
         self.theme = Theme::for_window(&config.theme, config.appearance, window);
         self.config = config;
         // Turning autosave on saves changes already made.
         if autosave_changed && self.is_dirty() {
             self.schedule_autosave(cx);
         }
-        if relayout {
+        if syntax_changed
+            && let Some(open) = &mut self.open
+            && let Some(splice) = open.editor.set_syntax(self.config.syntax())
+        {
+            open.splice(&splice);
+            caret::reveal(open);
+        }
+        if relayout || syntax_changed {
             self.layout_changed();
         }
         cx.notify();
@@ -343,7 +352,7 @@ impl DocumentView {
     /// Shows `document`, replacing the current one.
     fn load(&mut self, document: Document, window: &mut Window, cx: &mut Context<Self>) {
         // Named text has no file, and is view-only.
-        let editor = Editor::new(document, self.text_name.is_some());
+        let editor = Editor::new_with(document, self.text_name.is_some(), self.config.syntax());
         self.web_images = WebImages::Ask;
         // The footnotes follow the items (#90).
         let items = editor.model().items.len() + editor.model().notes.len();

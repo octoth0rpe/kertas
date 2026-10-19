@@ -2257,7 +2257,7 @@ fn smoke_anchors(window: DocumentWindowHandle, cx: &mut App) {
             let clicked = clicked.clone();
             cx.update(|cx| {
                 cx.subscribe(view, move |_, event, _| {
-                    if let kertas_editor::DocumentEvent::LinkClicked { destination } = event {
+                    if let kertas_editor::DocumentEvent::LinkClicked { destination, .. } = event {
                         clicked.borrow_mut().push(destination.clone());
                     }
                 })
@@ -3113,6 +3113,42 @@ fn smoke_edited(window: DocumentWindowHandle, cx: &mut App) {
         checks.check(
             "so does Escape, leaving no caret",
             moved.get() == 2 && caret.is_none(),
+        );
+
+        // A host turning on wiki links (#119): the open document is read
+        // again, and `[[Ada|her]]` becomes a link to Ada.
+        window
+            .update(cx, |view, window, cx| {
+                view.click(0, false, window, cx);
+                view.replace_text_in_range(None, "Ask [[Ada|her]].\n\n", window, cx);
+            })
+            .ok();
+        dispatch(window, cx, Box::new(Unreveal));
+        pause(cx, 2).await;
+        let first_links = |view: &DocumentView| {
+            let model = view.model()?;
+            match &*model.items.first()?.rendered {
+                kertas_core::rendered::RenderedBlock::Paragraph(text) => Some(
+                    text.links
+                        .iter()
+                        .map(|link| (link.destination.clone(), link.wiki))
+                        .collect::<Vec<_>>(),
+                ),
+                _ => None,
+            }
+        };
+        let before = cx.update(|cx| first_links(view.read(cx)));
+        window
+            .update(cx, |view, window, cx| {
+                let mut config = view.config().clone();
+                config.wiki_links = true;
+                view.set_config(config, window, cx);
+            })
+            .ok();
+        let after = cx.update(|cx| first_links(view.read(cx)));
+        checks.check(
+            &format!("turning on wiki links reads them ({before:?} → {after:?})"),
+            before == Some(Vec::new()) && after == Some(vec![("Ada".to_owned(), true)]),
         );
 
         // A host forgetting unsaved changes, as after deleting the file.

@@ -70,6 +70,23 @@ pub fn parser_options() -> Options {
         | Options::ENABLE_FOOTNOTES
 }
 
+/// Syntax a host can turn on beyond what Kertas reads by default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct Syntax {
+    /// `[[Target]]` and `[[Target|label]]` are links (#119), as in wikis.
+    /// Their targets are whatever the host makes of them.
+    pub wiki_links: bool,
+}
+
+/// The parser options for a document read with `syntax`.
+pub fn parser_options_for(syntax: Syntax) -> Options {
+    let mut options = parser_options();
+    if syntax.wiki_links {
+        options |= Options::ENABLE_WIKILINKS;
+    }
+    options
+}
+
 const BYTE_ORDER_MARK: char = '\u{FEFF}';
 
 /// The top-level blocks of a document, in source order.
@@ -85,6 +102,11 @@ pub struct Blocks {
 impl Blocks {
     /// Parses `text` into its top-level blocks.
     pub fn parse(text: &str) -> Self {
+        Self::parse_with(text, Syntax::default())
+    }
+
+    /// Parses `text`, read with `syntax`, into its top-level blocks.
+    pub fn parse_with(text: &str, syntax: Syntax) -> Self {
         let mut blocks = Vec::new();
 
         // The Markdown body starts after the byte-order mark and front
@@ -108,7 +130,7 @@ impl Blocks {
         let normalize = |range: Range<usize>| normalize(text, content_start, shift(range));
 
         let mut depth = 0usize;
-        let mut iter = Parser::new_ext(body, parser_options()).into_offset_iter();
+        let mut iter = Parser::new_ext(body, parser_options_for(syntax)).into_offset_iter();
         let mut footnote_references = Vec::new();
 
         for (event, range) in iter.by_ref() {
@@ -140,6 +162,7 @@ impl Blocks {
         let link_definitions = Definitions::from_parser(
             iter.reference_definitions(),
             footnote_references.iter().map(|(label, _)| label.as_str()),
+            syntax,
         );
         // Link reference definitions produce no events, so add them from the
         // parser's definition table. That table also includes definitions
