@@ -14,7 +14,8 @@
 //! - `tabs`, `windows`, `settings`, `settings-window`, `help`, `reveal`, `clicks`,
 //!   `anchors`, `footnotes`, `images`, `caret`, `reading`, `scrollbar`,
 //!   `scrollbar-drag`, `a11y`, `print`, `disk`, `autosave`, `quit`,
-//!   `web-images`, `marks`, `hover`, `find`, `replace`, `regex`: see
+//!   `web-images`, `marks`, `hover`, `find`, `replace`, `regex`,
+//!   `host-find`: see
 //!   each function.
 
 use std::cell::{Cell, RefCell};
@@ -69,6 +70,7 @@ pub fn start_if_requested(window: DocumentWindowHandle, cx: &mut App) {
         "find" => smoke_find(window, cx),
         "replace" => smoke_replace(window, cx),
         "regex" => smoke_regex(window, cx),
+        "host-find" => smoke_host_find(window, cx),
         "rename" => smoke_rename(window, cx),
         "bench" => smoke_bench(window, cx),
         _ => smoke_steps(window, &mode, cx),
@@ -3606,6 +3608,101 @@ fn smoke_regex(window: DocumentWindowHandle, cx: &mut App) {
         checks.check(
             "Replace All fills in the groups",
             text == original.replace("bold", "oldb"),
+        );
+        checks.finish(cx);
+    })
+    .detach();
+}
+
+/// What a host can do with find (#125): open the bar at a match, leave out
+/// options, and replace ranges as one undoable edit.
+fn smoke_host_find(window: DocumentWindowHandle, cx: &mut App) {
+    use kertas_editor::kertas_core::find::{FindOptions, OfferedOptions};
+
+    cx.spawn(async move |cx| {
+        let mut checks = Checks::default();
+        pause(cx, 10).await;
+        let handle = gpui::AnyWindowHandle::from(window);
+        let text = |cx: &mut AsyncApp| {
+            window
+                .read_with(cx, |view, _| view.text())
+                .unwrap_or_default()
+        };
+        let original = text(cx);
+        let starts: Vec<usize> = original.match_indices("bold").map(|(at, _)| at).collect();
+        let regex = FindOptions {
+            regex: true,
+            ..FindOptions::default()
+        };
+        window
+            .update(cx, |view, window, cx| {
+                view.show_find_with("b.ld", regex, Some(starts[1] + 1), window, cx)
+            })
+            .ok();
+        pause(cx, 5).await;
+        let shown = window
+            .read_with(cx, |view, _| {
+                let selection = view.reveal_state().1.map(|s| s.range());
+                (view.find_shown(), view.find_status(), selection)
+            })
+            .ok();
+        checks.check(
+            &format!("a host opens the bar at the match after an offset ({shown:?})"),
+            shown == Some((true, (Some(2), 3), Some(starts[2]..starts[2] + 4))),
+        );
+
+        window
+            .update(cx, |view, window, cx| {
+                let config = kertas_editor::EditorConfig {
+                    find_options: OfferedOptions {
+                        regex: false,
+                        ..OfferedOptions::default()
+                    },
+                    ..view.config().clone()
+                };
+                view.set_config(config, window, cx);
+            })
+            .ok();
+        pause(cx, 3).await;
+        let after = window
+            .read_with(cx, |view, _| {
+                (view.find_options().regex, view.find_status())
+            })
+            .ok();
+        checks.check(
+            &format!("leaving Regex out turns it off ({after:?})"),
+            after == Some((false, (None, 0))),
+        );
+
+        let replaced = window
+            .update(cx, |view, _, cx| {
+                let edits = vec![
+                    (starts[2]..starts[2] + 4, "brave".to_owned()),
+                    (0..0, "Intro.\n\n".to_owned()),
+                ];
+                view.replace_ranges(edits, cx)
+            })
+            .unwrap_or(false);
+        pause(cx, 3).await;
+        let edited = text(cx);
+        let mut expected = original.clone();
+        expected.replace_range(starts[2]..starts[2] + 4, "brave");
+        expected.insert_str(0, "Intro.\n\n");
+        checks.check(
+            "a host replaces ranges in one edit",
+            replaced && edited == expected,
+        );
+        press_key(handle, cx, "escape").await;
+        press_key(handle, cx, "cmd-z").await;
+        checks.check("which one Undo takes back", text(cx) == original);
+        let overlapping = window
+            .update(cx, |view, _, cx| {
+                view.replace_ranges(vec![(0..4, "a".into()), (2..6, "b".into())], cx)
+            })
+            .unwrap_or(true);
+        checks.check(
+            "overlapping ranges change nothing",
+            !overlapping && text(cx) == original,
         );
         checks.finish(cx);
     })

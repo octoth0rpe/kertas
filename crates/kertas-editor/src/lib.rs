@@ -31,6 +31,14 @@
 //!
 //! [`tabs::DocumentTabs`] holds several document views in one window, as
 //! tabs.
+//!
+//! A document view has a find bar (⌘F, ⌥⌘F to replace too). A host can
+//! open it at a match with [`DocumentView::show_find_with`], choose which
+//! of its options it offers with [`EditorConfig::find_options`], and
+//! change a document as one undoable edit with
+//! [`DocumentView::replace_ranges`], say to replace across several
+//! documents. [`text_field::TextField`] is the bar's text field, for a
+//! host's own windows too.
 
 pub mod app_settings;
 mod assets;
