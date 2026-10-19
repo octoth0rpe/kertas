@@ -57,7 +57,7 @@ The View menu changes `appearance`, `theme`, `text_width` and `scrollbar` too. `
 
 Your own color themes go in `themes/` next to `config.toml`, one `.toml` file per theme with its light and dark colors, and are listed with the built-in ones. A theme with a built-in theme's name replaces it. **Help → Themes** in the app lists every color and has a complete example.
 
-Spelling dictionaries for other languages go in `dictionaries/` next to `config.toml`: a Hunspell dictionary's `.aff` and `.dic` files, named after the language (`fr.aff`, `fr.dic`). Kertas comes with English (US) and English (UK), from [SCOWL](http://wordlist.sourceforge.net); a dictionary you add for one of those replaces it.
+Spelling dictionaries for other languages go in `dictionaries/` next to `config.toml`: a Hunspell dictionary's `.aff` and `.dic` files, named after the language (`fr.aff`, `fr.dic`). Kertas comes with English (US) and English (UK), from [SCOWL](http://wordlist.sourceforge.net); a dictionary you add for one of those replaces it. Words added with **Add to Dictionary** go in `dictionaries/words.txt`, one to a line. Words added with **Add for This Document** go in `config.toml`, in a `[document_words]` table of documents' paths and their words; they're lost if the document is renamed or moved.
 
 ### Dependencies
 

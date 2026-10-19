@@ -49,6 +49,7 @@
 
 pub mod app_settings;
 mod assets;
+pub mod context_menu;
 mod document_view;
 mod editor_config;
 pub mod file_watch;

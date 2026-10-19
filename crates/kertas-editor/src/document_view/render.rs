@@ -652,7 +652,8 @@ impl Render for DocumentView {
                     .on_scroll_wheel(cx.listener(|this, _, _, cx| this.close_hover(cx)))
                     .child(content),
             )
-            .children(hover);
+            .children(hover)
+            .children(self.spelling_menu.as_ref().map(|menu| menu.menu.clone()));
         // The find bar is outside the document's element, so the keys
         // typed in it don't edit the document. Finding works from either.
         div()

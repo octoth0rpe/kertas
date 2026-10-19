@@ -5,7 +5,12 @@
 //! it never stop Kertas: a bad value or an unknown setting falls back to the
 //! default and is reported with its line (G4). Changing a setting edits
 //! the file in place, keeping comments and formatting.
+//!
+//! The words added to the dictionary for one document only (#142) are in
+//! the file too, in a `[document_words]` table of each document's path and
+//! its words. They're lost if the document is renamed or moved.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::ops::RangeInclusive;
 
@@ -127,7 +132,13 @@ pub struct Settings {
     pub spelling_language: String,
     /// Whether misspelled words are underlined (#141).
     pub check_spelling: bool,
+    /// The words added to the dictionary for one document only, by the
+    /// document's path (#142).
+    pub document_words: BTreeMap<String, Vec<String>>,
 }
+
+/// The table of the words added for one document only.
+pub const DOCUMENT_WORDS: &str = "document_words";
 
 impl Default for Settings {
     fn default() -> Self {
@@ -148,6 +159,7 @@ impl Default for Settings {
             autosave: None,
             spelling_language: DEFAULT_LANGUAGE.to_owned(),
             check_spelling: true,
+            document_words: BTreeMap::new(),
         }
     }
 }
@@ -643,6 +655,18 @@ pub fn parse_checking_from(
             settings.appearance = AppearanceSetting::parse(appearance);
             continue;
         }
+        if key == DOCUMENT_WORDS {
+            match read_document_words(item) {
+                Some(words) => settings.document_words = words,
+                None => problems.push(Problem {
+                    line,
+                    message: format!(
+                        "`{DOCUMENT_WORDS}` must be a table of documents' paths and lists of words"
+                    ),
+                }),
+            }
+            continue;
+        }
         let Some(setting) = find(key) else {
             problems.push(Problem {
                 line,
@@ -715,6 +739,49 @@ pub fn set(text: &str, key: &str, value: impl Into<Value>) -> Result<String, Pro
             return Ok(text);
         }
         _ => document[key] = Item::Value(value),
+    }
+    Ok(document.to_string())
+}
+
+/// The words for each document in a `[document_words]` table, or `None`
+/// if it isn't a table of lists of words.
+fn read_document_words(item: &Item) -> Option<BTreeMap<String, Vec<String>>> {
+    item.as_table_like()?
+        .iter()
+        .map(|(path, words)| {
+            let words = words
+                .as_array()?
+                .iter()
+                .map(|word| word.as_str().map(str::to_owned))
+                .collect::<Option<Vec<_>>>()?;
+            Some((path.to_owned(), words))
+        })
+        .collect()
+}
+
+/// The file's `text` with `word` added to the words of the document at
+/// `path`, keeping everything else. Fails if the file can't be parsed or
+/// its `[document_words]` isn't a table.
+pub fn add_document_word(text: &str, path: &str, word: &str) -> Result<String, Problem> {
+    let problem = |message: String| Problem {
+        line: None,
+        message: format!("couldn't add \"{word}\" for the document: {message}"),
+    };
+    let mut document: DocumentMut = text
+        .parse()
+        .map_err(|err: toml_edit::TomlError| problem(err.message().trim_end().to_owned()))?;
+    let table = document
+        .entry(DOCUMENT_WORDS)
+        .or_insert_with(toml_edit::table)
+        .as_table_like_mut()
+        .ok_or_else(|| problem(format!("`{DOCUMENT_WORDS}` isn't a table")))?;
+    let words = table
+        .entry(path)
+        .or_insert(toml_edit::value(toml_edit::Array::new()))
+        .as_array_mut()
+        .ok_or_else(|| problem(format!("the document's `{DOCUMENT_WORDS}` isn't a list")))?;
+    if !words.iter().any(|known| known.as_str() == Some(word)) {
+        words.push(word);
     }
     Ok(document.to_string())
 }
@@ -813,6 +880,7 @@ mod tests {
                 autosave: None,
                 spelling_language: "en-US".into(),
                 check_spelling: true,
+                document_words: BTreeMap::new(),
             }
         );
     }
@@ -859,6 +927,31 @@ mod tests {
         );
         let (_, problems) = parse("appearance = 3\n");
         assert_eq!(problems.len(), 1);
+    }
+
+    #[test]
+    fn words_for_one_document() {
+        let text = "# Mine\ntheme = \"Kertas\"\n";
+        let text = add_document_word(text, "/a/story.md", "Zorbly").unwrap();
+        let text = add_document_word(&text, "/a/story.md", "Quixlet").unwrap();
+        let text = add_document_word(&text, "/a/story.md", "Zorbly").unwrap();
+        let text = add_document_word(&text, "/b/notes.md", "Mikey").unwrap();
+        assert!(text.starts_with("# Mine\ntheme = \"Kertas\"\n"), "{text}");
+        let (settings, problems) = parse(&text);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(
+            settings.document_words["/a/story.md"],
+            ["Zorbly", "Quixlet"]
+        );
+        assert_eq!(settings.document_words["/b/notes.md"], ["Mikey"]);
+        // Settings added later go above the table.
+        let text = set(&text, "font_size", 18).unwrap();
+        assert_eq!(parse(&text).0.font_size, 18);
+
+        let (settings, problems) = parse("document_words = 3\n");
+        assert!(settings.document_words.is_empty());
+        assert_eq!(problems.len(), 1);
+        assert!(add_document_word("document_words = 3\n", "/a.md", "Zorbly").is_err());
     }
 
     #[test]

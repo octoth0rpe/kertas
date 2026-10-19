@@ -170,11 +170,17 @@ pub fn init(folder: PathBuf, defaults: Settings, cx: &mut App) {
             }
         })
         .detach();
-        for folder in [themes_folder(cx), dictionaries_folder(cx)] {
+        for (folder, dictionaries) in [(themes_folder(cx), false), (dictionaries_folder(cx), true)]
+        {
             let mut changes = file_watch::watch_folder(folder);
             cx.spawn(async move |cx| {
                 while changes.changed().await {
-                    cx.update(reload);
+                    cx.update(|cx| {
+                        reload(cx);
+                        if dictionaries {
+                            crate::spelling::dictionaries_changed(cx);
+                        }
+                    });
                 }
             })
             .detach();
@@ -200,6 +206,14 @@ fn open_folder(folder: PathBuf, cx: &mut App) {
         Err(err) => cx.update_global::<AppSettings, _>(|state, _| {
             state.problems.insert(0, file_problem(&folder, &err))
         }),
+    }
+}
+
+/// Shows `problem` in the bar that shows settings file problems, until
+/// the settings are next read.
+pub fn report(problem: Problem, cx: &mut App) {
+    if cx.has_global::<AppSettings>() {
+        cx.update_global::<AppSettings, _>(|state, _| state.problems.insert(0, problem));
     }
 }
 
@@ -249,6 +263,8 @@ fn reload(cx: &mut App) {
     let state = load(path, cx);
     apply_appearance(&state.settings, cx);
     cx.set_global(state);
+    // The words added for one document may have changed.
+    crate::spelling::known_changed(cx);
 }
 
 /// Makes the window chrome, dialogs and theme follow the appearance
@@ -279,6 +295,45 @@ pub fn dictionaries_folder_in(folder: &Path) -> PathBuf {
 /// The folder of the user's spelling dictionaries.
 pub fn dictionaries_folder(cx: &App) -> PathBuf {
     dictionaries_folder_in(config_folder(cx))
+}
+
+/// Whether the host has Kertas's settings, which [`init`] reads.
+pub fn is_loaded(cx: &App) -> bool {
+    cx.has_global::<AppSettings>()
+}
+
+/// The words added to the dictionary for the document at `path` only
+/// (#142).
+pub fn document_words<'a>(path: &Path, cx: &'a App) -> &'a [String] {
+    cx.try_global::<AppSettings>()
+        .and_then(|state| state.settings.document_words.get(&*path.to_string_lossy()))
+        .map_or(&[], Vec::as_slice)
+}
+
+/// Adds `word` to the dictionary for the document at `path` only, in the
+/// settings file, if the host has Kertas's settings.
+pub fn add_document_word(path: &Path, word: &str, cx: &mut App) -> Result<(), Problem> {
+    if !is_loaded(cx) {
+        return Ok(());
+    }
+    let path = path.to_string_lossy();
+    edit(|text| settings::add_document_word(text, &path, word), cx)
+}
+
+/// The user's word list, the words they added to the dictionary (#142),
+/// or `None` if the host doesn't have Kertas's settings.
+pub fn word_list(cx: &App) -> Option<PathBuf> {
+    let folder = &cx.try_global::<ConfigFolder>()?.0;
+    Some(dictionaries_folder_in(folder).join(dictionaries::WORD_LIST))
+}
+
+/// Adds `word` to the user's word list, if the host has Kertas's
+/// settings.
+pub fn add_to_word_list(word: &str, cx: &App) -> Result<(), Problem> {
+    let Some(path) = word_list(cx) else {
+        return Ok(());
+    };
+    dictionaries::add_to_word_list(&path, word).map_err(|err| file_problem(&path, &err))
 }
 
 fn config_folder(cx: &App) -> &Path {

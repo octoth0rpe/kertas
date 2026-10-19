@@ -7,6 +7,10 @@
 //! tag, ignoring case. A tag with a region, such as `fr-CA`, falls back to
 //! a dictionary for the language alone, `fr`. A user's dictionary for a
 //! language Kertas comes with replaces Kertas's.
+//!
+//! The words the user adds to the dictionary (#142) are in the same
+//! folder, one to a line, in [`WORD_LIST`], and are known in every
+//! language.
 
 use std::path::{Path, PathBuf};
 
@@ -32,6 +36,9 @@ enum Source {
         dic: PathBuf,
     },
 }
+
+/// The file of the words the user added, in the dictionaries folder.
+pub const WORD_LIST: &str = "words.txt";
 
 /// The language Kertas checks unless told otherwise.
 pub const DEFAULT_LANGUAGE: &str = "en-US";
@@ -129,6 +136,42 @@ pub fn is_language_tag(tag: &str) -> bool {
         })
 }
 
+/// The words in the word list at `path`, one to a line. A missing file
+/// has none.
+pub fn read_word_list(path: &Path) -> Vec<String> {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .map(str::trim)
+        .filter(|word| !word.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Adds `word` to the end of the word list at `path`, creating it and its
+/// folder if needed, unless it's already there.
+pub fn add_to_word_list(path: &Path, word: &str) -> std::io::Result<()> {
+    use std::io::Write;
+
+    if read_word_list(path).iter().any(|known| known == word) {
+        return Ok(());
+    }
+    if let Some(folder) = path.parent() {
+        std::fs::create_dir_all(folder)?;
+    }
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    let newline = if text.is_empty() || text.ends_with('\n') {
+        ""
+    } else {
+        "\n"
+    };
+    writeln!(file, "{newline}{word}")
+}
+
 impl Dictionary {
     /// Reads the dictionary, ready to check words. Slow-ish (about 5 ms
     /// for English, ten times that in a debug build), so done once, off
@@ -150,6 +193,14 @@ impl Dictionary {
     }
 }
 
+/// `word` with its first letter in capitals.
+fn capitalize(word: &str) -> String {
+    let mut chars = word.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
+}
+
 /// A loaded dictionary.
 pub struct Speller(spellbook::Dictionary);
 
@@ -164,10 +215,26 @@ impl Speller {
                     .all(|part| !part.is_empty() && self.0.check(part)))
     }
 
-    /// Words `word` may have been meant as, best first.
+    /// Words `word` may have been meant as, best first. A capitalized
+    /// word gets the suggestions for it in lowercase first, capitalized,
+    /// as they're better: `Teh` gets `The` before `Eh`.
     pub fn suggest(&self, word: &str) -> Vec<String> {
         let mut suggestions = Vec::new();
-        self.0.suggest(word, &mut suggestions);
+        let mut chars = word.chars();
+        let capitalized = chars.next().is_some_and(char::is_uppercase)
+            && chars.clone().any(char::is_lowercase)
+            && !chars.any(char::is_uppercase);
+        if capitalized {
+            self.0.suggest(&word.to_lowercase(), &mut suggestions);
+            suggestions = suggestions.iter().map(|word| capitalize(word)).collect();
+        }
+        let mut more = Vec::new();
+        self.0.suggest(word, &mut more);
+        for suggestion in more {
+            if !suggestions.contains(&suggestion) {
+                suggestions.push(suggestion);
+            }
+        }
         suggestions
     }
 
@@ -205,7 +272,10 @@ mod tests {
         assert!(!us.check("cat-flep"));
         let gb = find(&bundled(), "en-GB").unwrap().load().unwrap();
         assert!(gb.check("colour"));
-        assert!(us.suggest("teh").contains(&"the".to_owned()));
+        assert_eq!(us.suggest("teh").first().map(String::as_str), Some("the"));
+        assert_eq!(us.suggest("Teh").first().map(String::as_str), Some("The"));
+        assert_eq!(us.suggest("Wrod").first().map(String::as_str), Some("Word"));
+        assert_eq!(us.suggest("lnik"), ["link"]);
         let mut us = us;
         us.add("Mikey");
         assert!(us.check("Mikey"));
@@ -238,6 +308,19 @@ mod tests {
         let french = find(&all, "fr-CA").unwrap().load().unwrap();
         assert!(french.check("bonjour"));
         assert!(read_folder(&folder.join("missing")).is_empty());
+        std::fs::remove_dir_all(&folder).ok();
+    }
+
+    #[test]
+    fn the_word_list() {
+        let folder = std::env::temp_dir().join(format!("kertas-words-{}", std::process::id()));
+        let path = folder.join("dictionaries").join(WORD_LIST);
+        assert!(read_word_list(&path).is_empty());
+        add_to_word_list(&path, "Mikey").unwrap();
+        add_to_word_list(&path, "Mikey").unwrap();
+        std::fs::write(&path, "Mikey\n\n  Baskerville  ").unwrap();
+        add_to_word_list(&path, "Fulham").unwrap();
+        assert_eq!(read_word_list(&path), ["Mikey", "Baskerville", "Fulham"]);
         std::fs::remove_dir_all(&folder).ok();
     }
 

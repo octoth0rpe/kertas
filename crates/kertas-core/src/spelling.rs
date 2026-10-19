@@ -39,6 +39,18 @@ pub fn words(model: &Model) -> Vec<Word> {
     words
 }
 
+/// The word to check that holds `offset` in `model`'s source, if there's
+/// one.
+pub fn word_at(model: &Model, offset: usize) -> Option<Word> {
+    let item = model
+        .items
+        .iter()
+        .find(|item| item.block.contains(&offset))?;
+    block_words(&item.rendered, item.block.start)
+        .into_iter()
+        .find(|word| word.range.contains(&offset))
+}
+
 /// The words to check in `block`, which starts at `block_start` in the
 /// source, in order.
 pub fn block_words(block: &RenderedBlock, block_start: usize) -> Vec<Word> {
@@ -241,6 +253,17 @@ mod tests {
                 ("bo**ld", "bold".into()),
             ]
         );
+    }
+
+    #[test]
+    fn the_word_at_a_place() {
+        let source = "# Title\n\nA *grey* day.\n";
+        let model = Model::new(source);
+        let at = |offset| word_at(&model, offset).map(|word| word.word);
+        assert_eq!(at(source.find("rey").unwrap()), Some("grey".into()));
+        assert_eq!(at(source.find("day").unwrap()), Some("day".into()));
+        assert_eq!(at(source.find('*').unwrap()), None);
+        assert_eq!(at(0), None);
     }
 
     #[test]

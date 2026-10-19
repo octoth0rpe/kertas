@@ -27,7 +27,7 @@ See **Help → Keyboard Shortcuts** for every shortcut.
 
 ## Spelling
 
-Misspelled words get a wavy underline a moment after you stop typing. Only prose is checked: code, web addresses, HTML and front matter aren't, and nor are words in capitals or with digits in them, which are usually names of things. **View → Check Spelling** turns it off and on. The language is **Spelling** in **Kertas → Settings…**: English (US) unless you choose another (see Settings).
+Misspelled words get a wavy underline a moment after you stop typing. Only prose is checked: code, web addresses, HTML and front matter aren't, and nor are words in capitals or with digits in them, which are usually names of things. **View → Check Spelling** turns it off and on. Right-click a misspelled word, or Control-click it, for suggestions to replace it with, **Ignore**, which stops underlining it until Kertas quits, **Add for This Document**, which makes it known in this document only, and **Add to Dictionary**, which makes it known in every document. The language is **Spelling** in **Kertas → Settings…**: English (US) unless you choose another (see Settings).
 
 ## Finding and replacing
 
@@ -90,7 +90,7 @@ check_spelling = false # don't underline misspelled words (View → Check Spelli
 
 If the file has a mistake, Kertas uses the default for that setting and shows what's wrong at the bottom of the window.
 
-Kertas comes with English (US) and English (UK) spelling dictionaries. For another language, put a Hunspell dictionary's two files in the `dictionaries` folder next to `config.toml` (**Open Dictionaries Folder** in Settings opens it), named after the language, such as `fr.aff` and `fr.dic`, and choose it under **Spelling**. A language with a region, such as `fr-CA`, uses `fr` if there's no `fr-CA`. If there's no dictionary for the language, spelling isn't checked, and Kertas says so at the bottom of the window.
+Kertas comes with English (US) and English (UK) spelling dictionaries. For another language, put a Hunspell dictionary's two files in the `dictionaries` folder next to `config.toml` (**Open Dictionaries Folder** in Settings opens it), named after the language, such as `fr.aff` and `fr.dic`, and choose it under **Spelling**. A language with a region, such as `fr-CA`, uses `fr` if there's no `fr-CA`. If there's no dictionary for the language, spelling isn't checked, and Kertas says so at the bottom of the window. The words you add to the dictionary are in `words.txt` in the same folder, one to a line, and are known in every language; you can edit it to remove one. The words added for one document are in `config.toml`, under `[document_words]` and the document's path, so they're lost if you rename or move it.
 
 **Tab character width** only changes how tab characters in code look. It doesn't change what the Tab key inserts or how lists are indented. **List indent** only changes how far nested list items are drawn in; the Markdown keeps whatever indentation it has.
 

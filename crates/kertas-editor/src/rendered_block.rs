@@ -180,12 +180,38 @@ impl ClickTarget {
             .cloned()
     }
 
-    /// Tells the host `mark` was right-clicked or Control-clicked at
-    /// `position`.
-    pub fn mark_menu(&self, mark: &Mark, position: gpui::Point<Pixels>, cx: &mut App) {
-        self.view
-            .update(cx, |view, cx| view.mark_menu(mark, position, cx))
-            .ok();
+    /// Opens the menu for what's at `offset` in the block's source, which
+    /// was right-clicked or Control-clicked at `position`: the host's, for
+    /// a mark it set, or the spelling menu, for a misspelled word. Returns
+    /// whether there was a menu to open.
+    pub fn menu(
+        &self,
+        offset: usize,
+        position: gpui::Point<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        let offset = self.block_start + offset;
+        let at = |marks: &[Mark]| {
+            marks
+                .iter()
+                .find(|mark| mark.range.contains(&offset))
+                .cloned()
+        };
+        if let Some(mark) = at(&self.marks) {
+            self.view
+                .update(cx, |view, cx| view.mark_menu(&mark, position, cx))
+                .ok();
+        } else if let Some(mark) = at(&self.misspelled) {
+            self.view
+                .update(cx, |view, cx| {
+                    view.spelling_menu(&mark, position, window, cx)
+                })
+                .ok();
+        } else {
+            return false;
+        }
+        true
     }
 
     /// Tells the view the pointer moved onto `target`, whose popover would
@@ -895,9 +921,8 @@ fn clickable_run(text: &InlineText, style: &TextStyle, accessible: bool) -> AnyE
             let index = layout.index_for_position(event.position);
             if event.modifiers.control
                 && let Ok(index) = index
-                && let Some(mark) = click.mark_at(inline.source_offset(index))
+                && click.menu(inline.source_offset(index), event.position, window, cx)
             {
-                click.mark_menu(&mark, event.position, cx);
                 cx.stop_propagation();
                 return;
             }
@@ -928,11 +953,10 @@ fn clickable_run(text: &InlineText, style: &TextStyle, accessible: bool) -> AnyE
                 leave.hover(None, cx);
             }
         })
-        .on_mouse_down(MouseButton::Right, move |event, _, cx| {
+        .on_mouse_down(MouseButton::Right, move |event, window, cx| {
             if let Ok(index) = menu_layout.index_for_position(event.position)
-                && let Some(mark) = menu.mark_at(menu_inline.source_offset(index))
+                && menu.menu(menu_inline.source_offset(index), event.position, window, cx)
             {
-                menu.mark_menu(&mark, event.position, cx);
                 cx.stop_propagation();
             }
         })

@@ -1,13 +1,25 @@
 //! Underlining misspelled words (#141), checked in the background once
-//! typing pauses, in the language the configuration names.
+//! typing pauses, in the language the configuration names, and their menu
+//! (#142): suggestions, Ignore and Add to Dictionary.
 
 use std::rc::Rc;
 
-use gpui::{Context, Hsla};
+use gpui::{AppContext, Context, Entity, Hsla, Pixels, Point, Subscription, Window};
 use kertas_core::rendered::AlertKind;
+use kertas_core::spelling::{self, Word};
 
 use super::DocumentView;
+use crate::context_menu::{ContextMenu, Dismissed};
 use crate::marks::{self, Mark, MarkStyle};
+
+/// The menu of a misspelled word, while it's open.
+pub(super) struct SpellingMenu {
+    pub(super) menu: Entity<ContextMenu>,
+    _dismissed: Subscription,
+}
+
+/// How many suggestions the menu offers at most.
+const SUGGESTIONS: usize = 6;
 
 /// The misspelled words, as marks of their own, separate from the
 /// host's, drawn with a wavy underline in the theme's caution color.
@@ -50,13 +62,21 @@ impl DocumentView {
         };
         let syntax = self.config.syntax();
         let text = model.text.to_string();
+        let mut known = (*crate::spelling::ignored(cx)).clone();
+        if let Some(path) = self.document_path().map(std::path::Path::to_owned) {
+            known.extend(
+                crate::app_settings::document_words(&path, cx)
+                    .iter()
+                    .cloned(),
+            );
+        }
         cx.spawn(async move |this, cx| {
             let Some(checker) = loading.await else {
                 return;
             };
             let found = cx
                 .background_executor()
-                .spawn(async move { checker.misspelled(&text, syntax) })
+                .spawn(async move { checker.misspelled(&text, syntax, &known) })
                 .await;
             this.update(cx, |view, cx| {
                 if view.misspelled.epoch != epoch {
@@ -80,6 +100,121 @@ impl DocumentView {
             .ok();
         })
         .detach();
+    }
+
+    /// Opens the menu of the misspelled word `mark` underlines, which was
+    /// right-clicked or Control-clicked at `position`, once its
+    /// suggestions are found.
+    pub(crate) fn spelling_menu(
+        &mut self,
+        mark: &Mark,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(open) = &self.open else {
+            return;
+        };
+        let model = open.editor.model().clone();
+        let Some(word) = spelling::word_at(&model, mark.range.start) else {
+            return;
+        };
+        let Some(loading) = crate::spelling::checker(&self.config.spelling_language, cx) else {
+            return;
+        };
+        cx.spawn_in(window, async move |this, cx| {
+            let Some(checker) = loading.await else {
+                return;
+            };
+            let lookup = word.word.clone();
+            let suggestions = cx
+                .background_executor()
+                .spawn(async move { checker.suggest(&lookup) })
+                .await;
+            this.update_in(cx, |view, window, cx| {
+                // Not if the text changed while the suggestions were found.
+                if view
+                    .open
+                    .as_ref()
+                    .is_some_and(|open| Rc::ptr_eq(open.editor.model(), &model))
+                {
+                    view.show_spelling_menu(&model.text, word, suggestions, position, window, cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn show_spelling_menu(
+        &mut self,
+        text: &str,
+        word: Word,
+        suggestions: Vec<String>,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // A suggestion replaces the word but not its possessive ending, or
+        // the whole of a word with Markdown inside it.
+        let source = &text[word.range.clone()];
+        let replaced = if source.starts_with(&word.word) {
+            word.range.start..word.range.start + word.word.len()
+        } else {
+            word.range.clone()
+        };
+        let view = cx.weak_entity();
+        let theme = self.theme();
+        // Words can be added for a document that has a file, in Kertas's
+        // settings.
+        let document = self
+            .document_path()
+            .map(std::path::Path::to_owned)
+            .filter(|_| crate::app_settings::is_loaded(cx));
+        let menu = cx.new(|cx| {
+            let mut menu = ContextMenu::new(
+                format!("Spelling of {}", word.word),
+                position,
+                theme,
+                window,
+                cx,
+            );
+            for suggestion in suggestions.into_iter().take(SUGGESTIONS) {
+                let (view, replaced) = (view.clone(), replaced.clone());
+                menu = menu.item(suggestion.clone(), move |_, cx| {
+                    view.update(cx, |view, cx| {
+                        view.replace_ranges(vec![(replaced.clone(), suggestion.clone())], cx)
+                    })
+                    .ok();
+                });
+            }
+            let ignored = word.word.clone();
+            menu = menu
+                .separator()
+                .item("Ignore", move |_, cx| crate::spelling::ignore(&ignored, cx));
+            if let Some(path) = document {
+                let added = word.word.clone();
+                menu = menu.item("Add for This Document", move |_, cx| {
+                    if let Err(problem) = crate::app_settings::add_document_word(&path, &added, cx)
+                    {
+                        crate::app_settings::report(problem, cx);
+                    }
+                });
+            }
+            let added = word.word;
+            menu.item("Add to Dictionary", move |_, cx| {
+                crate::spelling::add_to_dictionary(&added, cx)
+            })
+        });
+        let dismissed = cx.subscribe(&menu, |view, _, _: &Dismissed, cx| {
+            view.spelling_menu = None;
+            cx.notify();
+        });
+        self.spelling_menu = Some(SpellingMenu {
+            menu,
+            _dismissed: dismissed,
+        });
+        cx.notify();
     }
 
     /// The color misspelled words are underlined in.
@@ -124,6 +259,14 @@ impl DocumentView {
                 .collect();
             self.misspelled.marks = Rc::new(recolored);
         }
+    }
+
+    /// The items of the spelling menu, if it's open, for the smoke test.
+    #[cfg(debug_assertions)]
+    #[doc(hidden)]
+    pub fn spelling_menu_items(&self, cx: &gpui::App) -> Option<Vec<String>> {
+        let menu = self.spelling_menu.as_ref()?;
+        Some(menu.menu.read(cx).labels())
     }
 
     /// The misspelled words' ranges in the text as it is now, for the
