@@ -13,6 +13,7 @@ mod disk;
 mod fade;
 mod files;
 mod heights;
+mod hover;
 mod input;
 mod line_scroll;
 mod marking;
@@ -20,6 +21,7 @@ mod render;
 mod scrollbar;
 
 pub use files::HeadingTarget;
+pub use hover::{HOVER_DELAY, HoverPopover, HoverTarget};
 pub use render::bar_button;
 
 use std::cell::RefCell;
@@ -269,6 +271,13 @@ pub struct DocumentView {
     /// The text the marks were last moved to, while there are any. When
     /// the document's text is another, they're moved to it.
     marks_model: Option<Rc<kertas_core::model::Model>>,
+    /// What the host shows when the pointer rests on a link or a mark
+    /// (#126).
+    hover_popover: Option<HoverPopover>,
+    /// The link or mark the pointer is on, and its popover.
+    hover: Option<hover::Hover>,
+    /// Bumped to stop the popover's timers.
+    hover_epoch: usize,
     /// The checkbox the mouse button went down on, by where its `[ ]`
     /// starts, so it toggles when the button goes up on it.
     pressed_task: Option<usize>,
@@ -331,6 +340,9 @@ impl DocumentView {
             link_check: None,
             marks: Rc::default(),
             marks_model: None,
+            hover_popover: None,
+            hover: None,
+            hover_epoch: 0,
             pressed_task: None,
             blink_epoch: 0,
             confirming: false,
@@ -384,6 +396,7 @@ impl DocumentView {
         // Marks were for the document this one replaces.
         self.marks = Rc::default();
         self.marks_model = None;
+        self.close_hover(cx);
         // The footnotes follow the items (#90).
         let items = editor.model().items.len() + editor.model().notes.len();
         let list_state = ListState::new(items, ListAlignment::Top, px(1000.));

@@ -28,6 +28,7 @@ impl DocumentView {
         cx: &mut Context<Self>,
     ) {
         self.focus_handle.focus(window, cx);
+        self.close_hover(cx);
         if let Some(open) = &mut self.open {
             open.goal_x = None;
             open.editor.unmark();
