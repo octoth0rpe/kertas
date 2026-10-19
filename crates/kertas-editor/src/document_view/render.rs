@@ -212,6 +212,7 @@ impl DocumentView {
         let document: Option<Rc<Path>> = open.editor.document().path().map(Rc::from);
         let loading_images = self.loading_images.clone();
         let web_images = self.web_images == WebImages::Load;
+        let link_check = self.link_check.clone();
         // What this frame scrolls to (see `ScrollRequest`).
         let viewport_height = open.list_state.viewport_bounds().size.height;
         let reference = match request {
@@ -235,6 +236,7 @@ impl DocumentView {
             loading_images: loading_images.clone(),
             web_images,
             reference,
+            link_check: link_check.clone(),
         };
         let note_column = note_marker_column(look.list_indent, &model.notes);
         let list = list(open.list_state.clone(), move |index, _, _| {

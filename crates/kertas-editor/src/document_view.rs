@@ -248,6 +248,8 @@ pub struct DocumentView {
     dragging: bool,
     /// Whether clicked links go to the host rather than being followed.
     links_to_host: bool,
+    /// The host's check of which links lead anywhere.
+    link_check: Option<crate::rendered_block::LinkCheck>,
     /// The checkbox the mouse button went down on, by where its `[ ]`
     /// starts, so it toggles when the button goes up on it.
     pressed_task: Option<usize>,
@@ -304,6 +306,7 @@ impl DocumentView {
             line_scroll: None,
             dragging: false,
             links_to_host: false,
+            link_check: None,
             pressed_task: None,
             blink_epoch: 0,
             confirming: false,

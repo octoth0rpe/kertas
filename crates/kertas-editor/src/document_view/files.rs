@@ -282,6 +282,20 @@ impl DocumentView {
         self.links_to_host = on;
     }
 
+    /// Draws the links `check` says lead nowhere as unresolved, in the
+    /// muted color, such as wiki links to pages that don't exist. `None`
+    /// draws every link as a link, as Kertas does. Call it again, with the
+    /// same check if need be, when what the links lead to has changed, to
+    /// draw them again.
+    pub fn set_link_check(
+        &mut self,
+        check: Option<crate::rendered_block::LinkCheck>,
+        cx: &mut Context<Self>,
+    ) {
+        self.link_check = check;
+        cx.notify();
+    }
+
     /// A link to `destination` (a wiki link's target if `wiki`) was
     /// clicked: it's followed, or passed on to
     /// the host (see [`set_links_to_host`](Self::set_links_to_host)).
