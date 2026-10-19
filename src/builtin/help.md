@@ -25,6 +25,14 @@ Clicking a task's checkbox (☐) ticks or unticks it. Click the task's text to e
 
 See **Help → Keyboard Shortcuts** for every shortcut.
 
+## Finding and replacing
+
+**Edit → Find (⌘F)** opens the find bar. As you type, every match is highlighted, and ⌘G and ⇧⌘G (or ↩ and ⇧↩) go from one to the next, selecting it. Find looks at the text as you see it, so "bold" finds `**bold**`. **Match Case** and **Whole Words** narrow the search. Esc closes the bar and leaves the match selected; ⌘E looks for the selected text.
+
+**Edit → Find and Replace (⌥⌘F)** adds a replacement. **Replace** replaces the selected match and goes to the next; **Replace All** replaces every match, and one Undo takes it all back. Only the matched text changes, so the formatting around it stays.
+
+With **Regex** on, the query is a regular expression, in the syntax of Rust's [regex](https://docs.rs/regex/latest/regex/#syntax) library, and the replacement can use its groups, as `$1` or `${name}`.
+
 ## Saving
 
 **⌘S** saves, and **⇧⌘S** (Save As) saves under another name or in another folder. To save automatically, choose **After a pause** for **Autosave** in **Kertas → Settings…**. Documents then save a few seconds after you stop typing, when you switch to another tab, window or app, and when you close them or quit. A new document is only saved automatically once you've saved it the first time.

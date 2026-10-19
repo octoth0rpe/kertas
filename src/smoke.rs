@@ -14,7 +14,7 @@
 //! - `tabs`, `windows`, `settings`, `settings-window`, `help`, `reveal`, `clicks`,
 //!   `anchors`, `footnotes`, `images`, `caret`, `reading`, `scrollbar`,
 //!   `scrollbar-drag`, `a11y`, `print`, `disk`, `autosave`, `quit`,
-//!   `web-images`, `marks`, `hover`, `find`, `replace`: see
+//!   `web-images`, `marks`, `hover`, `find`, `replace`, `regex`: see
 //!   each function.
 
 use std::cell::{Cell, RefCell};
@@ -68,6 +68,7 @@ pub fn start_if_requested(window: DocumentWindowHandle, cx: &mut App) {
         "hover" => smoke_hover(window, cx),
         "find" => smoke_find(window, cx),
         "replace" => smoke_replace(window, cx),
+        "regex" => smoke_regex(window, cx),
         "rename" => smoke_rename(window, cx),
         "bench" => smoke_bench(window, cx),
         _ => smoke_steps(window, &mode, cx),
@@ -3552,6 +3553,60 @@ fn smoke_replace(window: DocumentWindowHandle, cx: &mut App) {
         press_key(handle, cx, "cmd-z").await;
         let (text, _, _) = read(cx);
         checks.check("and then the single Replace", text == original);
+        checks.finish(cx);
+    })
+    .detach();
+}
+
+/// Regular expressions in find (#124): an invalid pattern shows its error
+/// and finds nothing, and Replace All fills in groups.
+fn smoke_regex(window: DocumentWindowHandle, cx: &mut App) {
+    use kertas_editor::actions::ReplaceAll;
+
+    cx.spawn(async move |cx| {
+        let mut checks = Checks::default();
+        pause(cx, 10).await;
+        let handle = gpui::AnyWindowHandle::from(window);
+        let read = |cx: &mut AsyncApp| {
+            window
+                .read_with(cx, |view, _| {
+                    (view.text(), view.find_status(), view.find_error())
+                })
+                .unwrap_or_default()
+        };
+        let (original, _, _) = read(cx);
+        press_key(handle, cx, "alt-cmd-f").await;
+        window
+            .update(cx, |view, _, cx| {
+                view.set_find_regex(true, cx);
+                view.type_find_query("(b)(old", cx);
+            })
+            .ok();
+        pause(cx, 3).await;
+        let (_, status, error) = read(cx);
+        checks.check(
+            &format!("an invalid pattern shows why, and finds nothing ({status:?}, {error:?})"),
+            status == (None, 0) && error.as_deref() == Some("unclosed group"),
+        );
+        window
+            .update(cx, |view, _, cx| {
+                view.type_find_query("(b)(old)", cx);
+                view.type_replacement("$2$1", cx);
+            })
+            .ok();
+        pause(cx, 3).await;
+        let (_, status, error) = read(cx);
+        checks.check(
+            &format!("a valid one finds the text as shown ({status:?}, {error:?})"),
+            status.1 == 3 && error.is_none(),
+        );
+        dispatch(window, cx, Box::new(ReplaceAll));
+        pause(cx, 3).await;
+        let (text, _, _) = read(cx);
+        checks.check(
+            "Replace All fills in the groups",
+            text == original.replace("bold", "oldb"),
+        );
         checks.finish(cx);
     })
     .detach();
