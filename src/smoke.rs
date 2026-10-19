@@ -3151,6 +3151,36 @@ fn smoke_edited(window: DocumentWindowHandle, cx: &mut App) {
             before == Some(Vec::new()) && after == Some(vec![("Ada".to_owned(), true)]),
         );
 
+        // A host's check of which links lead anywhere is used as the
+        // document is drawn.
+        let checked = Rc::new(RefCell::new(Vec::new()));
+        window
+            .update(cx, |view, _, cx| {
+                let checked = checked.clone();
+                view.set_link_check(
+                    Some(Rc::new(move |link: &kertas_core::inline::Link| {
+                        checked.borrow_mut().push(link.destination.clone());
+                        false
+                    })),
+                    cx,
+                );
+            })
+            .ok();
+        pause(cx, 3).await;
+        checks.check(
+            &format!(
+                "the link check is asked about links drawn ({:?})",
+                checked.borrow().first()
+            ),
+            checked
+                .borrow()
+                .iter()
+                .any(|destination| destination == "Ada"),
+        );
+        window
+            .update(cx, |view, _, cx| view.set_link_check(None, cx))
+            .ok();
+
         // A host forgetting unsaved changes, as after deleting the file.
         window
             .update(cx, |view, window, cx| {

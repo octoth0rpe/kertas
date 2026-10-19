@@ -59,7 +59,7 @@ pub use document_view::{
 };
 pub use editor_config::EditorConfig;
 pub use problems_bar::problems_bar;
-pub use rendered_block::natural_size;
+pub use rendered_block::{LinkCheck, natural_size};
 pub use text_style::TextSettings;
 pub use theme::Theme;
 

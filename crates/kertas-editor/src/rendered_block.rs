@@ -80,7 +80,14 @@ pub struct ClickTarget {
     pub web_images: bool,
     /// The footnote reference the view is scrolling to, if any.
     pub reference: Option<ReferenceTarget>,
+    /// The host's check of whether a link leads anywhere, if it gave one
+    /// (see [`DocumentView::set_link_check`]).
+    pub link_check: Option<LinkCheck>,
 }
+
+/// A host's check of whether a link leads anywhere: false for one it can't
+/// follow, which is drawn as unresolved.
+pub type LinkCheck = Rc<dyn Fn(&kertas_core::inline::Link) -> bool>;
 
 /// Images still loading, and where their blocks start.
 pub type LoadingImages = Rc<std::cell::RefCell<Vec<(usize, Resource)>>>;
@@ -928,14 +935,25 @@ fn styled_text(text: &InlineText, style: &TextStyle) -> StyledText {
         .segments
         .iter()
         .map(|segment| {
-            inline_run(
+            let mut run = inline_run(
                 segment.style,
                 segment.display.len(),
                 &style.font,
                 style.color,
                 style.theme,
                 &style.code_font,
-            )
+            );
+            // A link the host can't resolve is drawn in the muted color.
+            let unresolved = segment.style.link
+                && style.click.link_check.as_ref().is_some_and(|check| {
+                    text.link_at(segment.display.start)
+                        .is_some_and(|link| !check(link))
+                });
+            if unresolved {
+                run.color = style.theme.muted_text;
+                run.underline = Some(crate::text_style::underline(style.theme.muted_text));
+            }
+            run
         })
         .collect();
     StyledText::new(SharedString::from(text.text.clone())).with_runs(runs)
