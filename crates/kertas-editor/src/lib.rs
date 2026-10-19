@@ -38,6 +38,7 @@ mod document_view;
 mod editor_config;
 pub mod file_watch;
 pub mod help;
+mod marks;
 mod problems_bar;
 mod rendered_block;
 mod revealed_block;
@@ -58,6 +59,7 @@ pub use document_view::{
     key_bindings,
 };
 pub use editor_config::EditorConfig;
+pub use marks::{Mark, MarkStyle};
 pub use problems_bar::problems_bar;
 pub use rendered_block::{LinkCheck, natural_size};
 pub use text_style::TextSettings;

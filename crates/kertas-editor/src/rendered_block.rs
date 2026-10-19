@@ -2,14 +2,15 @@
 //! source offsets.
 
 use std::cell::Cell;
+use std::ops::Range;
 use std::path::Path;
 use std::rc::Rc;
 
 use gpui::{
     AccessibleAction, AnyElement, App, Bounds, ElementId, Font, FontWeight, Hsla, ImageSource,
     ImgResourceLoader, InteractiveText, MouseButton, Pixels, Rems, Resource, Role, SharedString,
-    StyledText, TextLayout, Toggled, WeakEntity, Window, canvas, div, img, point, prelude::*, px,
-    rems, size, svg,
+    StyledText, TextLayout, TextRun, Toggled, WeakEntity, Window, canvas, div, img, point,
+    prelude::*, px, rems, size, svg,
 };
 use kertas_core::inline::{Image, InlineText, Link};
 use kertas_core::links::ImageLocation;
@@ -21,7 +22,8 @@ use kertas_core::{html_tags, links};
 
 use crate::assets::alert_icon;
 use crate::document_view::DocumentView;
-use crate::text_style::{Look, code_text, heading_text, inline_run};
+use crate::marks::{Mark, MarkStyle};
+use crate::text_style::{Look, code_text, heading_text, inline_run, wavy_underline};
 use crate::theme::Theme;
 
 /// Space between blocks inside lists and blockquotes.
@@ -83,6 +85,9 @@ pub struct ClickTarget {
     /// The host's check of whether a link leads anywhere, if it gave one
     /// (see [`DocumentView::set_link_check`]).
     pub link_check: Option<LinkCheck>,
+    /// The ranges the host marked, in order (see
+    /// [`DocumentView::set_marks`]).
+    pub marks: Rc<Vec<Mark>>,
 }
 
 /// A host's check of whether a link leads anywhere: false for one it can't
@@ -152,6 +157,23 @@ impl ClickTarget {
             .update(cx, |view, cx| {
                 view.click_link(&link.destination, link.wiki, window, cx)
             })
+            .ok();
+    }
+
+    /// The mark holding `offset` in the block's source, if there is one.
+    pub fn mark_at(&self, offset: usize) -> Option<Mark> {
+        let offset = self.block_start + offset;
+        self.marks
+            .iter()
+            .find(|mark| mark.range.contains(&offset))
+            .cloned()
+    }
+
+    /// Tells the host `mark` was right-clicked or Control-clicked at
+    /// `position`.
+    pub fn mark_menu(&self, mark: &Mark, position: gpui::Point<Pixels>, cx: &mut App) {
+        self.view
+            .update(cx, |view, cx| view.mark_menu(mark, position, cx))
             .ok();
     }
 
@@ -809,6 +831,7 @@ fn clickable_run(text: &InlineText, style: &TextStyle, accessible: bool) -> AnyE
     let inline = text.clone();
     let click = style.click.clone();
     let (drag_layout, drag_inline, drag) = (layout.clone(), inline.clone(), click.clone());
+    let (menu_layout, menu_inline, menu) = (layout.clone(), inline.clone(), click.clone());
     let content = if text.links.is_empty() {
         styled.into_any_element()
     } else {
@@ -837,6 +860,14 @@ fn clickable_run(text: &InlineText, style: &TextStyle, accessible: bool) -> AnyE
         })
         .on_mouse_down(MouseButton::Left, move |event, window, cx| {
             let index = layout.index_for_position(event.position);
+            if event.modifiers.control
+                && let Ok(index) = index
+                && let Some(mark) = click.mark_at(inline.source_offset(index))
+            {
+                click.mark_menu(&mark, event.position, cx);
+                cx.stop_propagation();
+                return;
+            }
             // A plain click on a link leaves the block rendered.
             let on_link = matches!(index, Ok(index) if inline.link_at(index).is_some());
             if !(on_link && !event.modifiers.modified()) {
@@ -854,6 +885,14 @@ fn clickable_run(text: &InlineText, style: &TextStyle, accessible: bool) -> AnyE
             if event.pressed_button == Some(MouseButton::Left) {
                 let (Ok(index) | Err(index)) = drag_layout.index_for_position(event.position);
                 drag.drag(drag_inline.source_offset(index), cx);
+            }
+        })
+        .on_mouse_down(MouseButton::Right, move |event, _, cx| {
+            if let Ok(index) = menu_layout.index_for_position(event.position)
+                && let Some(mark) = menu.mark_at(menu_inline.source_offset(index))
+            {
+                menu.mark_menu(&mark, event.position, cx);
+                cx.stop_propagation();
             }
         })
         .child(content)
@@ -956,7 +995,77 @@ fn styled_text(text: &InlineText, style: &TextStyle) -> StyledText {
             run
         })
         .collect();
-    StyledText::new(SharedString::from(text.text.clone())).with_runs(runs)
+    let underlined = displayed_marks(text, &style.click);
+    StyledText::new(SharedString::from(text.text.clone()))
+        .with_runs(underline_marks(runs, &underlined))
+}
+
+/// The marks drawn with a wavy underline that overlap `range` in the
+/// document, and their colors.
+pub fn wavy_marks(
+    marks: &[Mark],
+    range: Range<usize>,
+) -> impl Iterator<Item = (Range<usize>, Hsla)> + '_ {
+    marks.iter().filter_map(move |mark| match mark.style {
+        MarkStyle::Wavy(color) if mark.range.start < range.end && mark.range.end > range.start => {
+            Some((mark.range.clone(), color))
+        }
+        _ => None,
+    })
+}
+
+/// Where `text`'s marks drawn with a wavy underline are in it, as byte
+/// ranges of its display text, and their colors.
+fn displayed_marks(text: &InlineText, click: &ClickTarget) -> Vec<(Range<usize>, Hsla)> {
+    let (Some(first), Some(last)) = (text.segments.first(), text.segments.last()) else {
+        return Vec::new();
+    };
+    let start = click.block_start;
+    let source = start + first.source.start..start + last.source.end;
+    wavy_marks(&click.marks, source)
+        .filter_map(|(range, color)| {
+            let local = range.start.saturating_sub(start)..range.end - start;
+            Some((text.display_range(local)?, color))
+        })
+        .collect()
+}
+
+/// `runs` split where the `underlined` ranges start and end, with the text
+/// in each given a wavy underline in its color.
+fn underline_marks(runs: Vec<TextRun>, underlined: &[(Range<usize>, Hsla)]) -> Vec<TextRun> {
+    if underlined.is_empty() {
+        return runs;
+    }
+    let mut split = Vec::with_capacity(runs.len());
+    let mut start = 0;
+    for run in runs {
+        let end = start + run.len;
+        let mut cuts: Vec<usize> = underlined
+            .iter()
+            .flat_map(|(range, _)| [range.start, range.end])
+            .filter(|&cut| start < cut && cut < end)
+            .collect();
+        cuts.push(end);
+        cuts.sort_unstable();
+        cuts.dedup();
+        let mut piece_start = start;
+        for cut in cuts {
+            let mut piece = TextRun {
+                len: cut - piece_start,
+                ..run.clone()
+            };
+            let mark = underlined
+                .iter()
+                .find(|(range, _)| range.start <= piece_start && cut <= range.end);
+            if let Some((_, color)) = mark {
+                piece.underline = Some(wavy_underline(*color));
+            }
+            split.push(piece);
+            piece_start = cut;
+        }
+        start = end;
+    }
+    split
 }
 
 #[cfg(test)]
@@ -965,6 +1074,27 @@ mod tests {
 
     fn markers(markers: &[&str]) -> Vec<String> {
         markers.iter().map(|&marker| marker.to_owned()).collect()
+    }
+
+    #[test]
+    fn marks_split_runs_and_underline_them() {
+        let run = |len| TextRun {
+            len,
+            font: gpui::font("Helvetica"),
+            color: gpui::black(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let red = gpui::red();
+        // "Hi Bob, bye" in runs of 5 and 6, with "Bob" marked across them.
+        let runs = underline_marks(vec![run(5), run(6)], &[(3..6, red)]);
+        let pieces: Vec<(usize, bool)> = runs
+            .iter()
+            .map(|run| (run.len, run.underline.is_some_and(|line| line.wavy)))
+            .collect();
+        assert_eq!(pieces, [(3, false), (2, true), (1, true), (5, false)]);
+        assert_eq!(underline_marks(vec![run(4)], &[]).len(), 1);
     }
 
     #[test]

@@ -64,6 +64,7 @@ pub fn start_if_requested(window: DocumentWindowHandle, cx: &mut App) {
         "disk" => smoke_disk(window, cx),
         "autosave" => smoke_autosave(window, cx),
         "edited" => smoke_edited(window, cx),
+        "marks" => smoke_marks(window, cx),
         "rename" => smoke_rename(window, cx),
         "bench" => smoke_bench(window, cx),
         _ => smoke_steps(window, &mode, cx),
@@ -3200,6 +3201,154 @@ fn smoke_edited(window: DocumentWindowHandle, cx: &mut App) {
         checks.check(
             "discard_changes leaves nothing to ask about",
             dirty && ready,
+        );
+        checks.finish(cx);
+    })
+    .detach();
+}
+
+/// `KERTAS_SMOKE=marks`, on `marks.md` (#120): a host's marks move with
+/// the text as it's edited, go when their own text is edited, and a
+/// right-click or a Control-click on one tells the host.
+fn smoke_marks(window: DocumentWindowHandle, cx: &mut App) {
+    use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
+    use kertas_editor::{DocumentEvent, Mark, MarkStyle};
+
+    cx.spawn(async move |cx| {
+        let mut checks = Checks::default();
+        pause(cx, 10).await;
+        let Some(view) = tab_views(window, cx).into_iter().next() else {
+            checks.check("there's a tab", false);
+            return checks.finish(cx);
+        };
+        let mark = |range, id| Mark {
+            range,
+            style: MarkStyle::Hidden,
+            id,
+        };
+        let ranges = |cx: &mut AsyncApp| {
+            window
+                .update(cx, |view, _, _| {
+                    view.marks()
+                        .iter()
+                        .map(|mark| mark.range.clone())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        };
+        // "Ann met Bob.", with both names marked.
+        window
+            .update(cx, |view, _, cx| {
+                let ann = Mark {
+                    style: MarkStyle::Wavy(gpui::red()),
+                    ..mark(0..3, 1)
+                };
+                view.set_marks(vec![mark(8..11, 2), ann], cx)
+            })
+            .ok();
+        pause(cx, 2).await;
+        let marked = ranges(cx);
+        checks.check(
+            &format!("the marks are kept in order ({marked:?})"),
+            marked == [0..3, 8..11],
+        );
+        window
+            .update(cx, |view, window, cx| {
+                view.click(0, false, window, cx);
+                view.replace_text_in_range(None, "Dr ", window, cx);
+            })
+            .ok();
+        pause(cx, 2).await;
+        let marked = ranges(cx);
+        checks.check(
+            &format!("typing before them moves them ({marked:?})"),
+            marked == [3..6, 11..14],
+        );
+        window
+            .update(cx, |view, window, cx| {
+                view.click(12, false, window, cx);
+                view.replace_text_in_range(None, "o", window, cx);
+            })
+            .ok();
+        pause(cx, 2).await;
+        let marked = ranges(cx);
+        checks.check(
+            &format!("editing a mark's text drops it ({marked:?})"),
+            marked == [3..6],
+        );
+        dispatch(window, cx, Box::new(Unreveal));
+        pause(cx, 3).await;
+
+        // A right-click and a Control-click on "Dr", drawn rendered.
+        let menus = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            let menus = menus.clone();
+            cx.subscribe(&view, move |_, event, _| {
+                if let DocumentEvent::MarkMenu { id, range, .. } = event {
+                    menus.borrow_mut().push((*id, range.clone()));
+                }
+            })
+        });
+        window
+            .update(cx, |view, _, cx| view.set_marks(vec![mark(0..2, 7)], cx))
+            .ok();
+        pause(cx, 2).await;
+        let origin = window
+            .update(cx, |view, window, _| view.text_origin(0, window))
+            .ok()
+            .flatten();
+        let Some(origin) = origin else {
+            checks.check("the first block is laid out", false);
+            return checks.finish(cx);
+        };
+        let position = origin + gpui::point(gpui::px(4.), gpui::px(12.));
+        let send = |cx: &mut AsyncApp, event: gpui::PlatformInput| {
+            gpui::AnyWindowHandle::from(window)
+                .update(cx, |_, window, cx| window.dispatch_event(event, cx))
+                .ok();
+        };
+        for (button, modifiers) in [
+            (MouseButton::Right, Modifiers::default()),
+            (MouseButton::Left, Modifiers::control()),
+        ] {
+            send(
+                cx,
+                gpui::PlatformInput::MouseMove(MouseMoveEvent {
+                    position,
+                    pressed_button: None,
+                    modifiers,
+                }),
+            );
+            pause(cx, 2).await;
+            send(
+                cx,
+                gpui::PlatformInput::MouseDown(MouseDownEvent {
+                    button,
+                    position,
+                    modifiers,
+                    click_count: 1,
+                    first_mouse: false,
+                }),
+            );
+            pause(cx, 2).await;
+            send(
+                cx,
+                gpui::PlatformInput::MouseUp(MouseUpEvent {
+                    button,
+                    position,
+                    modifiers,
+                    click_count: 1,
+                }),
+            );
+            pause(cx, 3).await;
+        }
+        let caret = cx.update(|cx| view.read(cx).caret_offset());
+        checks.check(
+            &format!(
+                "both tell the host, leaving it rendered ({:?}, caret {caret:?})",
+                menus.borrow()
+            ),
+            *menus.borrow() == [(7, 0..2), (7, 0..2)] && caret.is_none(),
         );
         checks.finish(cx);
     })

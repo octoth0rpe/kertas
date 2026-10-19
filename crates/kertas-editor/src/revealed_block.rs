@@ -6,9 +6,9 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, Bounds, ElementInputHandler, Entity, FocusHandle, FontWeight, MouseButton, Pixels,
-    Point, SharedString, StyledText, TextLayout, TextRun, canvas, div, fill, point, prelude::*, px,
-    rems, size,
+    AnyElement, Bounds, ElementInputHandler, Entity, FocusHandle, FontWeight, Hsla, MouseButton,
+    Pixels, Point, SharedString, StyledText, TextLayout, TextRun, canvas, div, fill, point,
+    prelude::*, px, rems, size,
 };
 use kertas_core::inline::InlineStyle;
 use kertas_core::model::Gap;
@@ -16,7 +16,7 @@ use kertas_core::reveal::{RevealFont, SpanStyle, StyledSource};
 use kertas_core::tabs::ExpandedTabs;
 
 use crate::document_view::DocumentView;
-use crate::text_style::{Look, code_text, heading_text, inline_run, underline};
+use crate::text_style::{Look, code_text, heading_text, inline_run, underline, wavy_underline};
 use kertas_core::rendered::RenderedBlock;
 
 use crate::rendered_block::{ClickTarget, block_frame, rendered_content, rendered_heading};
@@ -46,6 +46,9 @@ pub struct RevealedBlock<'a> {
     pub caret: Option<usize>,
     /// Text being composed with an input method, in block-relative offsets.
     pub marked: Option<Range<usize>>,
+    /// The host's marks drawn with a wavy underline, in block-relative
+    /// offsets, and their colors.
+    pub underlined: Vec<(Range<usize>, Hsla)>,
     pub first: bool,
 }
 
@@ -327,12 +330,30 @@ fn revealed_content(
 
     let click_text = click.clone();
     let (drag_layout, drag) = (layout.clone(), click.clone());
+    let (menu_layout, menu) = (layout.clone(), click.clone());
     let text_element = div()
         .relative()
         .on_mouse_down(MouseButton::Left, move |event, window, cx| {
-            let (Ok(index) | Err(index)) = layout.index_for_position(event.position);
+            let index = layout.index_for_position(event.position);
+            if event.modifiers.control
+                && let Ok(index) = index
+                && let Some(mark) = click_text.mark_at(index)
+            {
+                click_text.mark_menu(&mark, event.position, cx);
+                cx.stop_propagation();
+                return;
+            }
+            let (Ok(index) | Err(index)) = index;
             click_text.report(index, event.modifiers.shift, window, cx);
             cx.stop_propagation();
+        })
+        .on_mouse_down(MouseButton::Right, move |event, _, cx| {
+            if let Ok(index) = menu_layout.index_for_position(event.position)
+                && let Some(mark) = menu.mark_at(index)
+            {
+                menu.mark_menu(&mark, event.position, cx);
+                cx.stop_propagation();
+            }
         })
         .on_mouse_move(move |event, _, cx| {
             if event.pressed_button == Some(MouseButton::Left) {
@@ -424,12 +445,18 @@ fn text_runs(block: &RevealedBlock, look: &Look, heading: Option<u8>) -> Vec<Tex
 
         // Split the span where the selection and marked text start and end.
         let marked = block.marked.clone().unwrap_or(0..0);
-        let cuts = [
+        let mut cuts = vec![
             block.selection.start,
             block.selection.end,
             marked.start,
             marked.end,
         ];
+        cuts.extend(
+            block
+                .underlined
+                .iter()
+                .flat_map(|(range, _)| [range.start, range.end]),
+        );
         for piece in split_at(span.range.clone(), &cuts) {
             let within = |range: &Range<usize>| {
                 !range.is_empty() && piece.start >= range.start && piece.end <= range.end
@@ -438,6 +465,10 @@ fn text_runs(block: &RevealedBlock, look: &Look, heading: Option<u8>) -> Vec<Tex
                 len: piece.len(),
                 ..run.clone()
             };
+            if let Some((_, color)) = block.underlined.iter().find(|(range, _)| within(range)) {
+                piece_run.underline = Some(wavy_underline(*color));
+            }
+            // Text being composed is underlined as the input method's.
             if within(&marked) {
                 piece_run.underline = Some(underline(run.color));
             }
@@ -520,6 +551,7 @@ mod tests {
                             selection: selection.clone(),
                             caret: None,
                             marked: marked.clone(),
+                            underlined: Vec::new(),
                             first: false,
                         };
                         let covered: usize = text_runs(&block, &look, heading)

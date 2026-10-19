@@ -15,6 +15,7 @@ mod files;
 mod heights;
 mod input;
 mod line_scroll;
+mod marking;
 mod render;
 mod scrollbar;
 
@@ -37,6 +38,7 @@ use kertas_core::reveal::StyledSource;
 use kertas_core::{outline, words};
 
 use crate::editor_config::EditorConfig;
+use crate::marks::Mark;
 use crate::revealed_block::{CaretPlace, RevealedLayout};
 use crate::theme::Theme;
 
@@ -219,6 +221,15 @@ pub enum DocumentEvent {
         path: PathBuf,
         anchor: Option<String>,
     },
+    /// The text the host marked with `id` (see
+    /// [`DocumentView::set_marks`]), now at `range`, was clicked with the
+    /// right button or Control-clicked at `position` in the window. The
+    /// host can show a menu there, such as spelling suggestions.
+    MarkMenu {
+        id: usize,
+        range: std::ops::Range<usize>,
+        position: gpui::Point<Pixels>,
+    },
 }
 
 pub struct DocumentView {
@@ -253,6 +264,11 @@ pub struct DocumentView {
     links_to_host: bool,
     /// The host's check of which links lead anywhere.
     link_check: Option<crate::rendered_block::LinkCheck>,
+    /// The ranges the host marked, in order (#120).
+    marks: Rc<Vec<Mark>>,
+    /// The text the marks were last moved to, while there are any. When
+    /// the document's text is another, they're moved to it.
+    marks_model: Option<Rc<kertas_core::model::Model>>,
     /// The checkbox the mouse button went down on, by where its `[ ]`
     /// starts, so it toggles when the button goes up on it.
     pressed_task: Option<usize>,
@@ -313,6 +329,8 @@ impl DocumentView {
             dragging: false,
             links_to_host: false,
             link_check: None,
+            marks: Rc::default(),
+            marks_model: None,
             pressed_task: None,
             blink_epoch: 0,
             confirming: false,
@@ -363,6 +381,9 @@ impl DocumentView {
         // Named text has no file, and is view-only.
         let editor = Editor::new_with(document, self.text_name.is_some(), self.config.syntax());
         self.web_images = WebImages::Ask;
+        // Marks were for the document this one replaces.
+        self.marks = Rc::default();
+        self.marks_model = None;
         // The footnotes follow the items (#90).
         let items = editor.model().items.len() + editor.model().notes.len();
         let list_state = ListState::new(items, ListAlignment::Top, px(1000.));
@@ -564,6 +585,8 @@ impl DocumentView {
             cx.background_executor().timer(EDIT_PAUSE).await;
             this.update(cx, |view, cx| {
                 if view.edited_epoch == epoch {
+                    // So the host reads them where the text now has them.
+                    view.move_marks();
                     cx.emit(DocumentEvent::Edited);
                 }
             })
