@@ -2872,6 +2872,7 @@ fn smoke_spelling(window: DocumentWindowHandle, cx: &mut App) {
         checks.check("and on again", on);
 
         smoke_spelling_menu(window, cx, &mut checks).await;
+        smoke_spelling_hooks(window, cx, &mut checks).await;
         checks.finish(cx);
     })
     .detach();
@@ -3010,6 +3011,106 @@ async fn smoke_spelling_menu(window: DocumentWindowHandle, cx: &mut AsyncApp, ch
         "and still known once the dictionaries are read again",
         still,
     );
+}
+
+/// What a host can set about spelling (#143), after
+/// [`smoke_spelling_menu`]: its known words, the language, and its own
+/// item in the menu.
+async fn smoke_spelling_hooks(
+    window: DocumentWindowHandle,
+    cx: &mut AsyncApp,
+    checks: &mut Checks,
+) {
+    window
+        .update(cx, |view, _, cx| {
+            view.set_known_words(vec!["lnik".into()], cx)
+        })
+        .ok();
+    let known = misspelled_became(window, cx, &["color"]).await;
+    checks.check(
+        &format!(
+            "a host's words are known: {:?}",
+            misspelled_words(window, cx)
+        ),
+        known,
+    );
+
+    window
+        .update(cx, |view, _, cx| {
+            view.set_spelling_language(Some("en-US".into()), cx)
+        })
+        .ok();
+    let american = misspelled_became(window, cx, &["Colour"]).await;
+    checks.check(
+        &format!(
+            "a host's language replaces the setting: {:?}",
+            misspelled_words(window, cx)
+        ),
+        american,
+    );
+
+    let added = Rc::new(RefCell::new(Vec::new()));
+    let view = window.update(cx, |_, _, cx| cx.entity()).ok();
+    let _subscription = view.map(|view| {
+        let added = added.clone();
+        cx.update(|cx| {
+            cx.subscribe(&view, move |_, event, _| {
+                if let kertas_editor::DocumentEvent::AddWord { word } = event {
+                    added.borrow_mut().push(word.clone());
+                }
+            })
+        })
+    });
+    window
+        .update(cx, |view, _, _| {
+            view.set_add_word_item(Some("Add to Project".into()))
+        })
+        .ok();
+    let origin = window
+        .update(cx, |view, window, _| view.text_origin(2, window))
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    click_with(
+        window,
+        cx,
+        origin + gpui::point(gpui::px(12.), gpui::px(10.)),
+        gpui::MouseButton::Right,
+    )
+    .await;
+    let mut items = Vec::new();
+    wait_for(cx, Duration::from_secs(2), |cx| {
+        items = window
+            .update(cx, |view, _, cx| view.spelling_menu_items(cx))
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        !items.is_empty()
+    })
+    .await;
+    let any = gpui::AnyWindowHandle::from(window);
+    press_key(any, cx, "end").await;
+    press_key(any, cx, "up").await;
+    press_key(any, cx, "enter").await;
+    let sent = wait_for(cx, Duration::from_secs(2), |_| !added.borrow().is_empty()).await;
+    checks.check(
+        &format!(
+            "a host's item replaces Add for This Document, and sends the word: {items:?}, {:?}",
+            added.borrow()
+        ),
+        sent && *added.borrow() == ["Colour"]
+            && items.ends_with(&[
+                "Ignore".to_owned(),
+                "Add to Project".to_owned(),
+                "Add to Dictionary".to_owned(),
+            ]),
+    );
+
+    window
+        .update(cx, |view, _, cx| view.set_spelling_language(None, cx))
+        .ok();
+    let setting = misspelled_became(window, cx, &["color"]).await;
+    checks.check("and without it, the setting's language is back", setting);
 }
 
 /// The words underlined as misspelled in `window`'s document.
