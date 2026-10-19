@@ -7,12 +7,16 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Runs the script from inside a fake Kertas.app, in `cwd`, returning the
 /// arguments it passed to `open` or to Kertas's executable, one per line.
 /// The fake executable prints "Kertas" first, and fails with status 3.
+/// Each call gets its own folder, since the tests run in parallel.
 fn run(args: &[&str], cwd: &str) -> Vec<String> {
-    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("cli-script");
+    static RUNS: AtomicUsize = AtomicUsize::new(0);
+    let run = RUNS.fetch_add(1, Ordering::Relaxed);
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("cli-script-{run}"));
     fs::remove_dir_all(&dir).ok();
     let contents = dir.join("Kertas.app/Contents");
     fs::create_dir_all(contents.join("Resources")).unwrap();
