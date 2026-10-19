@@ -25,6 +25,10 @@ Clicking a task's checkbox (☐) ticks or unticks it. Click the task's text to e
 
 See **Help → Keyboard Shortcuts** for every shortcut.
 
+## Spelling
+
+Misspelled words get a wavy underline a moment after you stop typing. Only prose is checked: code, web addresses, HTML and front matter aren't, and nor are words in capitals or with digits in them, which are usually names of things. **View → Check Spelling** turns it off and on. The language is **Spelling** in **Kertas → Settings…**: English (US) unless you choose another (see Settings).
+
 ## Finding and replacing
 
 **Edit → Find (⌘F)** opens the find bar. As you type, every match is highlighted, and ⌘G and ⇧⌘G (or ↩ and ⇧↩) go from one to the next, selecting it. Find looks at the text as you see it, so "bold" finds `**bold**`. **Match Case** and **Whole Words** narrow the search. Esc closes the bar and leaves the match selected; ⌘E looks for the selected text.
@@ -81,6 +85,7 @@ fade_other_blocks = true # fade every block but the one being edited (View → F
 typewriter_scrolling = true # keep the line being typed in the middle (View → Typewriter Scrolling)
 autosave = 5          # save 5 seconds after typing stops; "off" if not set
 spelling_language = "en-GB" # the spelling dictionary: "en-US" (the default), "en-GB" or one you add
+check_spelling = false # don't underline misspelled words (View → Check Spelling)
 ```
 
 If the file has a mistake, Kertas uses the default for that setting and shows what's wrong at the bottom of the window.

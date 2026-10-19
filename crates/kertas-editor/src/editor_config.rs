@@ -46,6 +46,10 @@ pub struct EditorConfig {
     /// Which options the find bar offers (#125): all of them, unless the
     /// host leaves some out.
     pub find_options: OfferedOptions,
+    /// Whether misspelled words are underlined (#141).
+    pub check_spelling: bool,
+    /// The language spelling is checked in, naming a dictionary (#140).
+    pub spelling_language: String,
 }
 
 impl Default for EditorConfig {
@@ -65,6 +69,8 @@ impl Default for EditorConfig {
             typewriter_scrolling: settings.typewriter_scrolling,
             wiki_links: false,
             find_options: OfferedOptions::default(),
+            check_spelling: settings.check_spelling,
+            spelling_language: settings.spelling_language,
         }
     }
 }

@@ -103,6 +103,8 @@ pub fn editor_config(cx: &App) -> EditorConfig {
         // Kertas reads standard Markdown; a host turns these on itself.
         wiki_links: false,
         find_options: Default::default(),
+        check_spelling: settings.check_spelling,
+        spelling_language: settings.spelling_language,
     }
 }
 

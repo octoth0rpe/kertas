@@ -238,6 +238,8 @@ impl DocumentView {
         let link_check = self.link_check.clone();
         let marks = self.marks.clone();
         let underlined_marks = self.marks.clone();
+        let misspelled = self.misspelled.marks.clone();
+        let underlined_misspellings = misspelled.clone();
         let highlights = Rc::new(self.find_highlights());
         let revealed_highlights = highlights.clone();
         let scroll_to_match = match request {
@@ -273,6 +275,7 @@ impl DocumentView {
             reference,
             link_check: link_check.clone(),
             marks: marks.clone(),
+            misspelled: misspelled.clone(),
             highlights: highlights.clone(),
             scroll_to_match,
         };
@@ -319,6 +322,7 @@ impl DocumentView {
                         .as_ref()
                         .map(|marked| local(marked.start)..local(marked.end));
                     let underlined = wavy_marks(&underlined_marks, range.clone())
+                        .chain(wavy_marks(&underlined_misspellings, range.clone()))
                         .map(|(mark, color)| (local(mark.start)..local(mark.end), color))
                         .collect();
                     let highlighted = overlapping(&revealed_highlights, range.clone())
@@ -573,6 +577,7 @@ impl Render for DocumentView {
         // Document text is sized in rems, so this sets the zoom.
         window.set_rem_size(px(self.config.font_size as f32));
         self.move_marks();
+        self.refresh_misspellings();
         // Closed, the bar looks again only when it's asked to.
         if self.find_shown() {
             self.refresh_matches(cx);
