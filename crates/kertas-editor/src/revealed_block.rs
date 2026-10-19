@@ -74,6 +74,9 @@ pub enum CaretPlace {
     /// The item's bottom at the window's bottom, as when scrolling down
     /// to it.
     Bottom,
+    /// The caret's line at the middle of the window, for typewriter
+    /// scrolling (#128).
+    Center,
 }
 
 /// The caret to scroll into view in this frame, and where to put its
@@ -125,6 +128,13 @@ impl ScrollToCaret {
     fn bounds(&self, caret: Point<Pixels>, line: Pixels) -> Bounds<Pixels> {
         let (above, below) = (caret.y - line, caret.y + line * 2.);
         let height = self.viewport_height;
+        if self.place == CaretPlace::Center && height > px(0.) {
+            let middle = caret.y + line / 2.;
+            return Bounds::new(
+                point(caret.x, middle - height / 2.),
+                size(px(CARET_WIDTH), height),
+            );
+        }
         let top = match (self.place, self.item.get()) {
             _ if height < below - above => None,
             (CaretPlace::Top(offset), Some(item)) => Some(item.top() - offset),
@@ -472,6 +482,15 @@ mod tests {
     use crate::theme::Theme;
     use kertas_core::model::Model;
     use kertas_core::reveal::styled_source;
+
+    #[test]
+    fn typewriter_scrolling_centers_the_caret_line() {
+        let scroll = ScrollToCaret::new(0, CaretPlace::Center, px(600.));
+        let bounds = scroll.bounds(point(px(40.), px(1000.)), px(20.));
+        // The window's height, with the line's middle at its middle.
+        assert_eq!(bounds.size.height, px(600.));
+        assert_eq!(bounds.top(), px(1010.) - px(300.));
+    }
 
     /// GPUI requires a revealed block's text runs to cover its text
     /// exactly, whatever is selected or being composed (T2).

@@ -244,7 +244,11 @@ impl DocumentView {
             }),
             _ => None,
         };
+        // Typewriter scrolling puts the caret's line at the middle,
+        // wherever it is (#128).
+        let typewriter = self.config.typewriter_scrolling;
         let caret_place = match request {
+            Some(ScrollRequest::Caret(_)) if typewriter => Some(CaretPlace::Center),
             Some(ScrollRequest::Caret(place)) => Some(place),
             _ => None,
         };
@@ -344,7 +348,9 @@ impl DocumentView {
                 )),
             }
         })
-        .size_full();
+        .size_full()
+        // Room below the end, so it can come up to the middle too.
+        .when(typewriter, |list| list.pb(viewport_height / 2.));
         let scrollbar = self
             .config
             .scrollbar

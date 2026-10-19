@@ -115,6 +115,9 @@ pub struct Settings {
     pub scrollbar: bool,
     /// Whether the blocks that aren't being edited are drawn faded (#121).
     pub fade_other_blocks: bool,
+    /// Whether the caret's line is kept at the middle of the window as
+    /// you type (#128).
+    pub typewriter_scrolling: bool,
     /// Save documents once typing has paused this many seconds, or
     /// `None` not to save them automatically (F6).
     pub autosave: Option<u32>,
@@ -135,6 +138,7 @@ impl Default for Settings {
             editing_hint: true,
             scrollbar: true,
             fade_other_blocks: false,
+            typewriter_scrolling: false,
             autosave: None,
         }
     }
@@ -362,6 +366,15 @@ pub const SETTINGS: &[Setting] = &[
         kind: Kind::Bool {
             get: |settings| settings.fade_other_blocks,
             apply: |settings, fade| settings.fade_other_blocks = fade,
+        },
+    },
+    Setting {
+        key: "typewriter_scrolling",
+        label: "Typewriter scrolling",
+        note: Some("Keep the line being typed in the middle of the window"),
+        kind: Kind::Bool {
+            get: |settings| settings.typewriter_scrolling,
+            apply: |settings, on| settings.typewriter_scrolling = on,
         },
     },
     Setting {
@@ -758,6 +771,7 @@ mod tests {
                 editing_hint: true,
                 scrollbar: true,
                 fade_other_blocks: false,
+                typewriter_scrolling: false,
                 autosave: None,
             }
         );
@@ -864,6 +878,20 @@ mod tests {
         assert_eq!(
             set("", "fade_other_blocks", true).unwrap(),
             "fade_other_blocks = true\n"
+        );
+    }
+
+    #[test]
+    fn typewriter_scrolling() {
+        assert!(!Settings::default().typewriter_scrolling);
+        assert!(
+            parse("typewriter_scrolling = true\n")
+                .0
+                .typewriter_scrolling
+        );
+        assert_eq!(
+            set("", "typewriter_scrolling", true).unwrap(),
+            "typewriter_scrolling = true\n"
         );
     }
 
