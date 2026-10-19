@@ -222,7 +222,11 @@ fn search(model: &Model, query: &Query, template: Option<&str>) -> Vec<(Match, S
 /// The match at `display` in `text`, a run of text in the block starting
 /// at `block_start`. `None` if it isn't text from the source, such as a
 /// footnote reference's number, or it's in an image's alt text.
-fn text_match(text: &InlineText, display: Range<usize>, block_start: usize) -> Option<Match> {
+pub(crate) fn text_match(
+    text: &InlineText,
+    display: Range<usize>,
+    block_start: usize,
+) -> Option<Match> {
     let in_image = text
         .images
         .iter()
