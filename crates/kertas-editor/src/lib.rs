@@ -124,6 +124,9 @@ pub mod actions {
             FindPrevious,
             UseSelectionForFind,
             HideFind,
+            FindAndReplace,
+            Replace,
+            ReplaceAll,
         ]
     );
 }

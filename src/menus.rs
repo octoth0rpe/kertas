@@ -10,7 +10,9 @@ use crate::builtin::{self, Builtin};
 use crate::document_window::{CloseWindow, New, Open, Print, Quit};
 use crate::windows;
 use kertas_core::settings::Layout;
-use kertas_editor::actions::{Find, FindNext, FindPrevious, Save, SaveAs, UseSelectionForFind};
+use kertas_editor::actions::{
+    Find, FindAndReplace, FindNext, FindPrevious, Save, SaveAs, UseSelectionForFind,
+};
 use kertas_editor::settings_window::OpenSettings;
 use kertas_editor::tabs::CloseTab;
 use kertas_editor::view_menu;
@@ -86,6 +88,7 @@ fn menus(cx: &App) -> Vec<Menu> {
         ),
         Menu::new("Edit").items([MenuItem::submenu(Menu::new("Find").items([
             MenuItem::action("Find…", Find),
+            MenuItem::action("Find and Replace…", FindAndReplace),
             MenuItem::action("Find Next", FindNext),
             MenuItem::action("Find Previous", FindPrevious),
             MenuItem::action("Use Selection for Find", UseSelectionForFind),

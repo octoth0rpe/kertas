@@ -14,7 +14,7 @@
 //! - `tabs`, `windows`, `settings`, `settings-window`, `help`, `reveal`, `clicks`,
 //!   `anchors`, `footnotes`, `images`, `caret`, `reading`, `scrollbar`,
 //!   `scrollbar-drag`, `a11y`, `print`, `disk`, `autosave`, `quit`,
-//!   `web-images`, `marks`, `hover`, `find`: see
+//!   `web-images`, `marks`, `hover`, `find`, `replace`: see
 //!   each function.
 
 use std::cell::{Cell, RefCell};
@@ -67,6 +67,7 @@ pub fn start_if_requested(window: DocumentWindowHandle, cx: &mut App) {
         "marks" => smoke_marks(window, cx),
         "hover" => smoke_hover(window, cx),
         "find" => smoke_find(window, cx),
+        "replace" => smoke_replace(window, cx),
         "rename" => smoke_rename(window, cx),
         "bench" => smoke_bench(window, cx),
         _ => smoke_steps(window, &mode, cx),
@@ -3484,6 +3485,73 @@ fn smoke_find(window: DocumentWindowHandle, cx: &mut App) {
             &format!("⌘E looks for the selection ({found:?})"),
             found == (true, (Some(0), 1)),
         );
+        checks.finish(cx);
+    })
+    .detach();
+}
+
+/// Replace (#123): Replace selects the match first and replaces it the
+/// second time, Replace All changes only the matched text, and undoing it
+/// is one step.
+fn smoke_replace(window: DocumentWindowHandle, cx: &mut App) {
+    use kertas_editor::actions::{Replace, ReplaceAll};
+
+    cx.spawn(async move |cx| {
+        let mut checks = Checks::default();
+        pause(cx, 10).await;
+        let handle = gpui::AnyWindowHandle::from(window);
+        let read = |cx: &mut AsyncApp| {
+            window
+                .read_with(cx, |view, _| {
+                    let selection = view.reveal_state().1.map(|s| s.range());
+                    (view.text(), selection, view.find_status())
+                })
+                .unwrap_or_default()
+        };
+        let (original, _, _) = read(cx);
+        let starts: Vec<usize> = original.match_indices("bold").map(|(at, _)| at).collect();
+
+        press_key(handle, cx, "alt-cmd-f").await;
+        window
+            .update(cx, |view, _, cx| {
+                view.type_find_query("bold", cx);
+                view.type_replacement("strong", cx);
+            })
+            .ok();
+        pause(cx, 3).await;
+        // With a query, ⌥⌘F goes to the replacement, where ↩ replaces.
+        press_key(handle, cx, "alt-cmd-f").await;
+        press_key(handle, cx, "enter").await;
+        let (text, selection, _) = read(cx);
+        checks.check(
+            &format!("Replace first selects the match ({selection:?})"),
+            text == original && selection == Some(starts[0]..starts[0] + 4),
+        );
+        dispatch(window, cx, Box::new(Replace));
+        pause(cx, 3).await;
+        let (text, selection, status) = read(cx);
+        let once = original.replacen("bold", "strong", 1);
+        let next = starts[1] + 2;
+        checks.check(
+            &format!("then replaces it and goes to the next ({selection:?}, {status:?})"),
+            text == once && selection == Some(next..next + 4) && status == (Some(0), 2),
+        );
+
+        dispatch(window, cx, Box::new(ReplaceAll));
+        pause(cx, 3).await;
+        let (text, _, status) = read(cx);
+        checks.check(
+            &format!("Replace All changes only the matched text ({status:?})"),
+            text == original.replace("bold", "strong") && status == (None, 0),
+        );
+
+        press_key(handle, cx, "escape").await;
+        press_key(handle, cx, "cmd-z").await;
+        let (text, _, _) = read(cx);
+        checks.check("undoing Replace All is one step", text == once);
+        press_key(handle, cx, "cmd-z").await;
+        let (text, _, _) = read(cx);
+        checks.check("and then the single Replace", text == original);
         checks.finish(cx);
     })
     .detach();

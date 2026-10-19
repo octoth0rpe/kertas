@@ -661,6 +661,9 @@ impl Render for DocumentView {
             .on_action(cx.listener(Self::use_selection_for_find))
             .on_action(cx.listener(Self::find_next))
             .on_action(cx.listener(Self::find_previous))
+            .on_action(cx.listener(Self::show_replace))
+            .on_action(cx.listener(Self::replace))
+            .on_action(cx.listener(Self::replace_all))
             .children(find_bar)
             .child(document)
     }
