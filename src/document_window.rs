@@ -227,6 +227,7 @@ impl DocumentWindow {
                 view.document_path(),
                 view.web_images_loaded(),
                 &view.config().text,
+                &Default::default(),
                 &view.display_name().unwrap_or_default(),
                 window,
             );

@@ -62,6 +62,7 @@ pub fn start_if_requested(window: DocumentWindowHandle, cx: &mut App) {
         "scrollbar-drag" => smoke_scrollbar_drag(window, cx),
         "a11y" => smoke_a11y(window, cx),
         "print" => smoke_print(window, cx),
+        "print-pages" => smoke_print_pages(window, cx),
         "disk" => smoke_disk(window, cx),
         "autosave" => smoke_autosave(window, cx),
         "edited" => smoke_edited(window, cx),
@@ -2697,6 +2698,7 @@ fn smoke_print(window: DocumentWindowHandle, cx: &mut App) {
                 &*model?,
                 document.as_deref(),
                 &settings,
+                &Default::default(),
                 &path,
             ))
         });
@@ -2704,6 +2706,72 @@ fn smoke_print(window: DocumentWindowHandle, cx: &mut App) {
         checks.check(
             &format!("printed to a PDF ({size} bytes)"),
             printed == Some(true) && size > 0,
+        );
+        checks.finish(cx);
+    })
+    .detach();
+}
+
+/// `KERTAS_SMOKE=print-pages`, with `KERTAS_PRINT_PDF` set: prints the
+/// document to that PDF with a page break at each `## ` heading and page
+/// numbers from the second page, as a host can, and checks which pages
+/// the headings land on.
+fn smoke_print_pages(window: DocumentWindowHandle, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        let mut checks = Checks::default();
+        pause(cx, 10).await;
+        let path =
+            std::path::PathBuf::from(std::env::var_os("KERTAS_PRINT_PDF").unwrap_or_default());
+        let Some((model, text)) = window
+            .read_with(cx, |view, _| Some((view.model()?, view.text())))
+            .ok()
+            .flatten()
+        else {
+            checks.check("the document has a model", false);
+            return checks.finish(cx);
+        };
+        let headings: Vec<usize> = text
+            .match_indices("\n## ")
+            .map(|(offset, _)| offset + 1)
+            .collect();
+        let options = kertas_editor::print::PrintOptions {
+            page_breaks: headings.clone(),
+            numbered_from: Some(2),
+        };
+        let (pages, printed) = cx.update(|cx| {
+            let settings = kertas_editor::TextSettings::from(&crate::app_settings::get(cx));
+            // A heading in the middle of a line isn't one, and one in the
+            // first block starts no page.
+            let pages = kertas_editor::print::pages(&model, None, &settings, &options, &headings);
+            let printed = kertas_editor::print::save_pdf(&model, None, &settings, &options, &path);
+            (pages, printed)
+        });
+        checks.check(
+            &format!("each heading starts a later page: {pages:?}"),
+            pages.len() == headings.len()
+                && pages.first().is_some_and(|&first| first >= 2)
+                && pages.windows(2).all(|pair| pair[0] < pair[1]),
+        );
+        // The page tree's root counts every page, so it has the most.
+        let count = std::fs::read(&path).ok().and_then(|pdf| {
+            let pdf = String::from_utf8_lossy(&pdf).into_owned();
+            pdf.match_indices("/Count ")
+                .filter_map(|(at, found)| {
+                    let digits: String = pdf[at + found.len()..]
+                        .chars()
+                        .take_while(char::is_ascii_digit)
+                        .collect();
+                    digits.parse::<usize>().ok()
+                })
+                .max()
+        });
+        // The last heading's page is the last, as its section is short.
+        checks.check(
+            &format!(
+                "printed {count:?} pages, the last heading on page {:?}",
+                pages.last()
+            ),
+            printed && count.is_some() && count.as_ref() == pages.last(),
         );
         checks.finish(cx);
     })
