@@ -39,6 +39,11 @@ struct ConfigFolder(PathBuf);
 
 impl Global for ConfigFolder {}
 
+/// The host app's defaults, for settings its file doesn't set.
+struct Defaults(Settings);
+
+impl Global for Defaults {}
+
 /// The current settings.
 pub fn get(cx: &App) -> Settings {
     cx.try_global::<AppSettings>()
@@ -82,6 +87,7 @@ pub fn editor_config(cx: &App) -> EditorConfig {
         autosave: settings.autosave,
         scrollbar: settings.scrollbar,
         editing_hint: settings.editing_hint,
+        fade_other_blocks: settings.fade_other_blocks,
         // Kertas reads standard Markdown; a host turns these on itself.
         wiki_links: false,
     }
@@ -116,8 +122,13 @@ pub fn installed_fonts(cx: &App) -> &[String] {
 /// Loads the settings from `config.toml` in `folder`, and starts watching
 /// the file and the themes folder for changes. Then sets up zooming, which
 /// starts from the `font_size` setting.
-pub fn init(folder: PathBuf, cx: &mut App) {
+///
+/// Settings the file doesn't set take their values from `defaults`: a host
+/// app that wants its own gives them here, and Kertas gives
+/// `Settings::default()`.
+pub fn init(folder: PathBuf, defaults: Settings, cx: &mut App) {
     cx.set_global(ConfigFolder(folder));
+    cx.set_global(Defaults(defaults));
     let mut fonts = cx.text_system().all_font_names();
     fonts.retain(|name| !name.starts_with('.'));
     cx.set_global(InstalledFonts(fonts));
@@ -258,7 +269,11 @@ fn load(path: PathBuf, cx: &App) -> AppSettings {
     };
     let (user, theme_problems) = themes::read_folder(&themes_folder(cx));
     let themes = themes::combine(themes::builtin(), user);
-    let (settings, problems) = read(&path, &installed, &themes);
+    let defaults = cx
+        .try_global::<Defaults>()
+        .map(|defaults| defaults.0.clone())
+        .unwrap_or_default();
+    let (settings, problems) = read(&path, &installed, &themes, &defaults);
     AppSettings {
         settings,
         problems,
@@ -275,19 +290,30 @@ fn load(path: PathBuf, cx: &App) -> AppSettings {
 pub fn read_once(folder: &Path, installed: &FontCheck) -> Settings {
     let user = themes::read_folder(&themes_folder_in(folder)).0;
     let themes = themes::combine(themes::builtin(), user);
-    read(&settings_file(folder), installed, &themes).0
+    read(
+        &settings_file(folder),
+        installed,
+        &themes,
+        &Settings::default(),
+    )
+    .0
 }
 
-fn read(path: &Path, installed: &FontCheck, themes: &[Theme]) -> (Settings, Vec<Problem>) {
+fn read(
+    path: &Path,
+    installed: &FontCheck,
+    themes: &[Theme],
+    defaults: &Settings,
+) -> (Settings, Vec<Problem>) {
     let available = Available {
         fonts: installed,
         themes: &|name| themes::find(themes, name),
     };
     match fs::read_to_string(path) {
-        Ok(text) => settings::parse_checking(&text, &available),
+        Ok(text) => settings::parse_checking_from(&text, defaults, &available),
         // No file means all defaults (G2).
-        Err(err) if err.kind() == io::ErrorKind::NotFound => (Settings::default(), vec![]),
-        Err(err) => (Settings::default(), vec![file_problem(path, &err)]),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => (defaults.clone(), vec![]),
+        Err(err) => (defaults.clone(), vec![file_problem(path, &err)]),
     }
 }
 

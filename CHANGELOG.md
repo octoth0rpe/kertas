@@ -2,6 +2,10 @@
 
 What's new in each version of Kertas, newest first.
 
+## Unreleased
+
+- **View → Fade Other Blocks** draws every block but the one you're editing a little faded, to keep your eye on what you're writing. It's off unless you turn it on.
+
 ## 0.4.0 — 2026-10-16
 
 - **Color themes.** Choose Kertas, Solarized, Gruvbox or Catppuccin from **View → Theme** or **Kertas → Settings…**. Each has light and dark colors, and **View → Appearance** chooses which you see.

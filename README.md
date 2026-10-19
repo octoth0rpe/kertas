@@ -47,9 +47,10 @@ theme = "Kertas"     # the color theme: Kertas (the default), Solarized, Gruvbox
 layout = "windows"   # "tabs" (the default) or "windows", from the next start
 text_width = "wide"  # "standard" (the default), "wide" or "full"
 font_size = 18       # 10 to 32; the default is 16
+fade_other_blocks = true  # fade every block but the one being edited; off by default
 ```
 
-The View menu changes `appearance`, `theme` and `text_width` too.
+The View menu changes `appearance`, `theme`, `text_width` and `scrollbar` too. `fade_other_blocks` is changed only there, or in the file, to keep the Settings window short.
 
 Your own color themes go in `themes/` next to `config.toml`, one `.toml` file per theme with its light and dark colors, and are listed with the built-in ones. A theme with a built-in theme's name replaces it. **Help → Themes** in the app lists every color and has a complete example.
 

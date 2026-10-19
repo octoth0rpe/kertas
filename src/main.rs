@@ -49,7 +49,7 @@ fn main() -> std::process::ExitCode {
     });
 
     app.run(move |cx: &mut App| {
-        app_settings::init(config_folder(), cx);
+        app_settings::init(config_folder(), Default::default(), cx);
         settings_window::init(&[], cx);
         #[cfg(target_os = "macos")]
         web_images::init(cx);

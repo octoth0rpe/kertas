@@ -2,6 +2,7 @@
 
 use std::path::Path;
 use std::rc::Rc;
+use std::time::Instant;
 
 use gpui::{
     AnyElement, Context, Div, ImgResourceLoader, Pixels, Rems, Role, SharedString, Stateful,
@@ -183,12 +184,33 @@ impl DocumentView {
         cx.notify();
     }
 
+    /// Notes which items are being edited, for fading the others (#121),
+    /// and keeps drawing while the fade changes. Nothing is faded unless
+    /// the setting is on and a block is being edited in the active window.
+    fn update_fade(&mut self, now: Instant, window: &mut Window) {
+        let editing =
+            self.config.fade_other_blocks && window.is_window_active() && self.is_editing(window);
+        let edited = self.open.as_ref().filter(|_| editing).and_then(|open| {
+            let edited: Vec<usize> = open
+                .revealed
+                .iter()
+                .map(|revealed| revealed.target.index)
+                .collect();
+            (!edited.is_empty()).then_some(edited)
+        });
+        self.fade.update(edited, now);
+        if self.fade.animating(now) {
+            window.request_animation_frame();
+        }
+    }
+
     /// The document's blocks: each rendered, except the revealed ones,
     /// which show their source.
     fn render_document(
         &self,
         open: &OpenDocument,
         request: Option<ScrollRequest>,
+        now: Instant,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -239,18 +261,23 @@ impl DocumentView {
             link_check: link_check.clone(),
         };
         let note_column = note_marker_column(look.list_indent, &model.notes);
+        let fade = self.fade.clone();
         let list = list(open.list_state.clone(), move |index, _, _| {
+            let faded = |element: AnyElement| match fade.opacity(index, now) {
+                1. => element,
+                opacity => div().opacity(opacity).child(element).into_any_element(),
+            };
             // The footnotes come after the items (#90).
             let Some(item) = model.items.get(index) else {
                 let number = index - model.items.len();
                 let note = &model.notes[number];
-                return render_note(
+                return faded(render_note(
                     note,
                     number == 0,
                     note_column,
                     &look,
                     click_target(note.block_start),
-                );
+                ));
             };
             match revealed
                 .iter()
@@ -309,12 +336,12 @@ impl DocumentView {
                         None => element,
                     }
                 }
-                _ => render_block(
+                _ => faded(render_block(
                     &item.rendered,
                     index == 0,
                     &look,
                     click_target(item.block.start),
-                ),
+                )),
             }
         })
         .size_full();
@@ -538,8 +565,10 @@ impl Render for DocumentView {
         let disk_bar = self.render_disk_change(cx);
         let web_images_bar = self.render_web_images_bar(cx);
         let name = self.display_name().unwrap_or_default();
+        let now = Instant::now();
+        self.update_fade(now, window);
         let content = match &self.open {
-            Some(open) => self.render_document(open, request, window, cx),
+            Some(open) => self.render_document(open, request, now, window, cx),
             None => div()
                 .size_full()
                 .flex()

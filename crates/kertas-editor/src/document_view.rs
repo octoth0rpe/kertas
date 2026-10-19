@@ -10,6 +10,9 @@
 mod autosave;
 mod caret;
 mod disk;
+mod fade;
+#[cfg(test)]
+pub(crate) use fade::FADED_OPACITY;
 mod files;
 mod heights;
 mod input;
@@ -239,6 +242,8 @@ pub struct DocumentView {
     theme: Theme,
     /// Whether the blinking caret is currently drawn.
     caret_visible: bool,
+    /// Which items are faded, while one is being edited (#121).
+    fade: fade::Fade,
     /// A scroll from ↑ or ↓ in progress, with no caret.
     line_scroll: Option<line_scroll::LineScroll>,
     /// Bumped to stop the current blink loop.
@@ -293,6 +298,8 @@ impl DocumentView {
             if !window.is_window_active() {
                 this.autosave(window, cx);
             }
+            // Nothing is faded while the window is in the background.
+            cx.notify();
         });
         Self {
             focus_handle,
@@ -303,6 +310,7 @@ impl DocumentView {
             theme: Theme::for_window(&config.theme, config.appearance, window),
             config,
             caret_visible: true,
+            fade: fade::Fade::default(),
             line_scroll: None,
             dragging: false,
             links_to_host: false,
