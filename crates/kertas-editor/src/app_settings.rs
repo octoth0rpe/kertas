@@ -88,6 +88,7 @@ pub fn editor_config(cx: &App) -> EditorConfig {
         scrollbar: settings.scrollbar,
         editing_hint: settings.editing_hint,
         fade_other_blocks: settings.fade_other_blocks,
+        typewriter_scrolling: settings.typewriter_scrolling,
         // Kertas reads standard Markdown; a host turns these on itself.
         wiki_links: false,
     }

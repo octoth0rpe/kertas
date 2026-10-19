@@ -34,6 +34,9 @@ pub struct EditorConfig {
     /// Whether the blocks that aren't being edited are drawn faded, while
     /// one is (#121).
     pub fade_other_blocks: bool,
+    /// Whether the caret's line is kept at the middle of the window as
+    /// the caret moves (#128).
+    pub typewriter_scrolling: bool,
     /// Whether `[[wiki links]]` are links (#119). Kertas leaves them off;
     /// a host that turns them on also takes clicked links
     /// ([`DocumentView::set_links_to_host`](crate::DocumentView::set_links_to_host)),
@@ -55,6 +58,7 @@ impl Default for EditorConfig {
             scrollbar: settings.scrollbar,
             editing_hint: settings.editing_hint,
             fade_other_blocks: settings.fade_other_blocks,
+            typewriter_scrolling: settings.typewriter_scrolling,
             wiki_links: false,
         }
     }

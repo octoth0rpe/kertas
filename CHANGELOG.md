@@ -5,6 +5,7 @@ What's new in each version of Kertas, newest first.
 ## Unreleased
 
 - **View → Fade Other Blocks** draws every block but the one you're editing a little faded, to keep your eye on what you're writing. It's off unless you turn it on.
+- **View → Typewriter Scrolling** keeps the line you're typing on in the middle of the window, scrolling the text up as you write. You can still scroll away, and the next keystroke brings it back.
 
 ## 0.4.0 — 2026-10-16
 

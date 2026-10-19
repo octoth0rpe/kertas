@@ -1,5 +1,5 @@
 //! The View menu: appearance, theme, text width, the scrollbar, fading
-//! the other blocks, and zoom.
+//! the other blocks, typewriter scrolling, and zoom.
 //!
 //! Its choices are settings, so a host app rebuilds its menus whenever
 //! [`AppSettings`](crate::app_settings::AppSettings) changes, to keep their
@@ -23,6 +23,7 @@ actions!(
         UseFullWidth,
         ToggleScrollbar,
         ToggleFadeOtherBlocks,
+        ToggleTypewriterScrolling,
     ]
 );
 
@@ -80,6 +81,12 @@ pub fn init(cx: &mut App) {
             app_settings::set_or_report("fade_other_blocks", fade, cx);
         })
     });
+    cx.on_action(|_: &ToggleTypewriterScrolling, cx| {
+        cx.defer(|cx| {
+            let on = !app_settings::get(cx).typewriter_scrolling;
+            app_settings::set_or_report("typewriter_scrolling", on, cx);
+        })
+    });
 }
 
 /// The View menu's items, checked for the current settings.
@@ -111,6 +118,8 @@ pub fn items(cx: &App) -> Vec<MenuItem> {
         MenuItem::action("Show Scrollbar", ToggleScrollbar).checked(settings.scrollbar),
         MenuItem::action("Fade Other Blocks", ToggleFadeOtherBlocks)
             .checked(settings.fade_other_blocks),
+        MenuItem::action("Typewriter Scrolling", ToggleTypewriterScrolling)
+            .checked(settings.typewriter_scrolling),
         MenuItem::separator(),
         MenuItem::action("Zoom In", ZoomIn),
         MenuItem::action("Zoom Out", ZoomOut),

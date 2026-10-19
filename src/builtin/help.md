@@ -70,6 +70,7 @@ list_indent = "wide"  # how far nested list items are drawn in: "compact", "stan
 editing_hint = false  # hide keyboard hints on the block being edited
 scrollbar = false     # hide the scrollbar (also View → Show Scrollbar)
 fade_other_blocks = true # fade every block but the one being edited (View → Fade Other Blocks)
+typewriter_scrolling = true # keep the line being typed in the middle (View → Typewriter Scrolling)
 autosave = 5          # save 5 seconds after typing stops; "off" if not set
 ```
 
