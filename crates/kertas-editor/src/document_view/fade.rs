@@ -1,16 +1,16 @@
 //! Fading the blocks that aren't being edited (#121).
 //!
 //! While a block is being edited, with `fade_other_blocks` on, every other
-//! item is drawn at [`FADED_OPACITY`]: text, images, rules and alert colors
-//! alike, since the opacity applies to the whole item. When the edited
+//! item is drawn at the theme's faded opacity ([`Theme::faded_opacity`]):
+//! text, images, rules and alert colors alike, since the opacity applies to
+//! the whole item. When the edited
 //! block changes, or editing starts or stops, each item's opacity moves to
 //! its new one over [`TRANSITION`].
 
 use std::time::{Duration, Instant};
 
-/// How opaque a faded item is. Faded body text keeps at least 3:1 contrast
-/// against the background in every built-in theme (see the theme tests).
-pub(crate) const FADED_OPACITY: f32 = 0.75;
+#[cfg(doc)]
+use crate::Theme;
 
 /// How long the fade takes to follow the edited block.
 const TRANSITION: Duration = Duration::from_millis(150);
@@ -53,24 +53,26 @@ impl Fade {
         self.progress(now) < 1.
     }
 
-    /// Item `index`'s opacity at `now`.
-    pub(super) fn opacity(&self, index: usize, now: Instant) -> f32 {
-        let target = opacity_in(self.edited.as_deref(), index);
+    /// Item `index`'s opacity at `now`, if faded items are drawn at
+    /// `faded`.
+    pub(super) fn opacity(&self, index: usize, now: Instant, faded: f32) -> f32 {
+        let target = opacity_in(self.edited.as_deref(), index, faded);
         let progress = self.progress(now);
         if progress >= 1. {
             return target;
         }
-        let start = opacity_in(self.previous.as_deref(), index);
+        let start = opacity_in(self.previous.as_deref(), index, faded);
         // Eased out, so the change starts quickly and settles gently.
         let eased = 1. - (1. - progress).powi(2);
         start + (target - start) * eased
     }
 }
 
-/// Item `index`'s opacity while `edited` are the items being edited.
-fn opacity_in(edited: Option<&[usize]>, index: usize) -> f32 {
+/// Item `index`'s opacity while `edited` are the items being edited, if
+/// faded items are drawn at `faded`.
+fn opacity_in(edited: Option<&[usize]>, index: usize, faded: f32) -> f32 {
     match edited {
-        Some(edited) if !edited.contains(&index) => FADED_OPACITY,
+        Some(edited) if !edited.contains(&index) => faded,
         _ => 1.,
     }
 }
@@ -79,10 +81,13 @@ fn opacity_in(edited: Option<&[usize]>, index: usize) -> f32 {
 mod tests {
     use super::*;
 
+    /// The opacity faded items are drawn at in these tests.
+    const FADED: f32 = 0.5;
+
     #[test]
     fn nothing_is_faded_until_a_block_is_edited() {
         let fade = Fade::default();
-        assert_eq!(fade.opacity(3, Instant::now()), 1.);
+        assert_eq!(fade.opacity(3, Instant::now(), FADED), 1.);
     }
 
     #[test]
@@ -91,9 +96,9 @@ mod tests {
         let mut fade = Fade::default();
         fade.update(Some(vec![2]), start);
         let later = start + TRANSITION;
-        assert_eq!(fade.opacity(2, later), 1.);
-        assert_eq!(fade.opacity(1, later), FADED_OPACITY);
-        assert_eq!(fade.opacity(3, later), FADED_OPACITY);
+        assert_eq!(fade.opacity(2, later, FADED), 1.);
+        assert_eq!(fade.opacity(1, later, FADED), FADED);
+        assert_eq!(fade.opacity(3, later, FADED), FADED);
         assert!(!fade.animating(later));
     }
 
@@ -105,12 +110,12 @@ mod tests {
         fade.update(Some(vec![3]), start);
         let halfway = start + TRANSITION / 2;
         assert!(fade.animating(halfway));
-        let leaving = fade.opacity(2, halfway);
-        let arriving = fade.opacity(3, halfway);
-        assert!(leaving < 1. && leaving > FADED_OPACITY);
-        assert!(arriving < 1. && arriving > FADED_OPACITY);
+        let leaving = fade.opacity(2, halfway, FADED);
+        let arriving = fade.opacity(3, halfway, FADED);
+        assert!(leaving < 1. && leaving > FADED);
+        assert!(arriving < 1. && arriving > FADED);
         // Others stay faded throughout.
-        assert_eq!(fade.opacity(5, halfway), FADED_OPACITY);
+        assert_eq!(fade.opacity(5, halfway, FADED), FADED);
     }
 
     #[test]
@@ -119,7 +124,7 @@ mod tests {
         let mut fade = Fade::default();
         fade.update(Some(vec![2]), start - TRANSITION);
         fade.update(None, start);
-        assert_eq!(fade.opacity(5, start + TRANSITION), 1.);
+        assert_eq!(fade.opacity(5, start + TRANSITION, FADED), 1.);
     }
 
     #[test]

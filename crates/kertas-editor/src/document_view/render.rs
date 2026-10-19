@@ -266,8 +266,9 @@ impl DocumentView {
         };
         let note_column = note_marker_column(look.list_indent, &model.notes);
         let fade = self.fade.clone();
+        let faded_opacity = self.theme().faded_opacity();
         let list = list(open.list_state.clone(), move |index, _, _| {
-            let faded = |element: AnyElement| match fade.opacity(index, now) {
+            let faded = |element: AnyElement| match fade.opacity(index, now, faded_opacity) {
                 1. => element,
                 opacity => div().opacity(opacity).child(element).into_any_element(),
             };
