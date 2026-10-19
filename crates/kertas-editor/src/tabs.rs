@@ -93,6 +93,8 @@ pub struct DocumentTabs {
     /// another isn't started.
     confirming: bool,
     scroll_handle: ScrollHandle,
+    /// Whether the strip is hidden, whatever the number of tabs.
+    strip_hidden: bool,
 }
 
 impl EventEmitter<TabsEvent> for DocumentTabs {}
@@ -111,6 +113,16 @@ impl DocumentTabs {
             active: 0,
             confirming: false,
             scroll_handle: ScrollHandle::new(),
+            strip_hidden: false,
+        }
+    }
+
+    /// Hides the strip of tabs, or shows it again, as when a host app
+    /// hides everything but the document. The tabs' keys still work.
+    pub fn set_strip_hidden(&mut self, hidden: bool, cx: &mut Context<Self>) {
+        if hidden != self.strip_hidden {
+            self.strip_hidden = hidden;
+            cx.notify();
         }
     }
 
@@ -511,7 +523,7 @@ impl Render for DocumentTabs {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active = self.active_view().cloned();
         let strip = match &active {
-            Some(view) if self.tabs.len() > 1 => {
+            Some(view) if self.tabs.len() > 1 && !self.strip_hidden => {
                 let theme = view.read(cx).theme();
                 Some(self.render_strip(theme, cx))
             }

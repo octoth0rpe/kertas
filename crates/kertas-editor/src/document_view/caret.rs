@@ -244,8 +244,18 @@ impl DocumentView {
         self.blink_epoch += 1;
     }
 
+    /// Esc: finishes editing. With nothing being edited, it goes on to
+    /// the host app, which may have a use for it.
     pub(super) fn unreveal(&mut self, _: &Unreveal, _: &mut Window, cx: &mut Context<Self>) {
-        self.finish_editing(cx);
+        let editing = self
+            .open
+            .as_ref()
+            .is_some_and(|open| open.editor.selection().is_some());
+        if editing {
+            self.finish_editing(cx);
+        } else {
+            cx.propagate();
+        }
     }
 
     /// Hides the caret and shows every block rendered.
