@@ -201,6 +201,33 @@ impl InlineText {
             segment.source.start
         }
     }
+
+    /// The display text drawn from the source bytes in `source`, the other
+    /// way from [`Self::source_offset`]. It's exact inside segments whose
+    /// text matches their source byte for byte; a segment that doesn't is
+    /// taken whole if `source` overlaps it. `None` if none of the text
+    /// comes from `source`, such as Markdown syntax.
+    pub fn display_range(&self, source: Range<usize>) -> Option<Range<usize>> {
+        let mut range: Option<Range<usize>> = None;
+        for segment in &self.segments {
+            let start = source.start.max(segment.source.start);
+            let end = source.end.min(segment.source.end);
+            if start >= end {
+                continue;
+            }
+            let display = if segment.display.len() == segment.source.len() {
+                let offset = |at: usize| segment.display.start + (at - segment.source.start);
+                offset(start)..offset(end)
+            } else {
+                segment.display.clone()
+            };
+            range = Some(match range {
+                Some(range) => range.start.min(display.start)..range.end.max(display.end),
+                None => display,
+            });
+        }
+        range.filter(|range| !range.is_empty())
+    }
 }
 
 /// Renders the inline content of a paragraph or heading. `definitions` are
@@ -803,6 +830,18 @@ mod tests {
         );
         assert_eq!(inline.source_offset(10), 15, "end of text");
         assert_eq!(inline.source_offset(99), 15, "past the end");
+    }
+
+    #[test]
+    fn display_range_maps_source_to_display() {
+        // "Hi **bold** \\*x" displays as "Hi bold *x".
+        let inline = render_inline("Hi **bold** \\*x", &Definitions::default());
+        assert_eq!(inline.display_range(5..9), Some(3..7), "`bold`");
+        assert_eq!(inline.display_range(6..8), Some(4..6), "inside `bold`");
+        assert_eq!(inline.display_range(0..11), Some(0..7), "`Hi **bold**`");
+        assert_eq!(inline.display_range(12..14), Some(8..9), "the escaped `*`");
+        assert_eq!(inline.display_range(3..5), None, "only the `**`");
+        assert_eq!(inline.display_range(20..30), None, "past the end");
     }
 
     #[test]

@@ -115,6 +115,15 @@ pub fn underline(color: Hsla) -> UnderlineStyle {
     }
 }
 
+/// A wavy underline in `color`, as under a misspelled word.
+pub fn wavy_underline(color: Hsla) -> UnderlineStyle {
+    UnderlineStyle {
+        thickness: px(1.),
+        color: Some(color),
+        wavy: true,
+    }
+}
+
 /// `element` set in `code_font` at the code size: code blocks, and source
 /// shown as-is.
 pub fn code_text<E: Styled>(element: E, code_font: &SharedString) -> E {

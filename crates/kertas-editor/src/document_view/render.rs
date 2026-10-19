@@ -23,7 +23,7 @@ use super::{
     SelectUp, SelectWordLeft, SelectWordRight, WebImages,
 };
 use crate::rendered_block::{
-    ClickTarget, ReferenceTarget, note_marker_column, render_block, render_note,
+    ClickTarget, ReferenceTarget, note_marker_column, render_block, render_note, wavy_marks,
 };
 use crate::revealed_block::{
     CaretPlace, RevealedBlock, ScrollToCaret, TextInput, render_gap, render_revealed,
@@ -235,6 +235,8 @@ impl DocumentView {
         let loading_images = self.loading_images.clone();
         let web_images = self.web_images == WebImages::Load;
         let link_check = self.link_check.clone();
+        let marks = self.marks.clone();
+        let underlined_marks = self.marks.clone();
         // What this frame scrolls to (see `ScrollRequest`).
         let viewport_height = open.list_state.viewport_bounds().size.height;
         let reference = match request {
@@ -263,6 +265,7 @@ impl DocumentView {
             web_images,
             reference,
             link_check: link_check.clone(),
+            marks: marks.clone(),
         };
         let note_column = note_marker_column(look.list_indent, &model.notes);
         let fade = self.fade.clone();
@@ -306,12 +309,16 @@ impl DocumentView {
                     let marked = marked
                         .as_ref()
                         .map(|marked| local(marked.start)..local(marked.end));
+                    let underlined = wavy_marks(&underlined_marks, range.clone())
+                        .map(|(mark, color)| (local(mark.start)..local(mark.end), color))
+                        .collect();
                     let block = RevealedBlock {
                         source: &model.text[range.clone()],
                         styled,
                         selection: local(selected.start)..local(selected.end),
                         caret,
                         marked,
+                        underlined,
                         first: index == 0,
                     };
                     let scroll_to_caret = caret_place.filter(|_| *head).map(|place| {
@@ -549,6 +556,7 @@ impl Render for DocumentView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Document text is sized in rems, so this sets the zoom.
         window.set_rem_size(px(self.config.font_size as f32));
+        self.move_marks();
         self.remeasure_loaded_images(cx);
         // This frame's elements ask the list to scroll to what was
         // requested as it's laid out.
