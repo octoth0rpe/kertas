@@ -44,6 +44,7 @@ mod rendered_block;
 mod revealed_block;
 pub mod settings_window;
 pub mod tabs;
+pub mod text_field;
 mod text_style;
 mod theme;
 pub mod view_menu;
@@ -66,7 +67,7 @@ pub use text_style::TextSettings;
 pub use theme::Theme;
 
 /// The actions a document view handles: saving, moving the caret,
-/// selecting and editing.
+/// selecting, editing and finding.
 pub mod actions {
     gpui::actions!(
         kertas,
@@ -118,6 +119,11 @@ pub mod actions {
             Paste,
             Undo,
             Redo,
+            Find,
+            FindNext,
+            FindPrevious,
+            UseSelectionForFind,
+            HideFind,
         ]
     );
 }

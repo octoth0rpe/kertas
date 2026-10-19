@@ -12,6 +12,7 @@ mod caret;
 mod disk;
 mod fade;
 mod files;
+mod find;
 mod heights;
 mod hover;
 mod input;
@@ -46,7 +47,8 @@ use crate::theme::Theme;
 
 pub use crate::actions::*;
 
-/// Key bindings for the document view (macOS conventions).
+/// Key bindings for the document view (macOS conventions), its find bar
+/// and text fields.
 pub fn key_bindings() -> Vec<KeyBinding> {
     vec![
         KeyBinding::new("cmd-s", Save, None),
@@ -101,7 +103,15 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-v", Paste, None),
         KeyBinding::new("cmd-z", Undo, None),
         KeyBinding::new("cmd-shift-z", Redo, None),
+        KeyBinding::new("cmd-f", Find, None),
+        KeyBinding::new("cmd-g", FindNext, None),
+        KeyBinding::new("cmd-shift-g", FindPrevious, None),
+        KeyBinding::new("cmd-e", UseSelectionForFind, None),
     ]
+    .into_iter()
+    .chain(find::key_bindings())
+    .chain(crate::text_field::key_bindings())
+    .collect()
 }
 
 /// How long the caret stays on, and then off, while blinking. Public so
@@ -150,6 +160,9 @@ enum ScrollRequest {
     /// The line holding document offset `offset`, to the top of the
     /// window: the footnote reference a note's back-link went to (#90).
     Position(usize),
+    /// The line holding the find match that starts at `offset`, into view
+    /// (#122).
+    Match(usize),
 }
 
 impl OpenDocument {
@@ -278,6 +291,8 @@ pub struct DocumentView {
     hover: Option<hover::Hover>,
     /// Bumped to stop the popover's timers.
     hover_epoch: usize,
+    /// The find bar, and what it found (#122).
+    find: find::FindState,
     /// The checkbox the mouse button went down on, by where its `[ ]`
     /// starts, so it toggles when the button goes up on it.
     pressed_task: Option<usize>,
@@ -343,6 +358,7 @@ impl DocumentView {
             hover_popover: None,
             hover: None,
             hover_epoch: 0,
+            find: find::FindState::default(),
             pressed_task: None,
             blink_epoch: 0,
             confirming: false,
@@ -396,6 +412,7 @@ impl DocumentView {
         // Marks were for the document this one replaces.
         self.marks = Rc::default();
         self.marks_model = None;
+        self.forget_matches();
         self.close_hover(cx);
         // The footnotes follow the items (#90).
         let items = editor.model().items.len() + editor.model().notes.len();

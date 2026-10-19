@@ -60,6 +60,7 @@ pub fn shortcut_label(keystroke: &gpui::Keystroke) -> String {
         "pageup" => "Page Up".to_owned(),
         "pagedown" => "Page Down".to_owned(),
         "end" => "End".to_owned(),
+        "space" => "Space".to_owned(),
         key => key.to_uppercase(),
     };
     label.push_str(&key);

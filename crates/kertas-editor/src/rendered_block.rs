@@ -88,7 +88,15 @@ pub struct ClickTarget {
     /// The ranges the host marked, in order (see
     /// [`DocumentView::set_marks`]).
     pub marks: Rc<Vec<Mark>>,
+    /// The text the find bar matched, as source ranges in order, and the
+    /// background each is drawn with (#122).
+    pub highlights: Highlights,
+    /// Where the match the view is scrolling to starts, if it is.
+    pub scroll_to_match: Option<usize>,
 }
+
+/// Source ranges drawn with a background, in order, and its color.
+pub type Highlights = Rc<Vec<(Range<usize>, Hsla)>>;
 
 /// A host's check of whether a link leads anywhere: false for one it can't
 /// follow, which is drawn as unresolved.
@@ -329,8 +337,11 @@ fn render_content(block: &RenderedBlock, style: &TextStyle, depth: usize) -> Any
             .text_color(style.theme.text)
             .child({
                 let shown = code.text.trim_end_matches(['\n', '\r']);
+                let highlighted = displayed_highlights(code, &style.click);
                 let code = code.clone();
-                clickable_source(shown, style, move |index| code.source_offset(index))
+                clickable_source(shown, style, highlighted, move |index| {
+                    code.source_offset(index)
+                })
             })
             .into_any_element(),
         RenderedBlock::Table(table) => render_table(table, style),
@@ -341,7 +352,12 @@ fn render_content(block: &RenderedBlock, style: &TextStyle, depth: usize) -> Any
         RenderedBlock::Html(source) | RenderedBlock::Raw(source) => {
             code_text(div(), &style.code_font)
                 .text_color(style.theme.muted_text)
-                .child(clickable_source(source, style, |index| index))
+                .child(clickable_source(
+                    source,
+                    style,
+                    source_highlights(source, &style.click),
+                    |index| index,
+                ))
                 .into_any_element()
         }
     }
@@ -840,6 +856,7 @@ fn clickable_run(text: &InlineText, style: &TextStyle, accessible: bool) -> AnyE
     let styled = styled_text(text, style);
     let layout = styled.layout().clone();
     let scroll_to_reference = scroll_to_reference(text, &layout, &style.click);
+    let scroll_to_match = scroll_to_match(text, &layout, &style.click);
     let inline = text.clone();
     let click = style.click.clone();
     let (drag_layout, drag_inline, drag) = (layout.clone(), inline.clone(), click.clone());
@@ -918,6 +935,7 @@ fn clickable_run(text: &InlineText, style: &TextStyle, accessible: bool) -> AnyE
         })
         .child(content)
         .children(scroll_to_reference)
+        .children(scroll_to_match)
         .into_any_element()
 }
 
@@ -980,17 +998,92 @@ fn scroll_to_reference(
     Some(element.into_any_element())
 }
 
-/// Plain text shown with tabs expanded. A click maps the clicked index back
-/// through `to_source` (which takes an index into `text`).
+/// The find bar's matches in a block shown as its source, `source`, as
+/// byte ranges of it.
+fn source_highlights(source: &str, click: &ClickTarget) -> Vec<(Range<usize>, Hsla)> {
+    let start = click.block_start;
+    overlapping(&click.highlights, start..start + source.len())
+        .map(|(range, color)| {
+            (
+                range.start.max(start) - start..range.end.min(start + source.len()) - start,
+                color,
+            )
+        })
+        .collect()
+}
+
+/// If the find match the view is scrolling to is in `text`, drawn with
+/// `layout`: an element that scrolls its line into view.
+fn scroll_to_match(
+    text: &InlineText,
+    layout: &TextLayout,
+    click: &ClickTarget,
+) -> Option<AnyElement> {
+    let offset = click.scroll_to_match?.checked_sub(click.block_start)?;
+    let source = text.segments.first()?.source.start..text.segments.last()?.source.end;
+    if !source.contains(&offset) {
+        return None;
+    }
+    let index = text.display_range(offset..offset + 1)?.start;
+    Some(scroll_to_line(layout, index))
+}
+
+/// An element that scrolls the line holding `index`, in text drawn with
+/// `layout`, into view as the frame is laid out, with some room around
+/// it.
+fn scroll_to_line(layout: &TextLayout, index: usize) -> AnyElement {
+    let layout = layout.clone();
+    // After the text in the frame, so its layout has a position.
+    canvas(
+        move |_, window, _| {
+            if let Some(position) = layout.position_for_index(index) {
+                // A few lines above and below, so it isn't at the window's
+                // very edge.
+                let line = layout.line_height();
+                let room = line * 3.;
+                window.request_autoscroll(Bounds::new(
+                    point(position.x, position.y - room),
+                    size(px(1.), line + room * 2.),
+                ));
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .size_0()
+    .into_any_element()
+}
+
+/// Plain text shown with tabs expanded, with the `highlighted` ranges of
+/// it drawn on their background colors. A click maps the clicked index
+/// back through `to_source` (which takes an index into `text`).
 fn clickable_source(
     text: &str,
     style: &TextStyle,
+    highlighted: Vec<(Range<usize>, Hsla)>,
     to_source: impl Fn(usize) -> usize + 'static,
 ) -> AnyElement {
     let tabs = ExpandedTabs::new(text, style.tab_width);
     let shown = SharedString::from(tabs.text.clone());
-    let styled = StyledText::new(shown.clone());
+    let highlights = highlighted
+        .into_iter()
+        .filter(|(range, _)| range.end <= text.len())
+        .map(|(range, color)| {
+            let range = tabs.to_shown(range.start)..tabs.to_shown(range.end);
+            let style = gpui::HighlightStyle {
+                background_color: Some(color),
+                ..Default::default()
+            };
+            (range, style)
+        });
+    let styled = StyledText::new(shown.clone()).with_highlights(highlights);
     let layout = styled.layout().clone();
+    // The match being scrolled to, as an index of the shown text.
+    let found = style.click.scroll_to_match.and_then(|offset| {
+        let shown = (0..=text.len()).find(|&index| to_source(index) == offset)?;
+        Some(tabs.to_shown(shown))
+    });
+    let scroll_to_match = found.map(|index| scroll_to_line(&layout, index));
     let click = style.click.clone();
     let to_source = Rc::new(move |shown: usize| to_source(tabs.to_source(shown)));
     let (drag_layout, drag_to_source, drag) = (layout.clone(), to_source.clone(), click.clone());
@@ -1011,6 +1104,7 @@ fn clickable_source(
             }
         })
         .child(styled)
+        .children(scroll_to_match)
         .into_any_element()
 }
 
@@ -1042,8 +1136,10 @@ fn styled_text(text: &InlineText, style: &TextStyle) -> StyledText {
         })
         .collect();
     let underlined = displayed_marks(text, &style.click);
+    let highlighted = displayed_highlights(text, &style.click);
+    let runs = underline_marks(runs, &underlined);
     StyledText::new(SharedString::from(text.text.clone()))
-        .with_runs(underline_marks(runs, &underlined))
+        .with_runs(highlight_runs(runs, &highlighted))
 }
 
 /// The marks drawn with a wavy underline that overlap `range` in the
@@ -1063,12 +1159,50 @@ pub fn wavy_marks(
 /// Where `text`'s marks drawn with a wavy underline are in it, as byte
 /// ranges of its display text, and their colors.
 fn displayed_marks(text: &InlineText, click: &ClickTarget) -> Vec<(Range<usize>, Hsla)> {
-    let (Some(first), Some(last)) = (text.segments.first(), text.segments.last()) else {
+    let Some(source) = text_source(text, click) else {
         return Vec::new();
     };
+    displayed(text, click, wavy_marks(&click.marks, source))
+}
+
+/// Where the find bar's matches are in `text`, as byte ranges of its
+/// display text, and their backgrounds.
+fn displayed_highlights(text: &InlineText, click: &ClickTarget) -> Vec<(Range<usize>, Hsla)> {
+    let Some(source) = text_source(text, click) else {
+        return Vec::new();
+    };
+    displayed(text, click, overlapping(&click.highlights, source))
+}
+
+/// The highlights that overlap `range` in the document.
+pub fn overlapping(
+    highlights: &[(Range<usize>, Hsla)],
+    range: Range<usize>,
+) -> impl Iterator<Item = (Range<usize>, Hsla)> + '_ {
+    // They're in order, and don't overlap each other.
+    let first = highlights.partition_point(|(highlight, _)| highlight.end <= range.start);
+    highlights[first..]
+        .iter()
+        .take_while(move |(highlight, _)| highlight.start < range.end)
+        .cloned()
+}
+
+/// Where `text` is in the document's source.
+fn text_source(text: &InlineText, click: &ClickTarget) -> Option<Range<usize>> {
+    let (first, last) = (text.segments.first()?, text.segments.last()?);
     let start = click.block_start;
-    let source = start + first.source.start..start + last.source.end;
-    wavy_marks(&click.marks, source)
+    Some(start + first.source.start..start + last.source.end)
+}
+
+/// `ranges` of the document's source, which overlap `text`, as byte ranges
+/// of its display text.
+fn displayed(
+    text: &InlineText,
+    click: &ClickTarget,
+    ranges: impl Iterator<Item = (Range<usize>, Hsla)>,
+) -> Vec<(Range<usize>, Hsla)> {
+    let start = click.block_start;
+    ranges
         .filter_map(|(range, color)| {
             let local = range.start.saturating_sub(start)..range.end - start;
             Some((text.display_range(local)?, color))
@@ -1079,14 +1213,34 @@ fn displayed_marks(text: &InlineText, click: &ClickTarget) -> Vec<(Range<usize>,
 /// `runs` split where the `underlined` ranges start and end, with the text
 /// in each given a wavy underline in its color.
 fn underline_marks(runs: Vec<TextRun>, underlined: &[(Range<usize>, Hsla)]) -> Vec<TextRun> {
-    if underlined.is_empty() {
+    split_runs(runs, underlined, |run, color| {
+        run.underline = Some(wavy_underline(color))
+    })
+}
+
+/// `runs` split where the `highlighted` ranges start and end, with the text
+/// in each drawn on its background color.
+fn highlight_runs(runs: Vec<TextRun>, highlighted: &[(Range<usize>, Hsla)]) -> Vec<TextRun> {
+    split_runs(runs, highlighted, |run, color| {
+        run.background_color = Some(color)
+    })
+}
+
+/// `runs` split where `ranges` start and end, with `style` applied to the
+/// pieces in each, given its color.
+fn split_runs(
+    runs: Vec<TextRun>,
+    ranges: &[(Range<usize>, Hsla)],
+    style: impl Fn(&mut TextRun, Hsla),
+) -> Vec<TextRun> {
+    if ranges.is_empty() {
         return runs;
     }
     let mut split = Vec::with_capacity(runs.len());
     let mut start = 0;
     for run in runs {
         let end = start + run.len;
-        let mut cuts: Vec<usize> = underlined
+        let mut cuts: Vec<usize> = ranges
             .iter()
             .flat_map(|(range, _)| [range.start, range.end])
             .filter(|&cut| start < cut && cut < end)
@@ -1100,11 +1254,11 @@ fn underline_marks(runs: Vec<TextRun>, underlined: &[(Range<usize>, Hsla)]) -> V
                 len: cut - piece_start,
                 ..run.clone()
             };
-            let mark = underlined
+            let within = ranges
                 .iter()
                 .find(|(range, _)| range.start <= piece_start && cut <= range.end);
-            if let Some((_, color)) = mark {
-                piece.underline = Some(wavy_underline(*color));
+            if let Some((_, color)) = within {
+                style(&mut piece, *color);
             }
             split.push(piece);
             piece_start = cut;

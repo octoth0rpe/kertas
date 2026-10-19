@@ -50,6 +50,16 @@ Add ⇧ to any movement to select as you go.
 | ⌘Z | Undo |
 | ⇧⌘Z | Redo |
 
+## Finding
+
+| Shortcut | What it does |
+|---|---|
+| ⌘F | Find: opens the find bar |
+| ⌘G ⇧⌘G | Next or previous match. In the find bar, ↩ and ⇧↩ do the same. |
+| ⌘E | Use the selection for Find |
+| Esc | In the find bar, close it, leaving the match selected |
+| ⌃⌘Space | In the find bar, show Emoji & Symbols |
+
 ## Buttons and Settings
 
 | Shortcut | What it does |

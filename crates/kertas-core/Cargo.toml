@@ -13,6 +13,7 @@ publish = false
 pulldown-cmark.workspace = true
 ropey.workspace = true
 unicode-segmentation.workspace = true
+regex.workspace = true
 toml_edit.workspace = true
 
 [lints]

@@ -22,6 +22,8 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "c66312b2
 pulldown-cmark = { version = "0.13.4", default-features = false }
 ropey = "1.6"
 unicode-segmentation = "1"
+# Find, and its Regex option. Already in the tree through GPUI.
+regex = "1.13"
 toml_edit = "0.25.17"
 futures = "0.3"
 libc = "0.2"
