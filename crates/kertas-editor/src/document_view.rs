@@ -107,6 +107,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-g", FindNext, None),
         KeyBinding::new("cmd-shift-g", FindPrevious, None),
         KeyBinding::new("cmd-e", UseSelectionForFind, None),
+        KeyBinding::new("alt-cmd-f", FindAndReplace, None),
     ]
     .into_iter()
     .chain(find::key_bindings())

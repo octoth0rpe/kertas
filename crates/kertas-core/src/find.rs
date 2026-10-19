@@ -66,6 +66,22 @@ pub struct Match {
     pub pieces: Vec<Range<usize>>,
 }
 
+impl Match {
+    /// The edits that replace the match with `text`, leaving the rest of
+    /// the source as it is: the first piece becomes `text`, and any others
+    /// go, keeping the syntax between them.
+    pub fn replacement(&self, text: &str) -> Vec<(Range<usize>, String)> {
+        self.pieces
+            .iter()
+            .enumerate()
+            .map(|(index, piece)| {
+                let new = if index == 0 { text } else { "" };
+                (piece.clone(), new.to_owned())
+            })
+            .collect()
+    }
+}
+
 /// Every match for `query` in the document, in order. Each is within one
 /// run of text, such as a paragraph, a heading or a table cell. Images'
 /// alt text isn't searched, nor the numbers of footnote references.
@@ -241,6 +257,20 @@ mod tests {
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].range, 0..6);
         assert_eq!(matches[0].pieces, [0..2, 4..6]);
+    }
+
+    #[test]
+    fn replacing_changes_only_the_matched_text() {
+        let text = "Some **bold** text and bo**ld**.\n";
+        let model = Model::new(text);
+        let matches = find(&model, &Query::new("bold", FindOptions::default()).unwrap());
+        let mut replaced = text.to_owned();
+        for found in matches.iter().rev() {
+            for (range, new) in found.replacement("strong").into_iter().rev() {
+                replaced.replace_range(range, &new);
+            }
+        }
+        assert_eq!(replaced, "Some **strong** text and strong****.\n");
     }
 
     #[test]

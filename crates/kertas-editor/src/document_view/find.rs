@@ -1,5 +1,5 @@
-//! The find bar (#122): finding text in the document as it's shown, and
-//! going from match to match.
+//! The find bar (#122): finding text in the document as it's shown, going
+//! from match to match, and replacing matches (#123).
 
 use std::rc::Rc;
 
@@ -15,12 +15,16 @@ use kertas_core::model::Model;
 use super::heights::Heights;
 use super::render::bar_button;
 use super::{
-    DocumentView, Find, FindNext, FindPrevious, HideFind, ScrollRequest, UseSelectionForFind,
+    DocumentView, Find, FindAndReplace, FindNext, FindPrevious, HideFind, Replace, ReplaceAll,
+    ScrollRequest, UseSelectionForFind,
 };
 use crate::text_field::{self, TextField};
 
 /// The find bar's key context.
 const KEY_CONTEXT: &str = "FindBar";
+
+/// The replacement field's key context, inside the bar's.
+const REPLACE_CONTEXT: &str = "ReplaceField";
 
 /// The keys the find bar handles while it has the focus. They're part of
 /// [`crate::key_bindings`].
@@ -30,6 +34,7 @@ pub(super) fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("escape", HideFind, context),
         KeyBinding::new("enter", FindNext, context),
         KeyBinding::new("shift-enter", FindPrevious, context),
+        KeyBinding::new("enter", Replace, Some(REPLACE_CONTEXT)),
     ]
 }
 
@@ -47,6 +52,12 @@ pub(super) struct FindState {
     found_in: Option<Rc<Model>>,
     /// The match the bar is at.
     current: Option<usize>,
+    /// The replacement's field, made when it's first shown (#123).
+    replace_field: Option<Entity<TextField>>,
+    /// Whether the bar shows the replacement too.
+    replacing: bool,
+    /// How many matches Replace All replaced, until the bar looks again.
+    replaced: Option<usize>,
     _field_changed: Option<Subscription>,
 }
 
@@ -68,11 +79,118 @@ impl DocumentView {
         let field = self.find_field(cx);
         let reopened = !self.find.shown;
         self.find.shown = true;
+        self.find.replacing = false;
         field.update(cx, |field, cx| field.select_all_text(cx));
         field.read(cx).focus_handle(cx).focus(window, cx);
         if reopened {
             self.find_from_caret(cx);
         }
+        cx.notify();
+    }
+
+    /// ⌥⌘F: opens the find bar with the replacement shown, to type the
+    /// query or, if there is one, the replacement.
+    pub(super) fn show_replace(
+        &mut self,
+        _: &FindAndReplace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(open) = &self.open else {
+            return;
+        };
+        // A read-only document can't be changed.
+        if open.editor.read_only() {
+            return self.show_find(&Find, window, cx);
+        }
+        let field = self.find_field(cx);
+        if self.find.replace_field.is_none() {
+            let replace = cx.new(|cx| TextField::new("Replace", "", "Replace with", cx));
+            self.find.replace_field = Some(replace);
+        }
+        let reopened = !self.find.shown;
+        self.find.shown = true;
+        self.find.replacing = true;
+        let focused = match &self.find.replace_field {
+            Some(replace) if !field.read(cx).text().is_empty() => replace.clone(),
+            _ => field,
+        };
+        focused.update(cx, |field, cx| field.select_all_text(cx));
+        focused.read(cx).focus_handle(cx).focus(window, cx);
+        if reopened {
+            self.find_from_caret(cx);
+        }
+        cx.notify();
+    }
+
+    /// The replacement's text.
+    fn replacement(&self, cx: &gpui::App) -> String {
+        self.find
+            .replace_field
+            .as_ref()
+            .map(|field| field.read(cx).text().to_owned())
+            .unwrap_or_default()
+    }
+
+    /// Replace, or ↩ in the replacement: replaces the match the bar is at,
+    /// if it's selected, and goes to the next. If it isn't selected, just
+    /// goes to it first, so nothing changes out of sight.
+    pub(super) fn replace(&mut self, _: &Replace, _: &mut Window, cx: &mut Context<Self>) {
+        self.refresh_matches(cx);
+        let Some(open) = &mut self.open else {
+            return;
+        };
+        let selection = open.editor.selection().map(|selection| selection.range());
+        let Some(found) = self
+            .current_match()
+            .filter(|found| Some(&found.range) == selection.as_ref())
+        else {
+            match self.current_match() {
+                Some(found) => self.select_match(&found, cx),
+                None => self.step_match(true, cx),
+            }
+            return cx.notify();
+        };
+        let replacement = self.replacement(cx);
+        let Some(open) = &mut self.open else {
+            return;
+        };
+        let Some(change) = open.editor.replace_ranges(found.replacement(&replacement)) else {
+            return;
+        };
+        open.goal_x = None;
+        self.apply(change, cx);
+        // The next match after the new text, not in it.
+        self.search(cx);
+        let after = found.range.start + replacement.len();
+        self.find.current = find::first_from(&self.find.matches, after);
+        if let Some(next) = self.current_match() {
+            self.select_match(&next, cx);
+        }
+        cx.notify();
+    }
+
+    /// Replace All: replaces every match, as one undo step.
+    pub(super) fn replace_all(&mut self, _: &ReplaceAll, _: &mut Window, cx: &mut Context<Self>) {
+        self.refresh_matches(cx);
+        let replacement = self.replacement(cx);
+        let edits: Vec<_> = self
+            .find
+            .matches
+            .iter()
+            .flat_map(|found| found.replacement(&replacement))
+            .collect();
+        let count = self.find.matches.len();
+        let Some(open) = &mut self.open else {
+            return;
+        };
+        let Some(change) = open.editor.replace_ranges(edits) else {
+            return;
+        };
+        open.goal_x = None;
+        self.apply(change, cx);
+        self.search(cx);
+        self.find.replaced = Some(count);
         cx.notify();
     }
 
@@ -101,6 +219,7 @@ impl DocumentView {
     /// Esc in the bar: closes it, leaving the match it was at selected.
     pub(super) fn hide_find(&mut self, _: &HideFind, window: &mut Window, cx: &mut Context<Self>) {
         self.find.shown = false;
+        self.find.replacing = false;
         if let Some(found) = self.current_match() {
             self.select_match(&found, cx);
         }
@@ -182,6 +301,7 @@ impl DocumentView {
         });
         self.find.found_in = Some(model);
         self.find.current = None;
+        self.find.replaced = None;
     }
 
     /// Finds the matches again if the text changed since they were found,
@@ -342,6 +462,7 @@ impl DocumentView {
         field.update(cx, |field, cx| field.set_theme(theme, cx));
         let count = self.find.matches.len();
         let status: SharedString = match (self.find.current, count) {
+            _ if let Some(replaced) = self.find.replaced => format!("Replaced {replaced}").into(),
             _ if field.read(cx).text().is_empty() => "".into(),
             (_, 0) => "Not found".into(),
             (Some(index), count) => format!("{} of {count}", index + 1).into(),
@@ -355,15 +476,84 @@ impl DocumentView {
                 .aria_toggled(if on { Toggled::True } else { Toggled::False })
                 .when(on, |button| button.bg(theme.selection))
         };
+        let find_row = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(div().flex_1().max_w(px(320.)).min_w(px(120.)).child(field))
+            .child(
+                div()
+                    .id("find-status")
+                    .role(Role::Status)
+                    .aria_label(status.clone())
+                    .min_w(px(64.))
+                    .text_color(theme.muted_text)
+                    .child(status),
+            )
+            .child(
+                bar_button(theme, "find-previous", "‹", "Previous Match")
+                    .on_click(cx.listener(|this, _, _, cx| this.step_match(false, cx))),
+            )
+            .child(
+                bar_button(theme, "find-next", "›", "Next Match")
+                    .on_click(cx.listener(|this, _, _, cx| this.step_match(true, cx))),
+            )
+            .child(
+                toggle("find-match-case", "Match Case", options.match_case).on_click(cx.listener(
+                    |this, _, _, cx| this.toggle_option(|options| options.match_case ^= true, cx),
+                )),
+            )
+            .child(
+                toggle("find-whole-word", "Whole Words", options.whole_word).on_click(cx.listener(
+                    |this, _, _, cx| this.toggle_option(|options| options.whole_word ^= true, cx),
+                )),
+            )
+            .child(div().flex_1())
+            .child(bar_button(theme, "find-done", "Done", "Done").on_click(
+                cx.listener(|this, _, window, cx| this.hide_find(&HideFind, window, cx)),
+            ));
+        let replace_row =
+            self.find
+                .replace_field
+                .clone()
+                .filter(|_| self.find.replacing)
+                .map(|replace| {
+                    replace.update(cx, |field, cx| field.set_theme(theme, cx));
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .key_context(REPLACE_CONTEXT)
+                                .flex_1()
+                                .max_w(px(320.))
+                                .min_w(px(120.))
+                                .child(replace),
+                        )
+                        .child(bar_button(theme, "replace", "Replace", "Replace").on_click(
+                            cx.listener(|this, _, window, cx| this.replace(&Replace, window, cx)),
+                        ))
+                        .child(
+                            bar_button(theme, "replace-all", "Replace All", "Replace All")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.replace_all(&ReplaceAll, window, cx)
+                                })),
+                        )
+                });
         Some(
             div()
                 .id("find-bar")
                 .key_context(KEY_CONTEXT)
                 .role(Role::Group)
-                .aria_label("Find")
+                .aria_label(if replace_row.is_some() {
+                    "Find and Replace"
+                } else {
+                    "Find"
+                })
                 .flex()
-                .items_center()
-                .gap_2()
+                .flex_col()
+                .gap(px(6.))
                 .px_3()
                 .py(px(6.))
                 .border_b_1()
@@ -372,42 +562,8 @@ impl DocumentView {
                 .text_color(theme.text)
                 .text_size(px(12.))
                 .line_height(px(16.))
-                .child(div().flex_1().max_w(px(320.)).min_w(px(120.)).child(field))
-                .child(
-                    div()
-                        .id("find-status")
-                        .role(Role::Status)
-                        .aria_label(status.clone())
-                        .min_w(px(64.))
-                        .text_color(theme.muted_text)
-                        .child(status),
-                )
-                .child(
-                    bar_button(theme, "find-previous", "‹", "Previous Match")
-                        .on_click(cx.listener(|this, _, _, cx| this.step_match(false, cx))),
-                )
-                .child(
-                    bar_button(theme, "find-next", "›", "Next Match")
-                        .on_click(cx.listener(|this, _, _, cx| this.step_match(true, cx))),
-                )
-                .child(
-                    toggle("find-match-case", "Match Case", options.match_case).on_click(
-                        cx.listener(|this, _, _, cx| {
-                            this.toggle_option(|options| options.match_case ^= true, cx)
-                        }),
-                    ),
-                )
-                .child(
-                    toggle("find-whole-word", "Whole Words", options.whole_word).on_click(
-                        cx.listener(|this, _, _, cx| {
-                            this.toggle_option(|options| options.whole_word ^= true, cx)
-                        }),
-                    ),
-                )
-                .child(div().flex_1())
-                .child(bar_button(theme, "find-done", "Done", "Done").on_click(
-                    cx.listener(|this, _, window, cx| this.hide_find(&HideFind, window, cx)),
-                ))
+                .child(find_row)
+                .children(replace_row)
                 .into_any_element(),
         )
     }
@@ -423,6 +579,15 @@ impl DocumentView {
     #[doc(hidden)]
     pub fn find_status(&self) -> (Option<usize>, usize) {
         (self.find.current, self.find.matches.len())
+    }
+
+    /// Types `text` into the find bar's replacement, as the smoke test does.
+    #[cfg(debug_assertions)]
+    #[doc(hidden)]
+    pub fn type_replacement(&mut self, text: &str, cx: &mut Context<Self>) {
+        if let Some(field) = &self.find.replace_field {
+            field.update(cx, |field, cx| field.set_text(text, cx));
+        }
     }
 
     /// Types `text` into the find bar's query, as the smoke test does.

@@ -55,6 +55,7 @@ Add ⇧ to any movement to select as you go.
 | Shortcut | What it does |
 |---|---|
 | ⌘F | Find: opens the find bar |
+| ⌥⌘F | Find and Replace. In the replacement, ↩ replaces the match and goes to the next. |
 | ⌘G ⇧⌘G | Next or previous match. In the find bar, ↩ and ⇧↩ do the same. |
 | ⌘E | Use the selection for Find |
 | Esc | In the find bar, close it, leaving the match selected |

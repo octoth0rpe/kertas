@@ -100,6 +100,43 @@ impl History {
         selection_after
     }
 
+    /// Replaces each of `edits`' ranges in `buffer` with its text, as one
+    /// undo step that restores `selection_before`; redo selects
+    /// `selection_after`. The ranges are in the text before any of them
+    /// change, in order, and don't overlap.
+    pub fn replace_all(
+        &mut self,
+        buffer: &mut Buffer,
+        edits: &[(Range<usize>, String)],
+        selection_before: Selection,
+        selection_after: Selection,
+        now: Instant,
+    ) {
+        // From the end, so the ranges before each are still where they were.
+        let changes = edits
+            .iter()
+            .rev()
+            .map(|(range, text)| {
+                let change = Change {
+                    at: range.start,
+                    old_text: buffer.slice(range.clone()),
+                    new_text: text.clone(),
+                };
+                buffer.replace(range.clone(), text);
+                change
+            })
+            .collect();
+        self.redo.clear();
+        self.undo.push(Step {
+            changes,
+            selection_before,
+            selection_after,
+            kind: EditKind::Other,
+            last_edit: now,
+        });
+        self.can_group = false;
+    }
+
     /// Changes where redo puts the selection after the last edit, for edits
     /// that don't leave the caret after the inserted text.
     pub fn set_selection_after(&mut self, selection: Selection) {
@@ -202,6 +239,24 @@ mod tests {
             let at = self.selection.head;
             self.edit(at - 1..at, "", EditKind::Deleting);
         }
+    }
+
+    #[test]
+    fn replacing_all_is_one_step() {
+        let mut f = Fixture::new("a cat and a cat");
+        let edits = [(2..5, "dog".to_owned()), (12..15, "lion".to_owned())];
+        f.history.replace_all(
+            &mut f.buffer,
+            &edits,
+            Selection::caret(0),
+            Selection::caret(1),
+            f.now,
+        );
+        assert_eq!(text(&f.buffer), "a dog and a lion");
+        assert_eq!(f.history.undo(&mut f.buffer), Some(Selection::caret(0)));
+        assert_eq!(text(&f.buffer), "a cat and a cat");
+        assert_eq!(f.history.redo(&mut f.buffer), Some(Selection::caret(1)));
+        assert_eq!(text(&f.buffer), "a dog and a lion");
     }
 
     #[test]

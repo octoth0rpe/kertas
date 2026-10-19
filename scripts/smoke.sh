@@ -134,6 +134,7 @@ run edited showcase.md
 run marks marks.md
 run hover marks.md
 run find find.md
+run replace find.md
 run rename showcase.md
 run quit showcase.md --exits
 run bench 10k.md

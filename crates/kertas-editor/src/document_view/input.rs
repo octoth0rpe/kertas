@@ -32,7 +32,7 @@ impl DocumentView {
 
     /// Re-measures the items an edit changed and shows its selection,
     /// which reveals its item again.
-    fn apply(&mut self, change: Change, cx: &mut Context<Self>) {
+    pub(super) fn apply(&mut self, change: Change, cx: &mut Context<Self>) {
         self.close_hover(cx);
         let Some(open) = &mut self.open else {
             return;
@@ -41,7 +41,13 @@ impl DocumentView {
         // The revealed items' indices and sources may have changed.
         open.revealed.clear();
         *open.revealed_layout.borrow_mut() = None;
-        self.set_selection(change.selection, cx);
+        if open.editor.selection().is_some() {
+            self.set_selection(change.selection, cx);
+        } else {
+            // An edit with no caret, such as Replace All (#123).
+            super::caret::reveal(open);
+            cx.notify();
+        }
         self.schedule_autosave(cx);
         self.schedule_edited(cx);
     }

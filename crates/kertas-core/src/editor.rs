@@ -419,6 +419,64 @@ impl Editor {
         Some(self.text_changed(selection))
     }
 
+    /// Replaces each of `edits`' ranges with its text, as one undo step,
+    /// such as Replace All. The ranges are byte ranges of the text as it is
+    /// now, on character boundaries; they're sorted, and mustn't overlap.
+    /// The selection keeps its place in the text around the edits, and one
+    /// inside an edited range moves to the end of its new text; with no
+    /// selection, there's still none afterwards. Returns
+    /// `None`, changing nothing, if there are no edits, the ranges aren't
+    /// valid, or the document is read-only.
+    pub fn replace_ranges(&mut self, mut edits: Vec<(Range<usize>, String)>) -> Option<Change> {
+        edits.sort_by_key(|(range, _)| (range.start, range.end));
+        let text = self.text();
+        let valid = edits
+            .windows(2)
+            .all(|pair| pair[0].0.end <= pair[1].0.start)
+            && edits.iter().all(|(range, _)| {
+                range.start <= range.end
+                    && text.is_char_boundary(range.start)
+                    && text.is_char_boundary(range.end)
+            });
+        if self.read_only || edits.is_empty() || !valid {
+            return None;
+        }
+        let map = |offset: usize| {
+            let mut shift = 0isize;
+            for (range, new) in &edits {
+                if offset < range.start {
+                    break;
+                }
+                if offset < range.end {
+                    return (range.start as isize + shift) as usize + new.len();
+                }
+                shift += new.len() as isize - range.len() as isize;
+            }
+            (offset as isize + shift) as usize
+        };
+        let before = self.selection.unwrap_or(Selection::caret(edits[0].0.start));
+        let after = Selection {
+            anchor: map(before.anchor),
+            head: map(before.head),
+        };
+        self.history.break_group();
+        self.history.replace_all(
+            self.document.buffer_mut(),
+            &edits,
+            before,
+            after,
+            Instant::now(),
+        );
+        self.marked = None;
+        let had_selection = self.selection.is_some();
+        let change = self.text_changed(after);
+        // Without a caret, there's still none: nothing starts editing.
+        if !had_selection {
+            self.selection = None;
+        }
+        Some(change)
+    }
+
     /// Reads the document with `syntax` from now on. Returns the items that
     /// changed, or `None` if the syntax is the same.
     pub fn set_syntax(&mut self, syntax: Syntax) -> Option<Splice> {
@@ -720,6 +778,43 @@ mod tests {
         };
         assert!(editor.select(selection));
         editor
+    }
+
+    #[test]
+    fn replacing_ranges_is_one_undo_step() {
+        // The caret is after "and", between the edits.
+        let mut editor = editor_at("A cat and| a cat.\n");
+        let edits = vec![(12..15, "lion".to_owned()), (2..5, "dog".to_owned())];
+        let change = editor.replace_ranges(edits).unwrap();
+        assert_eq!(editor.text(), "A dog and a lion.\n");
+        assert_eq!(change.selection, Selection::caret(9));
+        editor.undo();
+        assert_eq!(editor.text(), "A cat and a cat.\n");
+        assert_eq!(editor.selection(), Some(Selection::caret(9)));
+        editor.redo();
+        assert_eq!(editor.text(), "A dog and a lion.\n");
+    }
+
+    #[test]
+    fn replacing_ranges_needs_valid_ones() {
+        let mut editor = open("A cat.\n");
+        assert!(editor.replace_ranges(vec![]).is_none());
+        let overlapping = vec![(0..3, "x".to_owned()), (2..4, "y".to_owned())];
+        assert!(editor.replace_ranges(overlapping).is_none());
+        assert!(
+            editor
+                .replace_ranges(vec![(0..99, "x".to_owned())])
+                .is_none()
+        );
+        assert_eq!(editor.text(), "A cat.\n");
+        // Without a caret, nothing starts editing.
+        assert!(
+            editor
+                .replace_ranges(vec![(2..5, "dog".to_owned())])
+                .is_some()
+        );
+        assert_eq!(editor.text(), "A dog.\n");
+        assert_eq!(editor.selection(), None);
     }
 
     /// The revealed items as (index, shown source, gap, head).
