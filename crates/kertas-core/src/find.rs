@@ -1,6 +1,6 @@
-//! Finding text in a document (#122). Matches are found in the text as it's
-//! shown, so `**bold**` matches "bold", and are mapped back to where they
-//! are in the source.
+//! Finding text in a document (#122), optionally with a regular expression
+//! (#124). Matches are found in the text as it's shown, so `**bold**`
+//! matches "bold", and are mapped back to where they are in the source.
 
 use std::ops::Range;
 
@@ -18,39 +18,92 @@ pub struct FindOptions {
     pub match_case: bool,
     /// Only whole words match: "cat" doesn't find "category".
     pub whole_word: bool,
+    /// The query is a regular expression, in Rust's `regex` syntax, and a
+    /// replacement can use its groups (`$1`, `${name}`).
+    pub regex: bool,
 }
+
+/// The most memory a regular expression may compile to. Matching takes
+/// time in proportion to the text whatever the pattern, so none hangs, but
+/// a huge one (`a{1000}{1000}`) is turned down rather than built.
+const REGEX_SIZE_LIMIT: usize = 1 << 20;
 
 /// What to look for, ready to search with.
 #[derive(Debug, Clone)]
 pub struct Query {
     regex: Regex,
     whole_word: bool,
+    /// Whether a replacement's `$` refer to the regular expression's
+    /// groups. Otherwise it's taken as it is.
+    expands: bool,
 }
 
 impl Query {
-    /// A query for `text` with `options`. `None` if `text` is empty, which
-    /// finds nothing.
-    pub fn new(text: &str, options: FindOptions) -> Option<Self> {
+    /// A query for `text` with `options`. `Ok(None)` if `text` is empty,
+    /// which finds nothing, and an error saying what's wrong if it's a
+    /// regular expression that isn't valid.
+    pub fn new(text: &str, options: FindOptions) -> Result<Option<Self>, String> {
         if text.is_empty() {
-            return None;
+            return Ok(None);
         }
-        let regex = RegexBuilder::new(&regex::escape(text))
+        let pattern = if options.regex {
+            text.to_owned()
+        } else {
+            regex::escape(text)
+        };
+        let regex = RegexBuilder::new(&pattern)
             .case_insensitive(!options.match_case)
+            .size_limit(REGEX_SIZE_LIMIT)
+            .dfa_size_limit(REGEX_SIZE_LIMIT)
             .build()
-            .ok()?;
-        Some(Self {
+            .map_err(|err| error_message(&err))?;
+        Ok(Some(Self {
             regex,
             whole_word: options.whole_word,
-        })
+            expands: options.regex,
+        }))
     }
 
-    /// Where the query matches in `text`, as byte ranges.
-    fn matches_in<'a>(&'a self, text: &'a str) -> impl Iterator<Item = Range<usize>> + 'a {
-        self.regex
-            .find_iter(text)
-            .map(|found| found.range())
-            .filter(move |range| !range.is_empty())
-            .filter(move |range| !self.whole_word || whole_word(text, range))
+    /// Where the query matches in `text`, as byte ranges, with what
+    /// `template` replaces each with, if there is one. Empty matches,
+    /// which a pattern like `a*` finds everywhere, are left out.
+    fn matches_in(&self, text: &str, template: Option<&str>) -> Vec<(Range<usize>, String)> {
+        let keep = |range: &Range<usize>| {
+            !range.is_empty() && (!self.whole_word || whole_word(text, range))
+        };
+        match template {
+            Some(template) if self.expands => self
+                .regex
+                .captures_iter(text)
+                .filter_map(|captures| {
+                    let range = captures.get_match().range();
+                    let mut replacement = String::new();
+                    captures.expand(template, &mut replacement);
+                    keep(&range).then_some((range, replacement))
+                })
+                .collect(),
+            _ => self
+                .regex
+                .find_iter(text)
+                .map(|found| found.range())
+                .filter(keep)
+                .map(|range| (range, template.unwrap_or_default().to_owned()))
+                .collect(),
+        }
+    }
+}
+
+/// What's wrong with a regular expression, in a line: the regex crate's
+/// own message, without the pattern and the caret it draws under it.
+fn error_message(err: &regex::Error) -> String {
+    match err {
+        regex::Error::Syntax(message) => message
+            .lines()
+            .find_map(|line| line.strip_prefix("error: "))
+            .unwrap_or("not a valid regular expression")
+            .to_owned(),
+        regex::Error::CompiledTooBig(_) => "too large".to_owned(),
+        _ => "not a valid regular expression".to_owned(),
     }
 }
 
@@ -86,6 +139,21 @@ impl Match {
 /// run of text, such as a paragraph, a heading or a table cell. Images'
 /// alt text isn't searched, nor the numbers of footnote references.
 pub fn find(model: &Model, query: &Query) -> Vec<Match> {
+    search(model, query, None)
+        .into_iter()
+        .map(|(found, _)| found)
+        .collect()
+}
+
+/// Every match for `query`, as [`find`] finds them, with the text
+/// `template` replaces each with: `template` itself, or for a regular
+/// expression, `template` with its `$1` and `${name}` filled in from the
+/// match's groups.
+pub fn replacements(model: &Model, query: &Query, template: &str) -> Vec<(Match, String)> {
+    search(model, query, Some(template))
+}
+
+fn search(model: &Model, query: &Query, template: Option<&str>) -> Vec<(Match, String)> {
     let mut matches = Vec::new();
     for item in &model.items {
         let start = item.block.start;
@@ -97,25 +165,26 @@ pub fn find(model: &Model, query: &Query) -> Vec<Match> {
                 {
                     continue;
                 }
-                matches.extend(query.matches_in(source).filter_map(|found| {
+                let found = query.matches_in(source, template);
+                matches.extend(found.into_iter().filter_map(|(found, replacement)| {
                     let range = start + found.start..start + found.end;
                     // It's drawn as its source, which it nearly always is.
-                    (model.text.get(range.clone()) == Some(&source[found])).then(|| Match {
-                        range: range.clone(),
-                        pieces: vec![range],
+                    let shown = model.text.get(range.clone()) == Some(&source[found]);
+                    shown.then(|| {
+                        let pieces = vec![range.clone()];
+                        (Match { range, pieces }, replacement)
                     })
                 }));
             }
             block => block.each_text(&mut |text| {
-                matches.extend(
-                    query
-                        .matches_in(&text.text)
-                        .filter_map(|range| text_match(text, range, start)),
-                )
+                let found = query.matches_in(&text.text, template);
+                matches.extend(found.into_iter().filter_map(|(range, replacement)| {
+                    Some((text_match(text, range, start)?, replacement))
+                }))
             }),
         }
     }
-    matches.sort_by_key(|found| (found.range.start, found.range.end));
+    matches.sort_by_key(|(found, _)| (found.range.start, found.range.end));
     matches
 }
 
@@ -199,7 +268,7 @@ mod tests {
 
     fn ranges(text: &str, query: &str, options: FindOptions) -> Vec<Range<usize>> {
         let model = Model::new(text);
-        let query = Query::new(query, options).unwrap();
+        let query = Query::new(query, options).unwrap().unwrap();
         find(&model, &query)
             .into_iter()
             .map(|found| found.range)
@@ -252,7 +321,7 @@ mod tests {
     fn a_match_across_formatting_leaves_out_the_syntax() {
         let text = "bo**ld**\n";
         let model = Model::new(text);
-        let query = Query::new("bold", FindOptions::default()).unwrap();
+        let query = Query::new("bold", FindOptions::default()).unwrap().unwrap();
         let matches = find(&model, &query);
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].range, 0..6);
@@ -263,7 +332,10 @@ mod tests {
     fn replacing_changes_only_the_matched_text() {
         let text = "Some **bold** text and bo**ld**.\n";
         let model = Model::new(text);
-        let matches = find(&model, &Query::new("bold", FindOptions::default()).unwrap());
+        let matches = find(
+            &model,
+            &Query::new("bold", FindOptions::default()).unwrap().unwrap(),
+        );
         let mut replaced = text.to_owned();
         for found in matches.iter().rev() {
             for (range, new) in found.replacement("strong").into_iter().rev() {
@@ -289,7 +361,10 @@ mod tests {
     fn goes_from_an_offset_wrapping_around() {
         let text = "fox fox fox\n";
         let model = Model::new(text);
-        let matches = find(&model, &Query::new("fox", FindOptions::default()).unwrap());
+        let matches = find(
+            &model,
+            &Query::new("fox", FindOptions::default()).unwrap().unwrap(),
+        );
         assert_eq!(first_from(&matches, 0), Some(0));
         assert_eq!(first_from(&matches, 1), Some(1));
         assert_eq!(first_from(&matches, 9), Some(0));
@@ -298,6 +373,72 @@ mod tests {
 
     #[test]
     fn an_empty_query_finds_nothing() {
-        assert!(Query::new("", FindOptions::default()).is_none());
+        assert!(Query::new("", FindOptions::default()).unwrap().is_none());
+    }
+
+    fn regex() -> FindOptions {
+        FindOptions {
+            regex: true,
+            ..FindOptions::default()
+        }
+    }
+
+    #[test]
+    fn a_plain_query_is_taken_literally() {
+        assert_eq!(found("Cost: $5 (or a.b)\n", "$5 (or a."), ["$5 (or a."]);
+        assert!(found("Cost: $5 (or a.b)\n", "a.c").is_empty());
+    }
+
+    #[test]
+    fn regular_expressions_match_the_text_as_shown() {
+        let text = "Ann met **Bob**, then Cy.\n";
+        let case = FindOptions {
+            match_case: true,
+            ..regex()
+        };
+        let names: Vec<&str> = ranges(text, r"\b[A-Z][a-z]+\b", case)
+            .into_iter()
+            .map(|range| &text[range])
+            .collect();
+        assert_eq!(names, ["Ann", "Bob", "Cy"]);
+        // `^` is the start of a run of text, not of its source.
+        assert_eq!(ranges("**Bold** start\n", "^bold", regex()), [2..6]);
+    }
+
+    #[test]
+    fn replacements_fill_in_groups() {
+        let model = Model::new("Smith, Ann and Jones, Bob.\n");
+        let query = Query::new(r"(\w+), (?<first>\w+)", regex())
+            .unwrap()
+            .unwrap();
+        let replaced: Vec<String> = replacements(&model, &query, "${first} $1")
+            .into_iter()
+            .map(|(_, replacement)| replacement)
+            .collect();
+        assert_eq!(replaced, ["Ann Smith", "Bob Jones"]);
+        // Without Regex, `$` is just a dollar sign.
+        let plain = Query::new("Ann", FindOptions::default()).unwrap().unwrap();
+        let replaced = replacements(&model, &plain, "$1");
+        assert_eq!(replaced[0].1, "$1");
+    }
+
+    #[test]
+    fn an_invalid_pattern_says_why() {
+        assert_eq!(
+            Query::new("(unclosed", regex()).unwrap_err(),
+            "unclosed group"
+        );
+        assert_eq!(
+            Query::new("a{1000}{1000}", regex()).unwrap_err(),
+            "too large"
+        );
+        // The same text is fine as a plain query.
+        assert!(Query::new("(unclosed", FindOptions::default()).is_ok());
+    }
+
+    #[test]
+    fn empty_matches_are_left_out() {
+        assert!(ranges("abc\n", "x*", regex()).is_empty());
+        assert_eq!(ranges("abc\n", "b*", regex()), [1..2]);
     }
 }

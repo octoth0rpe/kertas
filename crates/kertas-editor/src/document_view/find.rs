@@ -1,5 +1,6 @@
 //! The find bar (#122): finding text in the document as it's shown, going
-//! from match to match, and replacing matches (#123).
+//! from match to match, replacing matches (#123), and regular expressions
+//! (#124).
 
 use std::rc::Rc;
 
@@ -11,6 +12,7 @@ use kertas_core::blocks::BlockKind;
 use kertas_core::editor::Selection;
 use kertas_core::find::{self, FindOptions, Match, Query};
 use kertas_core::model::Model;
+use kertas_core::rendered::AlertKind;
 
 use super::heights::Heights;
 use super::render::bar_button;
@@ -52,6 +54,11 @@ pub(super) struct FindState {
     found_in: Option<Rc<Model>>,
     /// The match the bar is at.
     current: Option<usize>,
+    /// The query the matches were found with, if it's valid.
+    query: Option<Query>,
+    /// What's wrong with the query, if it's a regular expression that
+    /// isn't valid (#124).
+    error: Option<String>,
     /// The replacement's field, made when it's first shown (#123).
     replace_field: Option<Entity<TextField>>,
     /// Whether the bar shows the replacement too.
@@ -123,13 +130,19 @@ impl DocumentView {
         cx.notify();
     }
 
-    /// The replacement's text.
-    fn replacement(&self, cx: &gpui::App) -> String {
-        self.find
+    /// Every match, with the text the replacement replaces it with: as
+    /// typed, or with a regular expression's groups filled in.
+    fn replacements(&self, cx: &gpui::App) -> Vec<(Match, String)> {
+        let (Some(query), Some(model)) = (&self.find.query, &self.find.found_in) else {
+            return Vec::new();
+        };
+        let template = self
+            .find
             .replace_field
             .as_ref()
             .map(|field| field.read(cx).text().to_owned())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        find::replacements(model, query, &template)
     }
 
     /// Replace, or ↩ in the replacement: replaces the match the bar is at,
@@ -151,7 +164,13 @@ impl DocumentView {
             }
             return cx.notify();
         };
-        let replacement = self.replacement(cx);
+        let Some((_, replacement)) = self
+            .replacements(cx)
+            .into_iter()
+            .find(|(each, _)| each.range == found.range)
+        else {
+            return;
+        };
         let Some(open) = &mut self.open else {
             return;
         };
@@ -173,14 +192,12 @@ impl DocumentView {
     /// Replace All: replaces every match, as one undo step.
     pub(super) fn replace_all(&mut self, _: &ReplaceAll, _: &mut Window, cx: &mut Context<Self>) {
         self.refresh_matches(cx);
-        let replacement = self.replacement(cx);
-        let edits: Vec<_> = self
-            .find
-            .matches
+        let replacements = self.replacements(cx);
+        let count = replacements.len();
+        let edits: Vec<_> = replacements
             .iter()
-            .flat_map(|found| found.replacement(&replacement))
+            .flat_map(|(found, replacement)| found.replacement(replacement))
             .collect();
-        let count = self.find.matches.len();
         let Some(open) = &mut self.open else {
             return;
         };
@@ -295,8 +312,12 @@ impl DocumentView {
         };
         let model = open.editor.model().clone();
         let query = Query::new(&self.find.query_text(cx), self.find.options);
-        self.find.matches = Rc::new(match query {
-            Some(query) => find::find(&model, &query),
+        (self.find.query, self.find.error) = match query {
+            Ok(query) => (query, None),
+            Err(error) => (None, Some(error)),
+        };
+        self.find.matches = Rc::new(match &self.find.query {
+            Some(query) => find::find(&model, query),
             None => Vec::new(),
         });
         self.find.found_in = Some(model);
@@ -462,6 +483,7 @@ impl DocumentView {
         field.update(cx, |field, cx| field.set_theme(theme, cx));
         let count = self.find.matches.len();
         let status: SharedString = match (self.find.current, count) {
+            _ if let Some(error) = &self.find.error => error.clone().into(),
             _ if let Some(replaced) = self.find.replaced => format!("Replaced {replaced}").into(),
             _ if field.read(cx).text().is_empty() => "".into(),
             (_, 0) => "Not found".into(),
@@ -487,7 +509,10 @@ impl DocumentView {
                     .role(Role::Status)
                     .aria_label(status.clone())
                     .min_w(px(64.))
-                    .text_color(theme.muted_text)
+                    .text_color(match self.find.error {
+                        Some(_) => theme.alert(AlertKind::Caution),
+                        None => theme.muted_text,
+                    })
                     .child(status),
             )
             .child(
@@ -506,6 +531,11 @@ impl DocumentView {
             .child(
                 toggle("find-whole-word", "Whole Words", options.whole_word).on_click(cx.listener(
                     |this, _, _, cx| this.toggle_option(|options| options.whole_word ^= true, cx),
+                )),
+            )
+            .child(
+                toggle("find-regex", "Regex", options.regex).on_click(cx.listener(
+                    |this, _, _, cx| this.toggle_option(|options| options.regex ^= true, cx),
                 )),
             )
             .child(div().flex_1())
@@ -579,6 +609,22 @@ impl DocumentView {
     #[doc(hidden)]
     pub fn find_status(&self) -> (Option<usize>, usize) {
         (self.find.current, self.find.matches.len())
+    }
+
+    /// Turns the Regex option on or off, as its button does, for the smoke
+    /// test.
+    #[cfg(debug_assertions)]
+    #[doc(hidden)]
+    pub fn set_find_regex(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.find.options.regex = on;
+        self.find_from_caret(cx);
+    }
+
+    /// What's wrong with the find bar's query, for the smoke test.
+    #[cfg(debug_assertions)]
+    #[doc(hidden)]
+    pub fn find_error(&self) -> Option<String> {
+        self.find.error.clone()
     }
 
     /// Types `text` into the find bar's replacement, as the smoke test does.
