@@ -17,7 +17,7 @@
 //!   `web-images`: see
 //!   each function.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -2240,6 +2240,44 @@ fn smoke_anchors(window: DocumentWindowHandle, cx: &mut App) {
                 again == Some(61),
             );
         }
+
+        // A host deciding what links open (#118): the click is passed on,
+        // and the view stays put.
+        dispatch(window, cx, Box::new(SelectTab1));
+        pause(cx, 5).await;
+        window
+            .update(cx, |view, window, cx| {
+                view.follow_link("#anchors", window, cx)
+            })
+            .ok();
+        pause(cx, 5).await;
+        let clicked = Rc::new(RefCell::new(Vec::new()));
+        let host_view = tab_views(window, cx).into_iter().next();
+        let _links_subscription = host_view.as_ref().map(|view| {
+            let clicked = clicked.clone();
+            cx.update(|cx| {
+                cx.subscribe(view, move |_, event, _| {
+                    if let kertas_editor::DocumentEvent::LinkClicked { destination } = event {
+                        clicked.borrow_mut().push(destination.clone());
+                    }
+                })
+            })
+        });
+        window
+            .update(cx, |view, _, _| view.set_links_to_host(true))
+            .ok();
+        click_link(1, cx).await;
+        let top = top_item(window, cx);
+        checks.check(
+            &format!(
+                "a host gets the link instead ({:?}, top item {top:?})",
+                clicked.borrow()
+            ),
+            *clicked.borrow() == ["#setup"] && top == Some(0),
+        );
+        window
+            .update(cx, |view, _, _| view.set_links_to_host(false))
+            .ok();
 
         // Text shown view-only can't be selected (#134).
         let refused = window

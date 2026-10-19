@@ -159,6 +159,8 @@ impl DocumentWindow {
             }
             // Kertas shows nothing that follows the text or the caret.
             TabsEvent::Document(_, DocumentEvent::Edited | DocumentEvent::CaretMoved) => {}
+            // Kertas follows links itself, so it never asks for these.
+            TabsEvent::Document(_, DocumentEvent::LinkClicked { .. }) => {}
             TabsEvent::Document(_, DocumentEvent::OpenFile { path, anchor }) => {
                 let (path, anchor) = (path.clone(), anchor.clone());
                 cx.defer(move |cx| windows::open_path_at(path, anchor, cx));

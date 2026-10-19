@@ -139,10 +139,10 @@ impl ClickTarget {
             .ok();
     }
 
-    /// Follows a clicked link to `destination`.
-    pub fn follow_link(&self, destination: &str, window: &mut Window, cx: &mut App) {
+    /// Reports a click on a link to `destination`.
+    pub fn click_link(&self, destination: &str, window: &mut Window, cx: &mut App) {
         self.view
-            .update(cx, |view, cx| view.follow_link(destination, window, cx))
+            .update(cx, |view, cx| view.click_link(destination, window, cx))
             .ok();
     }
 
@@ -765,7 +765,7 @@ impl RenderOnce for DocumentImage {
                 if let Some(link) = &self.link
                     && !event.modifiers().modified()
                 {
-                    follow.follow_link(&link.destination, window, cx);
+                    follow.click_link(&link.destination, window, cx);
                 }
             })
             .child(content)
@@ -814,7 +814,7 @@ fn clickable_run(text: &InlineText, style: &TextStyle, accessible: bool) -> AnyE
                     return;
                 }
                 if let Some(link) = links.get(index) {
-                    follow.follow_link(&link.destination, window, cx);
+                    follow.click_link(&link.destination, window, cx);
                 }
             })
             .into_any_element()
