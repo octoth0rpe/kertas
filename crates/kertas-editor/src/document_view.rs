@@ -248,6 +248,11 @@ pub enum DocumentEvent {
         range: std::ops::Range<usize>,
         position: gpui::Point<Pixels>,
     },
+    /// The host's item in a misspelled word's menu was chosen (see
+    /// [`DocumentView::set_add_word_item`]), to add `word` wherever the
+    /// host keeps its words. It's the word as it's looked up, without a
+    /// possessive ending.
+    AddWord { word: String },
 }
 
 pub struct DocumentView {
@@ -291,6 +296,8 @@ pub struct DocumentView {
     misspelled: spelling::Misspelled,
     /// The menu of a misspelled word, while it's open (#142).
     spelling_menu: Option<spelling::SpellingMenu>,
+    /// What the host set about spelling (#143).
+    host_spelling: spelling::HostSpelling,
     /// What the host shows when the pointer rests on a link or a mark
     /// (#126).
     hover_popover: Option<HoverPopover>,
@@ -367,6 +374,7 @@ impl DocumentView {
             marks_model: None,
             misspelled: Default::default(),
             spelling_menu: None,
+            host_spelling: Default::default(),
             hover_popover: None,
             hover: None,
             hover_epoch: 0,

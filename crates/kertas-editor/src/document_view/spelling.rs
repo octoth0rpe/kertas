@@ -1,14 +1,18 @@
 //! Underlining misspelled words (#141), checked in the background once
 //! typing pauses, in the language the configuration names, and their menu
 //! (#142): suggestions, Ignore and Add to Dictionary.
+//!
+//! A host can steer it (#143): set the language, add words it knows, such
+//! as its characters' names, and put its own item in the menu in place of
+//! Add for This Document.
 
 use std::rc::Rc;
 
-use gpui::{AppContext, Context, Entity, Hsla, Pixels, Point, Subscription, Window};
+use gpui::{AppContext, Context, Entity, Hsla, Pixels, Point, SharedString, Subscription, Window};
 use kertas_core::rendered::AlertKind;
 use kertas_core::spelling::{self, Word};
 
-use super::DocumentView;
+use super::{DocumentEvent, DocumentView};
 use crate::context_menu::{ContextMenu, Dismissed};
 use crate::marks::{self, Mark, MarkStyle};
 
@@ -16,6 +20,18 @@ use crate::marks::{self, Mark, MarkStyle};
 pub(super) struct SpellingMenu {
     pub(super) menu: Entity<ContextMenu>,
     _dismissed: Subscription,
+}
+
+/// What a host set about spelling. It stays as it is when another
+/// document is opened.
+#[derive(Default)]
+pub(super) struct HostSpelling {
+    /// The language, in place of the configuration's.
+    language: Option<String>,
+    /// The words the host knows are spelled right.
+    known: Vec<String>,
+    /// The label of the host's item in the menu.
+    add_word: Option<SharedString>,
 }
 
 /// How many suggestions the menu offers at most.
@@ -33,6 +49,44 @@ pub(super) struct Misspelled {
 }
 
 impl DocumentView {
+    /// Checks spelling in `language`, a language tag naming a dictionary,
+    /// in place of the configuration's `spelling_language`, or in that
+    /// again with `None`. If there's no dictionary for it, spelling isn't
+    /// checked, and it's for the host to say so.
+    pub fn set_spelling_language(&mut self, language: Option<String>, cx: &mut Context<Self>) {
+        if language != self.host_spelling.language {
+            self.host_spelling.language = language;
+            self.check_spelling(cx);
+        }
+    }
+
+    /// Makes `words` known to be spelled right, replacing the words the
+    /// host gave before. A capitalized word is known if it's given in
+    /// lowercase.
+    pub fn set_known_words(&mut self, words: Vec<String>, cx: &mut Context<Self>) {
+        if words != self.host_spelling.known {
+            self.host_spelling.known = words;
+            self.check_spelling(cx);
+        }
+    }
+
+    /// Puts an item called `label` in a misspelled word's menu, in place
+    /// of Add for This Document, which sends [`DocumentEvent::AddWord`]
+    /// when it's chosen. The host adds the word to its own words, and
+    /// gives them again with [`DocumentView::set_known_words`]. `None`
+    /// puts Add for This Document back.
+    pub fn set_add_word_item(&mut self, label: Option<SharedString>) {
+        self.host_spelling.add_word = label;
+    }
+
+    /// The language spelling is checked in.
+    fn spelling_language(&self) -> &str {
+        self.host_spelling
+            .language
+            .as_deref()
+            .unwrap_or(&self.config.spelling_language)
+    }
+
     /// Checks the document's spelling, in the background, and underlines
     /// what's misspelled once that's done. Spelling isn't checked if the
     /// configuration turns it off, there's no dictionary for its
@@ -49,7 +103,7 @@ impl DocumentView {
             .map(|open| open.editor.model().clone());
         let loading = model
             .as_ref()
-            .and_then(|_| crate::spelling::checker(&self.config.spelling_language, cx));
+            .and_then(|_| crate::spelling::checker(self.spelling_language(), cx));
         let (Some(model), Some(loading)) = (model, loading) else {
             if !self.misspelled.marks.is_empty() {
                 self.misspelled = Misspelled {
@@ -70,6 +124,7 @@ impl DocumentView {
                     .cloned(),
             );
         }
+        known.extend(self.host_spelling.known.iter().cloned());
         cx.spawn(async move |this, cx| {
             let Some(checker) = loading.await else {
                 return;
@@ -119,7 +174,7 @@ impl DocumentView {
         let Some(word) = spelling::word_at(&model, mark.range.start) else {
             return;
         };
-        let Some(loading) = crate::spelling::checker(&self.config.spelling_language, cx) else {
+        let Some(loading) = crate::spelling::checker(self.spelling_language(), cx) else {
             return;
         };
         cx.spawn_in(window, async move |this, cx| {
@@ -165,6 +220,7 @@ impl DocumentView {
         };
         let view = cx.weak_entity();
         let theme = self.theme();
+        let host_item = self.host_spelling.add_word.clone();
         // Words can be added for a document that has a file, in Kertas's
         // settings.
         let document = self
@@ -192,7 +248,17 @@ impl DocumentView {
             menu = menu
                 .separator()
                 .item("Ignore", move |_, cx| crate::spelling::ignore(&ignored, cx));
-            if let Some(path) = document {
+            if let Some(label) = host_item {
+                let (view, added) = (view.clone(), word.word.clone());
+                menu = menu.item(label, move |_, cx| {
+                    view.update(cx, |_, cx| {
+                        cx.emit(DocumentEvent::AddWord {
+                            word: added.clone(),
+                        })
+                    })
+                    .ok();
+                });
+            } else if let Some(path) = document {
                 let added = word.word.clone();
                 menu = menu.item("Add for This Document", move |_, cx| {
                     if let Err(problem) = crate::app_settings::add_document_word(&path, &added, cx)
