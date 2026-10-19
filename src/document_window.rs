@@ -222,20 +222,13 @@ impl DocumentWindow {
             let Some(model) = view.model() else {
                 return;
             };
-            let Some(mtm) = objc2::MainThreadMarker::new() else {
-                return;
-            };
-            let Some(ns_window) = crate::ns_window::ns_window(window) else {
-                return;
-            };
-            crate::print::print(
+            kertas_editor::print::print(
                 &model,
                 view.document_path(),
                 view.web_images_loaded(),
                 &view.config().text,
                 &view.display_name().unwrap_or_default(),
-                &ns_window,
-                mtm,
+                window,
             );
         }
         #[cfg(not(target_os = "macos"))]

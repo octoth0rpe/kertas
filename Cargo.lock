@@ -2404,10 +2404,8 @@ dependencies = [
  "libc",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
- "objc2-core-foundation",
  "objc2-foundation 0.3.2",
  "objc2-uniform-type-identifiers",
- "raw-window-handle",
  "ropey",
  "toml_edit 0.25.17+spec-1.1.0",
 ]
@@ -2427,12 +2425,17 @@ dependencies = [
 name = "kertas-editor"
 version = "0.4.0"
 dependencies = [
+ "block2 0.6.2",
  "futures",
  "gpui",
  "gpui_platform",
  "kertas-core",
  "libc",
+ "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+ "raw-window-handle",
  "toml_edit 0.25.17+spec-1.1.0",
  "unicode-segmentation",
 ]

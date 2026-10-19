@@ -22,8 +22,18 @@ toml_edit.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 # Watching files with kqueue (src/file_watch.rs).
 libc.workspace = true
-# The alert sound for a link to a heading that doesn't exist.
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSGraphics"] }
+# The alert sound for a link to a heading that doesn't exist, and
+# printing (src/print.rs). Same versions GPUI uses.
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "objc2-core-foundation", "NSAttributedString", "NSColor", "NSFont", "NSFontManager", "NSGraphics", "NSImage", "NSLayoutManager", "NSParagraphStyle", "NSPrintInfo", "NSPrintOperation", "NSResponder", "NSText", "NSTextAttachment", "NSTextStorage", "NSTextTable", "NSTextView", "NSView", "NSWindow"] }
+# Printing lays text out in points.
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes"] }
+# Printing, and fetching web images with the system's URL loading
+# (src/web_images.rs).
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSArray", "NSAttributedString", "NSData", "NSDictionary", "NSError", "NSGeometry", "NSRange", "NSString", "NSURL", "NSURLResponse", "NSURLSession", "NSValue"] }
+block2 = "0.6"
+# The NSWindow behind a GPUI window, to print as a sheet on it.
+raw-window-handle = "0.6"
 
 [lints]
 workspace = true

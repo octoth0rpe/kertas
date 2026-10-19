@@ -39,6 +39,11 @@
 //! [`DocumentView::replace_ranges`], say to replace across several
 //! documents. [`text_field::TextField`] is the bar's text field, for a
 //! host's own windows too.
+//!
+//! On macOS, a host can print any document as Kertas does, with the
+//! standard print panel ([`print::print()`]), or write it as a PDF without
+//! one ([`print::save_pdf`]). Web images print once they've loaded, which
+//! needs [`web_images::init`].
 
 pub mod app_settings;
 mod assets;
@@ -47,6 +52,10 @@ mod editor_config;
 pub mod file_watch;
 pub mod help;
 mod marks;
+#[cfg(target_os = "macos")]
+pub mod ns_window;
+#[cfg(target_os = "macos")]
+pub mod print;
 mod problems_bar;
 mod rendered_block;
 mod revealed_block;
@@ -56,6 +65,8 @@ pub mod text_field;
 mod text_style;
 mod theme;
 pub mod view_menu;
+#[cfg(target_os = "macos")]
+pub mod web_images;
 pub mod zoom;
 
 pub use gpui;

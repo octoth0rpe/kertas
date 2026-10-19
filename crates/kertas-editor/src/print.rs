@@ -1,5 +1,8 @@
-//! Printing (#17): File > Print… shows the standard macOS print panel, as a
-//! sheet on the document's window. Its PDF menu saves PDFs.
+//! Printing (#17), for the app and for hosts (#127): [`print()`] shows the
+//! standard macOS print panel, as a sheet on a window, whose PDF menu
+//! saves PDFs, and [`save_pdf`] writes a PDF without any panels. Both
+//! take any document, as a [`Model`] of its text, in the light palette
+//! and the fonts its [`TextSettings`] choose. macOS only.
 //!
 //! The document is laid out for printing by [`PrintLayout`], turned into an
 //! `NSAttributedString` here, and printed from an offscreen `NSTextView`.
@@ -12,8 +15,9 @@ use kertas_core::links::ImageLocation;
 use kertas_core::model::Model;
 use kertas_core::print_layout::{Alignment, Frame, PrintLayout};
 use kertas_core::rendered::heading_scale;
-use kertas_editor::TextSettings;
-use kertas_editor::Theme;
+use raw_window_handle::HasWindowHandle;
+
+use crate::{TextSettings, Theme};
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{AnyThread, MainThreadMarker};
@@ -23,7 +27,7 @@ use objc2_app_kit::{
     NSMutableParagraphStyle, NSParagraphStyleAttributeName, NSPrintInfo, NSPrintOperation,
     NSPrintingPaginationMode, NSStrikethroughStyleAttributeName, NSTextAlignment, NSTextAttachment,
     NSTextBlock, NSTextBlockDimension, NSTextBlockLayer, NSTextBlockValueType, NSTextTable,
-    NSTextTableBlock, NSTextView, NSUnderlineStyleAttributeName, NSWindow,
+    NSTextTableBlock, NSTextView, NSUnderlineStyleAttributeName,
 };
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::{
@@ -37,24 +41,29 @@ const CODE: f64 = 9.5;
 /// Page margins, in points.
 const MARGIN: f64 = 54.;
 
-/// Shows the print panel for `model` as a sheet on `window`, laid out with
-/// `settings`. Web images print if `web_images` is set and they've been
-/// loaded (#97).
+/// Shows the print panel for `model` as a sheet on `window`, a GPUI
+/// window, laid out with `settings`, the job named `title`. `document` is
+/// the document's file, which images' relative paths start from. Web
+/// images print if `web_images` is set and they've been loaded (#97).
+/// Does nothing off the main thread.
 pub fn print(
     model: &Model,
     document: Option<&std::path::Path>,
     web_images: bool,
     settings: &TextSettings,
     title: &str,
-    window: &NSWindow,
-    mtm: MainThreadMarker,
+    window: &impl HasWindowHandle,
 ) {
+    let (Some(mtm), Some(window)) = (MainThreadMarker::new(), crate::ns_window::ns_window(window))
+    else {
+        return;
+    };
     let operation = operation(model, document, web_images, settings, mtm);
     operation.setJobTitle(Some(&NSString::from_str(title)));
     // SAFETY: no delegate or callback, so nothing to keep alive.
     unsafe {
         operation.runOperationModalForWindow_delegate_didRunSelector_contextInfo(
-            window,
+            &window,
             None,
             None,
             std::ptr::null_mut(),
@@ -62,15 +71,18 @@ pub fn print(
     }
 }
 
-/// Prints `model` to a PDF at `path` without any panels, for `kt
-/// --convert` and the smoke test. Returns whether it worked.
+/// Prints `model` to a PDF at `path` without any panels, as [`print()`]
+/// does, but without web images. Returns whether it worked, which it
+/// can't off the main thread.
 pub fn save_pdf(
     model: &Model,
     document: Option<&std::path::Path>,
     settings: &TextSettings,
     path: &std::path::Path,
-    mtm: MainThreadMarker,
 ) -> bool {
+    let Some(mtm) = MainThreadMarker::new() else {
+        return false;
+    };
     use objc2::runtime::ProtocolObject;
     use objc2_app_kit::{NSPrintJobSavingURL, NSPrintSaveJob};
     use objc2_foundation::NSURL;
