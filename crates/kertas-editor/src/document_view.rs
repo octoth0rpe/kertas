@@ -11,8 +11,6 @@ mod autosave;
 mod caret;
 mod disk;
 mod fade;
-#[cfg(test)]
-pub(crate) use fade::FADED_OPACITY;
 mod files;
 mod heights;
 mod input;

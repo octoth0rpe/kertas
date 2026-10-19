@@ -4,7 +4,7 @@
 //! the macOS appearance. Themes come from theme files; see
 //! [`kertas_core::themes`].
 
-use gpui::{Hsla, Window, WindowAppearance, rgba};
+use gpui::{Hsla, Rgba, Window, WindowAppearance, rgba};
 use kertas_core::rendered::AlertKind;
 use kertas_core::settings::AppearanceSetting;
 use kertas_core::themes::{self, Appearance, Color, Palette};
@@ -101,30 +101,63 @@ impl From<&Palette> for Theme {
     }
 }
 
+/// The dimmest the blocks that aren't being edited are drawn (#121), as
+/// an opacity.
+pub(crate) const FADED_OPACITY: f32 = 0.5;
+
+/// The least contrast faded text keeps against the background (#121).
+const FADED_CONTRAST: f32 = 3.;
+
+impl Theme {
+    /// How opaque the blocks that aren't being edited are drawn (#121): as
+    /// dim as [`FADED_OPACITY`], or less if this theme's text would then
+    /// have less than 3:1 contrast against its background.
+    pub(crate) fn faded_opacity(&self) -> f32 {
+        let readable = |opacity: f32| {
+            contrast(over(self.text, opacity, self.background), self.background) >= FADED_CONTRAST
+        };
+        // In steps of 1%, from the dimmest up.
+        (0..=100)
+            .map(|step| FADED_OPACITY + (1. - FADED_OPACITY) * step as f32 / 100.)
+            .find(|&opacity| readable(opacity))
+            .unwrap_or(1.)
+    }
+}
+
+/// WCAG relative luminance.
+fn luminance(color: Hsla) -> f32 {
+    let rgba = Rgba::from(color);
+    let channel = |c: f32| {
+        if c <= 0.03928 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * channel(rgba.r) + 0.7152 * channel(rgba.g) + 0.0722 * channel(rgba.b)
+}
+
+/// WCAG contrast ratio between two colors, from 1 to 21.
+pub(crate) fn contrast(a: Hsla, b: Hsla) -> f32 {
+    let (a, b) = (luminance(a), luminance(b));
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+
+/// `color` drawn at `opacity` over `background`.
+pub(crate) fn over(color: Hsla, opacity: f32, background: Hsla) -> Hsla {
+    let (color, background) = (Rgba::from(color), Rgba::from(background));
+    let mix = |c: f32, b: f32| c * opacity + b * (1. - opacity);
+    Hsla::from(Rgba {
+        r: mix(color.r, background.r),
+        g: mix(color.g, background.g),
+        b: mix(color.b, background.b),
+        a: 1.,
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use gpui::Rgba;
-
     use super::*;
-
-    /// WCAG relative luminance.
-    fn luminance(color: Hsla) -> f32 {
-        let rgba = Rgba::from(color);
-        let channel = |c: f32| {
-            if c <= 0.03928 {
-                c / 12.92
-            } else {
-                ((c + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        0.2126 * channel(rgba.r) + 0.7152 * channel(rgba.g) + 0.0722 * channel(rgba.b)
-    }
-
-    /// WCAG contrast ratio between two colors, from 1 to 21.
-    fn contrast(a: Hsla, b: Hsla) -> f32 {
-        let (a, b) = (luminance(a), luminance(b));
-        (a.max(b) + 0.05) / (a.min(b) + 0.05)
-    }
 
     #[test]
     fn text_is_readable_in_every_builtin_theme() {
@@ -161,25 +194,12 @@ mod tests {
         }
     }
 
-    /// `color` drawn at `opacity` over `background`.
-    fn over(color: Hsla, opacity: f32, background: Hsla) -> Hsla {
-        let (color, background) = (Rgba::from(color), Rgba::from(background));
-        let mix = |c: f32, b: f32| c * opacity + b * (1. - opacity);
-        Hsla::from(Rgba {
-            r: mix(color.r, background.r),
-            g: mix(color.g, background.g),
-            b: mix(color.b, background.b),
-            a: 1.,
-        })
-    }
-
     #[test]
     fn faded_text_is_readable_in_every_builtin_theme() {
-        let opacity = crate::document_view::FADED_OPACITY;
         for theme in themes::builtin() {
             for (half, palette) in [("light", &theme.light), ("dark", &theme.dark)] {
                 let colors = Theme::from(palette);
-                let faded = over(colors.text, opacity, colors.background);
+                let faded = over(colors.text, colors.faded_opacity(), colors.background);
                 let ratio = contrast(faded, colors.background);
                 // #121: at least 3:1 for faded body text.
                 assert!(
@@ -189,6 +209,23 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn faded_text_is_as_dim_as_it_can_be() {
+        let opacity = |light: bool| {
+            let theme = &themes::builtin()[0];
+            Theme::from(if light { &theme.light } else { &theme.dark }).faded_opacity()
+        };
+        // Kertas's own theme reaches the dimmest.
+        assert_eq!(opacity(true), FADED_OPACITY);
+        assert_eq!(opacity(false), FADED_OPACITY);
+        let solarized = themes::builtin()
+            .iter()
+            .find(|theme| theme.name == "Solarized")
+            .unwrap();
+        let light = Theme::from(&solarized.light);
+        assert!(light.faded_opacity() > FADED_OPACITY);
     }
 
     #[test]
