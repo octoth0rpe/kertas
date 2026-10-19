@@ -136,6 +136,7 @@ run hover marks.md
 run find find.md
 run replace find.md
 run regex find.md
+run host-find find.md
 run rename showcase.md
 run quit showcase.md --exits
 run bench 10k.md

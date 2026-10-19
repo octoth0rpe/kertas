@@ -91,6 +91,7 @@ pub fn editor_config(cx: &App) -> EditorConfig {
         typewriter_scrolling: settings.typewriter_scrolling,
         // Kertas reads standard Markdown; a host turns these on itself.
         wiki_links: false,
+        find_options: Default::default(),
     }
 }
 

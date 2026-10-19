@@ -32,7 +32,7 @@ impl DocumentView {
 
     /// Re-measures the items an edit changed and shows its selection,
     /// which reveals its item again.
-    pub(super) fn apply(&mut self, change: Change, cx: &mut Context<Self>) {
+    fn apply(&mut self, change: Change, cx: &mut Context<Self>) {
         self.close_hover(cx);
         let Some(open) = &mut self.open else {
             return;
@@ -50,6 +50,29 @@ impl DocumentView {
         }
         self.schedule_autosave(cx);
         self.schedule_edited(cx);
+    }
+
+    /// Replaces each of `edits`' byte ranges of the text with its new text,
+    /// as one edit that one Undo takes back (#125), such as replacing
+    /// across a host's documents. The ranges are in the text as it is now,
+    /// on character boundaries, and mustn't overlap. The selection keeps
+    /// its place in the text around them; with no caret, nothing starts
+    /// editing. Returns false, changing nothing, if the ranges aren't
+    /// valid, there are none, or the document is read-only.
+    pub fn replace_ranges(
+        &mut self,
+        edits: Vec<(Range<usize>, String)>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(open) = &mut self.open else {
+            return false;
+        };
+        let Some(change) = open.editor.replace_ranges(edits) else {
+            return false;
+        };
+        open.goal_x = None;
+        self.apply(change, cx);
+        true
     }
 
     /// Notes that the mouse went down on the checkbox whose `[ ]` starts

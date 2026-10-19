@@ -171,14 +171,9 @@ impl DocumentView {
         else {
             return;
         };
-        let Some(open) = &mut self.open else {
+        if !self.replace_ranges(found.replacement(&replacement), cx) {
             return;
-        };
-        let Some(change) = open.editor.replace_ranges(found.replacement(&replacement)) else {
-            return;
-        };
-        open.goal_x = None;
-        self.apply(change, cx);
+        }
         // The next match after the new text, not in it.
         self.search(cx);
         let after = found.range.start + replacement.len();
@@ -198,14 +193,9 @@ impl DocumentView {
             .iter()
             .flat_map(|(found, replacement)| found.replacement(replacement))
             .collect();
-        let Some(open) = &mut self.open else {
+        if !self.replace_ranges(edits, cx) {
             return;
-        };
-        let Some(change) = open.editor.replace_ranges(edits) else {
-            return;
-        };
-        open.goal_x = None;
-        self.apply(change, cx);
+        }
         self.search(cx);
         self.find.replaced = Some(count);
         cx.notify();
@@ -467,6 +457,57 @@ impl DocumentView {
             .collect()
     }
 
+    /// Opens the find bar with `query` and `options` (#125), say to show
+    /// a search result in context, and selects the first match at or after
+    /// `from`, wrapping around, taking the focus as a click there would;
+    /// in a read-only document, it scrolls to it. Without `from`, it goes
+    /// to the first match after the caret, as typing the query does, and
+    /// the query's field takes the focus. Options the bar doesn't offer
+    /// (see [`EditorConfig::find_options`](crate::EditorConfig)) are used
+    /// all the same.
+    pub fn show_find_with(
+        &mut self,
+        query: &str,
+        options: FindOptions,
+        from: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.open.is_none() {
+            return;
+        }
+        let field = self.find_field(cx);
+        field.update(cx, |field, cx| field.set_text(query.to_owned(), cx));
+        self.find.options = options;
+        self.find.shown = true;
+        self.find.replacing = false;
+        let Some(from) = from else {
+            field.read(cx).focus_handle(cx).focus(window, cx);
+            return self.find_from_caret(cx);
+        };
+        self.search(cx);
+        self.find.current = find::first_from(&self.find.matches, from);
+        if let Some(found) = self.current_match() {
+            self.focus_handle.focus(window, cx);
+            self.select_match(&found, cx);
+        }
+        cx.notify();
+    }
+
+    /// Turns off the options the find bar no longer offers, after the
+    /// host's config changed, and looks again if that changed them.
+    pub(super) fn find_options_offered(&mut self, cx: &mut Context<Self>) {
+        let options = self.find.options.offered(self.config.find_options);
+        if options != self.find.options {
+            self.find.options = options;
+            if self.find.shown {
+                self.find_from_caret(cx);
+            } else {
+                self.forget_matches();
+            }
+        }
+    }
+
     /// Turns a find option on or off, and looks again.
     fn toggle_option(&mut self, toggle: fn(&mut FindOptions), cx: &mut Context<Self>) {
         toggle(&mut self.find.options);
@@ -492,6 +533,7 @@ impl DocumentView {
             (None, count) => format!("{count} matches").into(),
         };
         let options = self.find.options;
+        let offered = self.config.find_options;
         let toggle = |id: &'static str, label: &'static str, on: bool| {
             bar_button(theme, id, label, label)
                 .role(Role::CheckBox)
@@ -523,21 +565,31 @@ impl DocumentView {
                 bar_button(theme, "find-next", "›", "Next Match")
                     .on_click(cx.listener(|this, _, _, cx| this.step_match(true, cx))),
             )
-            .child(
-                toggle("find-match-case", "Match Case", options.match_case).on_click(cx.listener(
-                    |this, _, _, cx| this.toggle_option(|options| options.match_case ^= true, cx),
-                )),
-            )
-            .child(
-                toggle("find-whole-word", "Whole Words", options.whole_word).on_click(cx.listener(
-                    |this, _, _, cx| this.toggle_option(|options| options.whole_word ^= true, cx),
-                )),
-            )
-            .child(
-                toggle("find-regex", "Regex", options.regex).on_click(cx.listener(
-                    |this, _, _, cx| this.toggle_option(|options| options.regex ^= true, cx),
-                )),
-            )
+            .when(offered.match_case, |row| {
+                row.child(
+                    toggle("find-match-case", "Match Case", options.match_case).on_click(
+                        cx.listener(|this, _, _, cx| {
+                            this.toggle_option(|options| options.match_case ^= true, cx)
+                        }),
+                    ),
+                )
+            })
+            .when(offered.whole_word, |row| {
+                row.child(
+                    toggle("find-whole-word", "Whole Words", options.whole_word).on_click(
+                        cx.listener(|this, _, _, cx| {
+                            this.toggle_option(|options| options.whole_word ^= true, cx)
+                        }),
+                    ),
+                )
+            })
+            .when(offered.regex, |row| {
+                row.child(
+                    toggle("find-regex", "Regex", options.regex).on_click(cx.listener(
+                        |this, _, _, cx| this.toggle_option(|options| options.regex ^= true, cx),
+                    )),
+                )
+            })
             .child(div().flex_1())
             .child(bar_button(theme, "find-done", "Done", "Done").on_click(
                 cx.listener(|this, _, window, cx| this.hide_find(&HideFind, window, cx)),
@@ -601,6 +653,11 @@ impl DocumentView {
     /// Whether the find bar is open.
     pub fn find_shown(&self) -> bool {
         self.find.shown
+    }
+
+    /// The find bar's options, as last set.
+    pub fn find_options(&self) -> FindOptions {
+        self.find.options
     }
 
     /// The find bar's status: the number of the match it's at, if any, and

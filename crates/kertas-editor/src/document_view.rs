@@ -386,6 +386,7 @@ impl DocumentView {
         let relayout = config.text != self.config.text || config.font_size != self.config.font_size;
         let autosave_changed = config.autosave != self.config.autosave;
         let syntax_changed = config.syntax() != self.config.syntax();
+        let find_options_changed = config.find_options != self.config.find_options;
         self.theme = Theme::for_window(&config.theme, config.appearance, window);
         self.config = config;
         // Turning autosave on saves changes already made.
@@ -401,6 +402,9 @@ impl DocumentView {
         }
         if relayout || syntax_changed {
             self.layout_changed();
+        }
+        if find_options_changed {
+            self.find_options_offered(cx);
         }
         cx.notify();
     }

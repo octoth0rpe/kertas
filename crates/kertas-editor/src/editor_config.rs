@@ -5,6 +5,7 @@
 //! [`EditorConfig`] when it's created, and a new one whenever the settings
 //! or the zoom change.
 
+use kertas_core::find::OfferedOptions;
 use kertas_core::settings::{AppearanceSetting, Settings};
 use kertas_core::themes;
 
@@ -42,6 +43,9 @@ pub struct EditorConfig {
     /// ([`DocumentView::set_links_to_host`](crate::DocumentView::set_links_to_host)),
     /// since only it knows what a wiki link's target is.
     pub wiki_links: bool,
+    /// Which options the find bar offers (#125): all of them, unless the
+    /// host leaves some out.
+    pub find_options: OfferedOptions,
 }
 
 impl Default for EditorConfig {
@@ -60,6 +64,7 @@ impl Default for EditorConfig {
             fade_other_blocks: settings.fade_other_blocks,
             typewriter_scrolling: settings.typewriter_scrolling,
             wiki_links: false,
+            find_options: OfferedOptions::default(),
         }
     }
 }

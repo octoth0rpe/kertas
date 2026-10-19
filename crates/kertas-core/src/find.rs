@@ -23,6 +23,37 @@ pub struct FindOptions {
     pub regex: bool,
 }
 
+/// Which options a find bar offers (#125). A host can leave some out; an
+/// option that isn't offered stays off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OfferedOptions {
+    pub match_case: bool,
+    pub whole_word: bool,
+    pub regex: bool,
+}
+
+impl Default for OfferedOptions {
+    /// Every option.
+    fn default() -> Self {
+        Self {
+            match_case: true,
+            whole_word: true,
+            regex: true,
+        }
+    }
+}
+
+impl FindOptions {
+    /// These options, with those that aren't `offered` turned off.
+    pub fn offered(self, offered: OfferedOptions) -> Self {
+        Self {
+            match_case: self.match_case && offered.match_case,
+            whole_word: self.whole_word && offered.whole_word,
+            regex: self.regex && offered.regex,
+        }
+    }
+}
+
 /// The most memory a regular expression may compile to. Matching takes
 /// time in proportion to the text whatever the pattern, so none hangs, but
 /// a huge one (`a{1000}{1000}`) is turned down rather than built.
