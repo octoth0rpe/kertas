@@ -25,6 +25,8 @@ unicode-segmentation = "1"
 # Find, and its Regex option. Already in the tree through GPUI.
 regex = "1.13"
 toml_edit = "0.25.17"
+# Spellchecking with Hunspell dictionaries (#140). MPL-2.0.
+spellbook = "0.4.2"
 futures = "0.3"
 libc = "0.2"
 

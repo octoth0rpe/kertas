@@ -6,7 +6,7 @@
 //! Views observe [`AppSettings`] to update.
 //!
 //! The user's color themes are files in `themes/` next to it, watched the
-//! same way.
+//! same way, and so are their spelling dictionaries, in `dictionaries/`.
 
 use std::fs;
 use std::io::{self, Write};
@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use gpui::{App, BorrowAppContext, Global, WindowAppearance};
+use kertas_core::dictionaries::{self, Dictionary};
 use kertas_core::settings::{self, AppearanceSetting, Available, FontCheck, Problem, Settings};
 use kertas_core::themes::{self, FileProblem, Theme};
 
@@ -26,6 +27,9 @@ pub struct AppSettings {
     /// The themes to choose from: the built-in ones and the user's.
     pub themes: Vec<Theme>,
     pub theme_problems: Vec<FileProblem>,
+    /// The spelling dictionaries to choose from: the built-in ones and
+    /// the user's.
+    pub dictionaries: Vec<Dictionary>,
     path: PathBuf,
     /// The file's modification time and size when last read, to notice
     /// changes.
@@ -55,6 +59,13 @@ pub fn get(cx: &App) -> Settings {
 pub fn themes(cx: &App) -> &[Theme] {
     cx.try_global::<AppSettings>()
         .map_or(themes::builtin(), |state| state.themes.as_slice())
+}
+
+/// The spelling dictionaries to choose from: the built-in ones and the
+/// user's.
+pub fn dictionaries(cx: &App) -> &[Dictionary] {
+    cx.try_global::<AppSettings>()
+        .map_or(&[], |state| state.dictionaries.as_slice())
 }
 
 /// The theme the `theme` setting picks.
@@ -157,20 +168,31 @@ pub fn init(folder: PathBuf, defaults: Settings, cx: &mut App) {
             }
         })
         .detach();
-        let mut changes = file_watch::watch_folder(themes_folder(cx));
-        cx.spawn(async move |cx| {
-            while changes.changed().await {
-                cx.update(reload);
-            }
-        })
-        .detach();
+        for folder in [themes_folder(cx), dictionaries_folder(cx)] {
+            let mut changes = file_watch::watch_folder(folder);
+            cx.spawn(async move |cx| {
+                while changes.changed().await {
+                    cx.update(reload);
+                }
+            })
+            .detach();
+        }
     }
 }
 
 /// Opens the folder of the user's themes in the Finder, creating it if
 /// needed.
 pub fn open_themes_folder(cx: &mut App) {
-    let folder = themes_folder(cx);
+    open_folder(themes_folder(cx), cx);
+}
+
+/// Opens the folder of the user's spelling dictionaries in the Finder,
+/// creating it if needed.
+pub fn open_dictionaries_folder(cx: &mut App) {
+    open_folder(dictionaries_folder(cx), cx);
+}
+
+fn open_folder(folder: PathBuf, cx: &mut App) {
     match fs::create_dir_all(&folder) {
         Ok(()) => cx.open_with_system(&folder),
         Err(err) => cx.update_global::<AppSettings, _>(|state, _| {
@@ -247,6 +269,16 @@ pub fn themes_folder_in(folder: &Path) -> PathBuf {
     folder.join("themes")
 }
 
+/// The folder of the user's spelling dictionaries, in `folder`.
+pub fn dictionaries_folder_in(folder: &Path) -> PathBuf {
+    folder.join("dictionaries")
+}
+
+/// The folder of the user's spelling dictionaries.
+pub fn dictionaries_folder(cx: &App) -> PathBuf {
+    dictionaries_folder_in(config_folder(cx))
+}
+
 fn config_folder(cx: &App) -> &Path {
     &cx.global::<ConfigFolder>().0
 }
@@ -275,15 +307,46 @@ fn load(path: PathBuf, cx: &App) -> AppSettings {
         .try_global::<Defaults>()
         .map(|defaults| defaults.0.clone())
         .unwrap_or_default();
-    let (settings, problems) = read(&path, &installed, &themes, &defaults);
+    let (settings, mut problems) = read(&path, &installed, &themes, &defaults);
+    let dictionaries = dictionaries::combine(
+        dictionaries::bundled(),
+        dictionaries::read_folder(&dictionaries_folder(cx)),
+    );
+    problems.extend(missing_dictionary(&path, &settings, &dictionaries));
     AppSettings {
         settings,
         problems,
         themes,
         theme_problems,
+        dictionaries,
         path,
         stamp,
     }
+}
+
+/// A problem if there's no dictionary for the `spelling_language` in
+/// `settings`, read from the file at `path`: spelling isn't checked then.
+fn missing_dictionary(
+    path: &Path,
+    settings: &Settings,
+    dictionaries: &[Dictionary],
+) -> Option<Problem> {
+    let tag = &settings.spelling_language;
+    if dictionaries::find(dictionaries, tag).is_some() {
+        return None;
+    }
+    let line = fs::read_to_string(path).ok().and_then(|text| {
+        text.lines()
+            .position(|line| line.trim_start().starts_with("spelling_language"))
+            .map(|index| index + 1)
+    });
+    Some(Problem {
+        line,
+        message: format!(
+            "`spelling_language` is \"{tag}\", which has no dictionary, so spelling isn't \
+             checked; add {tag}.aff and {tag}.dic to the dictionaries folder"
+        ),
+    })
 }
 
 /// Reads the settings file in `folder` once, outside of GPUI, as for a

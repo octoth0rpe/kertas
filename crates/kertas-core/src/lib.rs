@@ -6,6 +6,7 @@ pub mod autolinks;
 pub mod blocks;
 pub mod buffer;
 pub mod definitions;
+pub mod dictionaries;
 pub mod document;
 pub mod editing;
 pub mod editor;

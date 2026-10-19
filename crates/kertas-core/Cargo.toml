@@ -15,6 +15,7 @@ ropey.workspace = true
 unicode-segmentation.workspace = true
 regex.workspace = true
 toml_edit.workspace = true
+spellbook.workspace = true
 
 [lints]
 workspace = true
