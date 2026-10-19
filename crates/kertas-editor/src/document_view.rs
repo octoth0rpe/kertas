@@ -48,8 +48,8 @@ use crate::theme::Theme;
 
 pub use crate::actions::*;
 
-/// Key bindings for the document view (macOS conventions), its find bar
-/// and text fields.
+/// Key bindings for the document view (macOS conventions), its find bar,
+/// text fields and context menus.
 pub fn key_bindings() -> Vec<KeyBinding> {
     vec![
         KeyBinding::new("cmd-s", Save, None),
@@ -113,6 +113,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
     .into_iter()
     .chain(find::key_bindings())
     .chain(crate::text_field::key_bindings())
+    .chain(crate::context_menu::key_bindings())
     .collect()
 }
 
@@ -288,6 +289,8 @@ pub struct DocumentView {
     marks_model: Option<Rc<kertas_core::model::Model>>,
     /// The misspelled words (#141).
     misspelled: spelling::Misspelled,
+    /// The menu of a misspelled word, while it's open (#142).
+    spelling_menu: Option<spelling::SpellingMenu>,
     /// What the host shows when the pointer rests on a link or a mark
     /// (#126).
     hover_popover: Option<HoverPopover>,
@@ -314,6 +317,8 @@ pub struct DocumentView {
     edited_epoch: usize,
     _appearance_observer: Subscription,
     _activation_observer: Subscription,
+    /// Checks the spelling again when words are ignored or added.
+    _spelling_observer: Subscription,
 }
 
 impl EventEmitter<DocumentEvent> for DocumentView {}
@@ -343,6 +348,7 @@ impl DocumentView {
             // Nothing is faded while the window is in the background.
             cx.notify();
         });
+        let spelling_observer = crate::spelling::observe(cx, |this, cx| this.check_spelling(cx));
         Self {
             focus_handle,
             open: None,
@@ -360,6 +366,7 @@ impl DocumentView {
             marks: Rc::default(),
             marks_model: None,
             misspelled: Default::default(),
+            spelling_menu: None,
             hover_popover: None,
             hover: None,
             hover_epoch: 0,
@@ -373,6 +380,7 @@ impl DocumentView {
             edited_epoch: 0,
             _appearance_observer: appearance_observer,
             _activation_observer: activation_observer,
+            _spelling_observer: spelling_observer,
         }
     }
 

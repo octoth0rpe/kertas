@@ -126,7 +126,18 @@ async fn mouse_click(
     cx: &mut AsyncApp,
     position: gpui::Point<gpui::Pixels>,
 ) {
-    use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
+    click_with(window, cx, position, gpui::MouseButton::Left).await;
+}
+
+/// Clicks in `window` at `position` with `button`, as [`mouse_click`]
+/// does.
+async fn click_with(
+    window: DocumentWindowHandle,
+    cx: &mut AsyncApp,
+    position: gpui::Point<gpui::Pixels>,
+    button: gpui::MouseButton,
+) {
+    use gpui::{Modifiers, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
 
     let send = |cx: &mut AsyncApp, event: gpui::PlatformInput| {
         gpui::AnyWindowHandle::from(window)
@@ -147,7 +158,7 @@ async fn mouse_click(
     send(
         cx,
         gpui::PlatformInput::MouseDown(MouseDownEvent {
-            button: MouseButton::Left,
+            button,
             position,
             modifiers: Modifiers::default(),
             click_count: 1,
@@ -158,7 +169,7 @@ async fn mouse_click(
     send(
         cx,
         gpui::PlatformInput::MouseUp(MouseUpEvent {
-            button: MouseButton::Left,
+            button,
             position,
             modifiers: Modifiers::default(),
             click_count: 1,
@@ -2779,15 +2790,24 @@ fn smoke_print_pages(window: DocumentWindowHandle, cx: &mut App) {
     .detach();
 }
 
-/// `KERTAS_SMOKE=spelling`, on `spelling.md` (#141): misspelled words are
-/// found in the background and underlined, an edited word loses its
-/// underline until it's checked again, and the language and View → Check
-/// Spelling change what's underlined.
+/// `KERTAS_SMOKE=spelling`, on `spelling.md` (#141, #142): misspelled
+/// words are found in the background and underlined, an edited word loses
+/// its underline until it's checked again, and the language and View →
+/// Check Spelling change what's underlined. Right-clicking a misspelled
+/// word opens its menu, whose suggestions replace it, and whose Ignore and
+/// Add to Dictionary make it known, Add to Dictionary in the word list.
 fn smoke_spelling(window: DocumentWindowHandle, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
         let misspelled = |cx: &mut AsyncApp| misspelled_words(window, cx);
-        let found = misspelled_became(window, cx, &["Teh", "wrod", "lnik", "Colour"]).await;
+        let found = misspelled_became(
+            window,
+            cx,
+            &[
+                "Teh", "wrod", "lnik", "Colour", "Zorbly", "Quixlet", "Blimsy",
+            ],
+        )
+        .await;
         checks.check(
             &format!("misspelled words are underlined: {:?}", misspelled(cx)),
             found,
@@ -2808,11 +2828,21 @@ fn smoke_spelling(window: DocumentWindowHandle, cx: &mut App) {
             &format!("an edited word loses its underline straight away: {right_away:?}"),
             !right_away.contains(&"word".to_owned()) && !right_away.contains(&"wrod".to_owned()),
         );
-        let fixed = misspelled_became(window, cx, &["Teh", "lnik", "Colour"]).await;
+        let fixed = misspelled_became(
+            window,
+            cx,
+            &["Teh", "lnik", "Colour", "Zorbly", "Quixlet", "Blimsy"],
+        )
+        .await;
         checks.check(&format!("and the rest stay: {:?}", misspelled(cx)), fixed);
 
         cx.update(|cx| crate::app_settings::set_or_report("spelling_language", "en-GB", cx));
-        let british = misspelled_became(window, cx, &["Teh", "lnik", "color"]).await;
+        let british = misspelled_became(
+            window,
+            cx,
+            &["Teh", "lnik", "color", "Zorbly", "Quixlet", "Blimsy"],
+        )
+        .await;
         checks.check(
             &format!(
                 "in British English, colour is right and color isn't: {:?}",
@@ -2833,11 +2863,153 @@ fn smoke_spelling(window: DocumentWindowHandle, cx: &mut App) {
             cx,
             Box::new(kertas_editor::view_menu::ToggleCheckSpelling),
         );
-        let on = misspelled_became(window, cx, &["Teh", "lnik", "color"]).await;
+        let on = misspelled_became(
+            window,
+            cx,
+            &["Teh", "lnik", "color", "Zorbly", "Quixlet", "Blimsy"],
+        )
+        .await;
         checks.check("and on again", on);
+
+        smoke_spelling_menu(window, cx, &mut checks).await;
         checks.finish(cx);
     })
     .detach();
+}
+
+/// The spelling menu (#142), opened by right-clicking the first word of
+/// items 0, 3, 4 and 5 of `spelling.md`, and used with the keyboard.
+async fn smoke_spelling_menu(window: DocumentWindowHandle, cx: &mut AsyncApp, checks: &mut Checks) {
+    let path = window
+        .read_with(cx, |view, _| view.document_path().map(Path::to_owned))
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let right_click = async |cx: &mut AsyncApp, item: usize| {
+        let origin = window
+            .update(cx, |view, window, _| view.text_origin(item, window))
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        click_with(
+            window,
+            cx,
+            origin + gpui::point(gpui::px(12.), gpui::px(10.)),
+            gpui::MouseButton::Right,
+        )
+        .await;
+        let mut items = None;
+        wait_for(cx, Duration::from_secs(2), |cx| {
+            items = window
+                .update(cx, |view, _, cx| view.spelling_menu_items(cx))
+                .ok()
+                .flatten();
+            items.is_some()
+        })
+        .await;
+        items.unwrap_or_default()
+    };
+    let any = gpui::AnyWindowHandle::from(window);
+    let open = |cx: &mut AsyncApp| {
+        window
+            .update(cx, |view, _, cx| view.spelling_menu_items(cx).is_some())
+            .unwrap_or_default()
+    };
+
+    let items = right_click(cx, 0).await;
+    checks.check(
+        &format!("right-clicking a misspelled word opens its menu: {items:?}"),
+        items.contains(&"The".to_owned())
+            && items.ends_with(&[
+                "Ignore".to_owned(),
+                "Add for This Document".to_owned(),
+                "Add to Dictionary".to_owned(),
+            ]),
+    );
+    press_key(any, cx, "escape").await;
+    pause(cx, 2).await;
+    checks.check("Esc closes it", !open(cx));
+
+    let items = right_click(cx, 0).await;
+    let the = items
+        .iter()
+        .position(|item| item == "The")
+        .unwrap_or_default();
+    for _ in 0..=the {
+        press_key(any, cx, "down").await;
+    }
+    press_key(any, cx, "enter").await;
+    let text = |cx: &mut AsyncApp| {
+        window
+            .read_with(cx, |view, _| view.text())
+            .unwrap_or_default()
+    };
+    let replaced = wait_for(cx, Duration::from_secs(2), |cx| {
+        text(cx).starts_with("# The spelling test")
+    })
+    .await;
+    checks.check("a suggestion replaces the word", replaced && !open(cx));
+    let gone = misspelled_became(
+        window,
+        cx,
+        &["lnik", "color", "Zorbly", "Quixlet", "Blimsy"],
+    )
+    .await;
+    checks.check(
+        &format!("and it's spelled right: {:?}", misspelled_words(window, cx)),
+        gone,
+    );
+
+    right_click(cx, 3).await;
+    press_key(any, cx, "end").await;
+    press_key(any, cx, "up").await;
+    press_key(any, cx, "up").await;
+    press_key(any, cx, "enter").await;
+    let ignored = misspelled_became(window, cx, &["lnik", "color", "Quixlet", "Blimsy"]).await;
+    checks.check(
+        &format!(
+            "Ignore makes a word known: {:?}",
+            misspelled_words(window, cx)
+        ),
+        ignored,
+    );
+
+    let items = right_click(cx, 5).await;
+    press_key(any, cx, "end").await;
+    press_key(any, cx, "up").await;
+    press_key(any, cx, "enter").await;
+    let for_document = misspelled_became(window, cx, &["lnik", "color", "Quixlet"]).await;
+    let settings = cx.update(|cx| kertas_editor::app_settings::document_words(&path, cx).to_vec());
+    checks.check(
+        &format!(
+            "Add for This Document makes a word known in the document: {items:?}, {:?}, {settings:?}",
+            misspelled_words(window, cx)
+        ),
+        for_document && settings == ["Blimsy"],
+    );
+
+    right_click(cx, 4).await;
+    press_key(any, cx, "end").await;
+    press_key(any, cx, "enter").await;
+    let added = misspelled_became(window, cx, &["lnik", "color"]).await;
+    let word_list = cx
+        .update(|cx| kertas_editor::app_settings::word_list(cx))
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .unwrap_or_default();
+    checks.check(
+        &format!(
+            "Add to Dictionary makes a word known, in the word list: {:?}, {word_list:?}",
+            misspelled_words(window, cx)
+        ),
+        added && word_list == "Quixlet\n",
+    );
+    // Still known once the word list is read again, as the folder changed.
+    pause(cx, 30).await;
+    let still = misspelled_became(window, cx, &["lnik", "color"]).await;
+    checks.check(
+        "and still known once the dictionaries are read again",
+        still,
+    );
 }
 
 /// The words underlined as misspelled in `window`'s document.

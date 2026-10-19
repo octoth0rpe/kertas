@@ -340,9 +340,8 @@ fn revealed_content(
             let index = layout.index_for_position(event.position);
             if event.modifiers.control
                 && let Ok(index) = index
-                && let Some(mark) = click_text.mark_at(index)
+                && click_text.menu(index, event.position, window, cx)
             {
-                click_text.mark_menu(&mark, event.position, cx);
                 cx.stop_propagation();
                 return;
             }
@@ -350,11 +349,10 @@ fn revealed_content(
             click_text.report(index, event.modifiers.shift, window, cx);
             cx.stop_propagation();
         })
-        .on_mouse_down(MouseButton::Right, move |event, _, cx| {
+        .on_mouse_down(MouseButton::Right, move |event, window, cx| {
             if let Ok(index) = menu_layout.index_for_position(event.position)
-                && let Some(mark) = menu.mark_at(index)
+                && menu.menu(index, event.position, window, cx)
             {
-                menu.mark_menu(&mark, event.position, cx);
                 cx.stop_propagation();
             }
         })
