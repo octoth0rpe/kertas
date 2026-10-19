@@ -92,6 +92,7 @@ run web-images showcase.md
 run a11y a11y.md
 run print showcase.md KERTAS_PRINT_PDF="$work/print/out.pdf"
 run print-pages showcase.md KERTAS_PRINT_PDF="$work/print-pages/out.pdf"
+run spelling spelling.md
 
 # convert: kt --convert lays out a fixture as Print does (the same number
 # of pages as the print mode's PDF), without a window, and rejects bad

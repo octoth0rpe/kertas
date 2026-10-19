@@ -87,7 +87,11 @@ impl Global for HiddenSettings {}
 
 /// The settings changed from the View menu only, which the window doesn't
 /// show, to keep it short.
-const MENU_ONLY: &[&str] = &["fade_other_blocks", "typewriter_scrolling"];
+const MENU_ONLY: &[&str] = &[
+    "fade_other_blocks",
+    "typewriter_scrolling",
+    "check_spelling",
+];
 
 /// Makes [`OpenSettings`] open the settings window, which shows every
 /// setting but those in `hidden`, by their keys.

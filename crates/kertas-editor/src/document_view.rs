@@ -20,6 +20,7 @@ mod line_scroll;
 mod marking;
 mod render;
 mod scrollbar;
+mod spelling;
 
 pub use files::HeadingTarget;
 pub use hover::{HOVER_DELAY, HoverPopover, HoverTarget};
@@ -285,6 +286,8 @@ pub struct DocumentView {
     /// The text the marks were last moved to, while there are any. When
     /// the document's text is another, they're moved to it.
     marks_model: Option<Rc<kertas_core::model::Model>>,
+    /// The misspelled words (#141).
+    misspelled: spelling::Misspelled,
     /// What the host shows when the pointer rests on a link or a mark
     /// (#126).
     hover_popover: Option<HoverPopover>,
@@ -356,6 +359,7 @@ impl DocumentView {
             link_check: None,
             marks: Rc::default(),
             marks_model: None,
+            misspelled: Default::default(),
             hover_popover: None,
             hover: None,
             hover_epoch: 0,
@@ -386,6 +390,8 @@ impl DocumentView {
         let relayout = config.text != self.config.text || config.font_size != self.config.font_size;
         let autosave_changed = config.autosave != self.config.autosave;
         let syntax_changed = config.syntax() != self.config.syntax();
+        let spelling_changed = config.check_spelling != self.config.check_spelling
+            || config.spelling_language != self.config.spelling_language;
         let find_options_changed = config.find_options != self.config.find_options;
         self.theme = Theme::for_window(&config.theme, config.appearance, window);
         self.config = config;
@@ -405,6 +411,9 @@ impl DocumentView {
         }
         if find_options_changed {
             self.find_options_offered(cx);
+        }
+        if spelling_changed || syntax_changed {
+            self.check_spelling(cx);
         }
         cx.notify();
     }
@@ -443,6 +452,8 @@ impl DocumentView {
         });
         self.watch_file(window, cx);
         self.stop_blink();
+        self.misspelled = Default::default();
+        self.check_spelling(cx);
         cx.emit(DocumentEvent::TitleChanged);
         cx.notify();
     }
@@ -622,6 +633,7 @@ impl DocumentView {
                 if view.edited_epoch == epoch {
                     // So the host reads them where the text now has them.
                     view.move_marks();
+                    view.check_spelling(cx);
                     cx.emit(DocumentEvent::Edited);
                 }
             })

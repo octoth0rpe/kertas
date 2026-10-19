@@ -125,6 +125,8 @@ pub struct Settings {
     /// The language spelling is checked in, as a language tag naming a
     /// dictionary (#140).
     pub spelling_language: String,
+    /// Whether misspelled words are underlined (#141).
+    pub check_spelling: bool,
 }
 
 impl Default for Settings {
@@ -145,6 +147,7 @@ impl Default for Settings {
             typewriter_scrolling: false,
             autosave: None,
             spelling_language: DEFAULT_LANGUAGE.to_owned(),
+            check_spelling: true,
         }
     }
 }
@@ -407,6 +410,15 @@ pub const SETTINGS: &[Setting] = &[
         kind: Kind::Language {
             get: |settings| &settings.spelling_language,
             apply: |settings, tag| settings.spelling_language = tag,
+        },
+    },
+    Setting {
+        key: "check_spelling",
+        label: "Check spelling",
+        note: Some("Underline misspelled words"),
+        kind: Kind::Bool {
+            get: |settings| settings.check_spelling,
+            apply: |settings, on| settings.check_spelling = on,
         },
     },
     Setting {
@@ -800,6 +812,7 @@ mod tests {
                 typewriter_scrolling: false,
                 autosave: None,
                 spelling_language: "en-US".into(),
+                check_spelling: true,
             }
         );
     }

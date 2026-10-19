@@ -62,6 +62,7 @@ mod problems_bar;
 mod rendered_block;
 mod revealed_block;
 pub mod settings_window;
+mod spelling;
 pub mod tabs;
 pub mod text_field;
 mod text_style;

@@ -63,6 +63,7 @@ pub fn start_if_requested(window: DocumentWindowHandle, cx: &mut App) {
         "a11y" => smoke_a11y(window, cx),
         "print" => smoke_print(window, cx),
         "print-pages" => smoke_print_pages(window, cx),
+        "spelling" => smoke_spelling(window, cx),
         "disk" => smoke_disk(window, cx),
         "autosave" => smoke_autosave(window, cx),
         "edited" => smoke_edited(window, cx),
@@ -2776,6 +2777,93 @@ fn smoke_print_pages(window: DocumentWindowHandle, cx: &mut App) {
         checks.finish(cx);
     })
     .detach();
+}
+
+/// `KERTAS_SMOKE=spelling`, on `spelling.md` (#141): misspelled words are
+/// found in the background and underlined, an edited word loses its
+/// underline until it's checked again, and the language and View → Check
+/// Spelling change what's underlined.
+fn smoke_spelling(window: DocumentWindowHandle, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        let mut checks = Checks::default();
+        let misspelled = |cx: &mut AsyncApp| misspelled_words(window, cx);
+        let found = misspelled_became(window, cx, &["Teh", "wrod", "lnik", "Colour"]).await;
+        checks.check(
+            &format!("misspelled words are underlined: {:?}", misspelled(cx)),
+            found,
+        );
+
+        let text = window
+            .read_with(cx, |view, _| view.text())
+            .unwrap_or_default();
+        let at = text.find("wrod").unwrap_or_default();
+        window
+            .update(cx, |view, _, cx| {
+                view.replace_ranges(vec![(at..at + 4, "word".into())], cx)
+            })
+            .ok();
+        pause(cx, 1).await;
+        let right_away = misspelled(cx);
+        checks.check(
+            &format!("an edited word loses its underline straight away: {right_away:?}"),
+            !right_away.contains(&"word".to_owned()) && !right_away.contains(&"wrod".to_owned()),
+        );
+        let fixed = misspelled_became(window, cx, &["Teh", "lnik", "Colour"]).await;
+        checks.check(&format!("and the rest stay: {:?}", misspelled(cx)), fixed);
+
+        cx.update(|cx| crate::app_settings::set_or_report("spelling_language", "en-GB", cx));
+        let british = misspelled_became(window, cx, &["Teh", "lnik", "color"]).await;
+        checks.check(
+            &format!(
+                "in British English, colour is right and color isn't: {:?}",
+                misspelled(cx)
+            ),
+            british,
+        );
+
+        dispatch(
+            window,
+            cx,
+            Box::new(kertas_editor::view_menu::ToggleCheckSpelling),
+        );
+        let off = misspelled_became(window, cx, &[]).await;
+        checks.check("View → Check Spelling turns it off", off);
+        dispatch(
+            window,
+            cx,
+            Box::new(kertas_editor::view_menu::ToggleCheckSpelling),
+        );
+        let on = misspelled_became(window, cx, &["Teh", "lnik", "color"]).await;
+        checks.check("and on again", on);
+        checks.finish(cx);
+    })
+    .detach();
+}
+
+/// The words underlined as misspelled in `window`'s document.
+fn misspelled_words(window: DocumentWindowHandle, cx: &mut AsyncApp) -> Vec<String> {
+    window
+        .update(cx, |view, _, _| {
+            let text = view.text();
+            view.misspelled_ranges()
+                .into_iter()
+                .map(|range| text[range].to_owned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Waits up to five seconds until the words underlined as misspelled in
+/// `window` are `expected`. Returns whether they became that.
+async fn misspelled_became(
+    window: DocumentWindowHandle,
+    cx: &mut AsyncApp,
+    expected: &[&str],
+) -> bool {
+    wait_for(cx, Duration::from_secs(5), |cx| {
+        misspelled_words(window, cx) == expected
+    })
+    .await
 }
 
 /// Waits until `done` holds, for up to two seconds. Returns whether it

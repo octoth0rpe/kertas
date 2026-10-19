@@ -88,6 +88,9 @@ pub struct ClickTarget {
     /// The ranges the host marked, in order (see
     /// [`DocumentView::set_marks`]).
     pub marks: Rc<Vec<Mark>>,
+    /// The misspelled words (#141), drawn as the host's wavy marks are,
+    /// but not the host's to show a menu for.
+    pub misspelled: Rc<Vec<Mark>>,
     /// The text the find bar matched, as source ranges in order, and the
     /// background each is drawn with (#122).
     pub highlights: Highlights,
@@ -1162,7 +1165,9 @@ fn displayed_marks(text: &InlineText, click: &ClickTarget) -> Vec<(Range<usize>,
     let Some(source) = text_source(text, click) else {
         return Vec::new();
     };
-    displayed(text, click, wavy_marks(&click.marks, source))
+    let marks =
+        wavy_marks(&click.marks, source.clone()).chain(wavy_marks(&click.misspelled, source));
+    displayed(text, click, marks)
 }
 
 /// Where the find bar's matches are in `text`, as byte ranges of its

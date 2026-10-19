@@ -24,6 +24,7 @@ actions!(
         ToggleScrollbar,
         ToggleFadeOtherBlocks,
         ToggleTypewriterScrolling,
+        ToggleCheckSpelling,
     ]
 );
 
@@ -87,6 +88,12 @@ pub fn init(cx: &mut App) {
             app_settings::set_or_report("typewriter_scrolling", on, cx);
         })
     });
+    cx.on_action(|_: &ToggleCheckSpelling, cx| {
+        cx.defer(|cx| {
+            let on = !app_settings::get(cx).check_spelling;
+            app_settings::set_or_report("check_spelling", on, cx);
+        })
+    });
 }
 
 /// The View menu's items, checked for the current settings.
@@ -120,6 +127,7 @@ pub fn items(cx: &App) -> Vec<MenuItem> {
             .checked(settings.fade_other_blocks),
         MenuItem::action("Typewriter Scrolling", ToggleTypewriterScrolling)
             .checked(settings.typewriter_scrolling),
+        MenuItem::action("Check Spelling", ToggleCheckSpelling).checked(settings.check_spelling),
         MenuItem::separator(),
         MenuItem::action("Zoom In", ZoomIn),
         MenuItem::action("Zoom Out", ZoomOut),
