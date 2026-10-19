@@ -31,6 +31,9 @@ pub struct EditorConfig {
     pub scrollbar: bool,
     /// Whether the block being edited shows its keyboard hints.
     pub editing_hint: bool,
+    /// Whether the blocks that aren't being edited are drawn faded, while
+    /// one is (#121).
+    pub fade_other_blocks: bool,
     /// Whether `[[wiki links]]` are links (#119). Kertas leaves them off;
     /// a host that turns them on also takes clicked links
     /// ([`DocumentView::set_links_to_host`](crate::DocumentView::set_links_to_host)),
@@ -51,6 +54,7 @@ impl Default for EditorConfig {
             autosave: settings.autosave,
             scrollbar: settings.scrollbar,
             editing_hint: settings.editing_hint,
+            fade_other_blocks: settings.fade_other_blocks,
             wiki_links: false,
         }
     }

@@ -84,6 +84,10 @@ struct HiddenSettings(&'static [&'static str]);
 
 impl Global for HiddenSettings {}
 
+/// The settings changed from the View menu only, which the window doesn't
+/// show, to keep it short.
+const MENU_ONLY: &[&str] = &["fade_other_blocks"];
+
 /// Makes [`OpenSettings`] open the settings window, which shows every
 /// setting but those in `hidden`, by their keys.
 pub fn init(hidden: &'static [&'static str], cx: &mut App) {
@@ -731,7 +735,7 @@ impl Render for SettingsWindow {
             .map_or(&[][..], |hidden| hidden.0);
         for setting in SETTINGS
             .iter()
-            .filter(|setting| !hidden.contains(&setting.key))
+            .filter(|setting| !hidden.contains(&setting.key) && !MENU_ONLY.contains(&setting.key))
         {
             let row = self.row(setting, &settings, cx);
             if matches!(setting.kind, Kind::Font { .. }) {

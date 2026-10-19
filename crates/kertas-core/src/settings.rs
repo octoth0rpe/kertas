@@ -113,6 +113,8 @@ pub struct Settings {
     pub editing_hint: bool,
     /// Whether documents show a scrollbar (#88).
     pub scrollbar: bool,
+    /// Whether the blocks that aren't being edited are drawn faded (#121).
+    pub fade_other_blocks: bool,
     /// Save documents once typing has paused this many seconds, or
     /// `None` not to save them automatically (F6).
     pub autosave: Option<u32>,
@@ -132,6 +134,7 @@ impl Default for Settings {
             code_font: None,
             editing_hint: true,
             scrollbar: true,
+            fade_other_blocks: false,
             autosave: None,
         }
     }
@@ -353,6 +356,15 @@ pub const SETTINGS: &[Setting] = &[
         },
     },
     Setting {
+        key: "fade_other_blocks",
+        label: "Fade other blocks",
+        note: Some("Fade every block but the one being edited"),
+        kind: Kind::Bool {
+            get: |settings| settings.fade_other_blocks,
+            apply: |settings, fade| settings.fade_other_blocks = fade,
+        },
+    },
+    Setting {
         key: "autosave",
         label: "Autosave",
         note: None,
@@ -542,7 +554,18 @@ pub fn parse(text: &str) -> (Settings, Vec<Problem>) {
 /// Reads settings like [`parse`], reporting fonts and themes that
 /// `available` says there aren't.
 pub fn parse_checking(text: &str, available: &Available) -> (Settings, Vec<Problem>) {
-    let mut settings = Settings::default();
+    parse_checking_from(text, &Settings::default(), available)
+}
+
+/// Reads settings like [`parse_checking`], with `defaults` for any the
+/// file doesn't set, or sets wrongly. A host app gives its own defaults
+/// this way.
+pub fn parse_checking_from(
+    text: &str,
+    defaults: &Settings,
+    available: &Available,
+) -> (Settings, Vec<Problem>) {
+    let mut settings = defaults.clone();
     let mut problems = Vec::new();
     let line_of = |offset: usize| text[..offset.min(text.len())].matches('\n').count() + 1;
 
@@ -734,6 +757,7 @@ mod tests {
                 code_font: None,
                 editing_hint: true,
                 scrollbar: true,
+                fade_other_blocks: false,
                 autosave: None,
             }
         );
@@ -831,6 +855,33 @@ mod tests {
             set("font_size = 18  # big\n", "font_size", 20).unwrap(),
             "font_size = 20  # big\n"
         );
+    }
+
+    #[test]
+    fn fade_other_blocks() {
+        assert!(!Settings::default().fade_other_blocks);
+        assert!(parse("fade_other_blocks = true\n").0.fade_other_blocks);
+        assert_eq!(
+            set("", "fade_other_blocks", true).unwrap(),
+            "fade_other_blocks = true\n"
+        );
+    }
+
+    #[test]
+    fn a_host_gives_its_own_defaults() {
+        let available = Available {
+            fonts: &|name| Some(name.to_owned()),
+            themes: &|name| themes::find(themes::builtin(), name),
+        };
+        let defaults = Settings {
+            fade_other_blocks: true,
+            ..Settings::default()
+        };
+        let read = |text| parse_checking_from(text, &defaults, &available).0;
+        assert!(read("").fade_other_blocks);
+        assert!(!read("fade_other_blocks = false\n").fade_other_blocks);
+        // A wrong value falls back to the host's default.
+        assert!(read("fade_other_blocks = 3\n").fade_other_blocks);
     }
 
     #[test]

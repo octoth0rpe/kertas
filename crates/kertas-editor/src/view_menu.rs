@@ -1,4 +1,5 @@
-//! The View menu: appearance, theme, text width, the scrollbar and zoom.
+//! The View menu: appearance, theme, text width, the scrollbar, fading
+//! the other blocks, and zoom.
 //!
 //! Its choices are settings, so a host app rebuilds its menus whenever
 //! [`AppSettings`](crate::app_settings::AppSettings) changes, to keep their
@@ -21,6 +22,7 @@ actions!(
         UseWideWidth,
         UseFullWidth,
         ToggleScrollbar,
+        ToggleFadeOtherBlocks,
     ]
 );
 
@@ -72,6 +74,12 @@ pub fn init(cx: &mut App) {
             app_settings::set_or_report("scrollbar", show, cx);
         })
     });
+    cx.on_action(|_: &ToggleFadeOtherBlocks, cx| {
+        cx.defer(|cx| {
+            let fade = !app_settings::get(cx).fade_other_blocks;
+            app_settings::set_or_report("fade_other_blocks", fade, cx);
+        })
+    });
 }
 
 /// The View menu's items, checked for the current settings.
@@ -101,6 +109,8 @@ pub fn items(cx: &App) -> Vec<MenuItem> {
         MenuItem::action("Full Width", UseFullWidth).checked(width(TextWidth::Full)),
         MenuItem::separator(),
         MenuItem::action("Show Scrollbar", ToggleScrollbar).checked(settings.scrollbar),
+        MenuItem::action("Fade Other Blocks", ToggleFadeOtherBlocks)
+            .checked(settings.fade_other_blocks),
         MenuItem::separator(),
         MenuItem::action("Zoom In", ZoomIn),
         MenuItem::action("Zoom Out", ZoomOut),

@@ -161,6 +161,36 @@ mod tests {
         }
     }
 
+    /// `color` drawn at `opacity` over `background`.
+    fn over(color: Hsla, opacity: f32, background: Hsla) -> Hsla {
+        let (color, background) = (Rgba::from(color), Rgba::from(background));
+        let mix = |c: f32, b: f32| c * opacity + b * (1. - opacity);
+        Hsla::from(Rgba {
+            r: mix(color.r, background.r),
+            g: mix(color.g, background.g),
+            b: mix(color.b, background.b),
+            a: 1.,
+        })
+    }
+
+    #[test]
+    fn faded_text_is_readable_in_every_builtin_theme() {
+        let opacity = crate::document_view::FADED_OPACITY;
+        for theme in themes::builtin() {
+            for (half, palette) in [("light", &theme.light), ("dark", &theme.dark)] {
+                let colors = Theme::from(palette);
+                let faded = over(colors.text, opacity, colors.background);
+                let ratio = contrast(faded, colors.background);
+                // #121: at least 3:1 for faded body text.
+                assert!(
+                    ratio >= 3.,
+                    "faded text contrast {ratio:.2} in {} ({half})",
+                    theme.name
+                );
+            }
+        }
+    }
+
     #[test]
     fn window_appearance_is_light_or_dark() {
         assert_eq!(appearance(WindowAppearance::Light), Appearance::Light);
