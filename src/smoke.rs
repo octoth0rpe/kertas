@@ -2012,7 +2012,7 @@ fn smoke_web_images(window: DocumentWindowHandle, cx: &mut App) {
         );
         checks.check(
             "the fetched image is kept for printing",
-            crate::web_images::fetched_image(&url).is_some(),
+            kertas_editor::web_images::fetched_image(&url).is_some(),
         );
 
         open(cx);
@@ -2507,7 +2507,7 @@ fn smoke_clicks(window: DocumentWindowHandle, cx: &mut App) {
 async fn a11y_tree(window: gpui::AnyWindowHandle, cx: &mut AsyncApp) -> String {
     window
         .update(cx, |_, window, _| {
-            let Some(ns_window) = crate::ns_window::ns_window(window) else {
+            let Some(ns_window) = kertas_editor::ns_window::ns_window(window) else {
                 return;
             };
             if let Some(view) = ns_window.contentView() {
@@ -2692,14 +2692,12 @@ fn smoke_print(window: DocumentWindowHandle, cx: &mut App) {
             .ok()
             .flatten();
         let printed = cx.update(|cx| {
-            let mtm = objc2::MainThreadMarker::new()?;
             let settings = kertas_editor::TextSettings::from(&crate::app_settings::get(cx));
-            Some(crate::print::save_pdf(
+            Some(kertas_editor::print::save_pdf(
                 &*model?,
                 document.as_deref(),
                 &settings,
                 &path,
-                mtm,
             ))
         });
         let size = std::fs::metadata(&path).map_or(0, |metadata| metadata.len());

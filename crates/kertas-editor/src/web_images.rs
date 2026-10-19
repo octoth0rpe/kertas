@@ -21,7 +21,8 @@ use objc2_foundation::{
     NSData, NSError, NSHTTPURLResponse, NSString, NSURL, NSURLResponse, NSURLSession,
 };
 
-/// Makes GPUI fetch web images with [`SystemHttpClient`].
+/// Makes GPUI fetch web images with the system's URL loading, keeping
+/// them for printing.
 pub fn init(cx: &mut App) {
     cx.set_http_client(Arc::new(SystemHttpClient));
 }

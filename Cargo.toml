@@ -55,14 +55,11 @@ toml_edit.workspace = true
 workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
-# AppKit, for printing, the Dock icon and system integration. Same
-# versions GPUI uses.
+# AppKit, for the Dock icon, kt --convert and system integration. Same
+# versions GPUI uses. Printing is kertas-editor's.
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-core-foundation", "objc2-uniform-type-identifiers", "NSApplication", "NSAttributedString", "NSColor", "NSFont", "NSFontManager", "NSGraphics", "NSImage", "NSLayoutManager", "NSParagraphStyle", "NSPrintInfo", "NSPrintOperation", "NSResponder", "NSRunningApplication", "NSText", "NSTextAttachment", "NSTextStorage", "NSTextTable", "NSTextView", "NSView", "NSWindow", "NSWorkspace"] }
-# Printing (src/print.rs) lays text out in points.
-objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-uniform-type-identifiers", "NSApplication", "NSFont", "NSFontManager", "NSGraphics", "NSImage", "NSResponder", "NSRunningApplication", "NSView", "NSWindow", "NSWorkspace"] }
 objc2-uniform-type-identifiers = { version = "0.3", default-features = false, features = ["std", "UTType"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSArray", "NSAttributedString", "NSBundle", "NSData", "NSDictionary", "NSDistributedNotificationCenter", "NSError", "NSGeometry", "NSNotification", "NSOperation", "NSRange", "NSString", "NSURL", "NSURLResponse", "NSURLSession", "NSUserDefaults", "NSValue"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSArray", "NSBundle", "NSData", "NSDictionary", "NSDistributedNotificationCenter", "NSError", "NSNotification", "NSOperation", "NSString", "NSURL", "NSUserDefaults"] }
 block2 = "0.6"
 libc.workspace = true
-raw-window-handle = "0.6"

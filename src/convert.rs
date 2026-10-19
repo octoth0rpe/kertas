@@ -71,7 +71,7 @@ fn convert(args: Vec<OsString>) -> Result<(), String> {
     // Absolute paths, so images resolve and AppKit gets proper file URLs.
     let input = std::path::absolute(&input).unwrap_or(input);
     let output = std::path::absolute(&output).unwrap_or(output);
-    if !crate::print::save_pdf(&model, Some(&input), &settings, &output, mtm) {
+    if !kertas_editor::print::save_pdf(&model, Some(&input), &settings, &output) {
         return Err(format!("couldn't write {}", output.display()));
     }
     Ok(())

@@ -10,16 +10,10 @@ mod dock_icon;
 mod document_window;
 #[cfg(target_os = "macos")]
 mod menus;
-#[cfg(target_os = "macos")]
-mod ns_window;
-#[cfg(target_os = "macos")]
-mod print;
 #[cfg(debug_assertions)]
 mod smoke;
 #[cfg(target_os = "macos")]
 mod system_actions;
-#[cfg(target_os = "macos")]
-mod web_images;
 mod windows;
 
 use std::path::PathBuf;
@@ -52,7 +46,7 @@ fn main() -> std::process::ExitCode {
         app_settings::init(config_folder(), Default::default(), cx);
         settings_window::init(&[], cx);
         #[cfg(target_os = "macos")]
-        web_images::init(cx);
+        kertas_editor::web_images::init(cx);
         #[cfg(target_os = "macos")]
         dock_icon::init();
         windows::register(cx);
