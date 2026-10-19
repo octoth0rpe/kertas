@@ -206,6 +206,11 @@ pub enum DocumentEvent {
     /// (see [`DocumentView::caret_offset`]). An edit that moves it sends
     /// [`Edited`](Self::Edited) instead, after the pause.
     CaretMoved,
+    /// A link to `destination`, as written, was clicked, and the host
+    /// decides what it opens. It's sent only once the host asks for it
+    /// with [`DocumentView::set_links_to_host`]; otherwise links are
+    /// followed.
+    LinkClicked { destination: String },
     /// A link to another Markdown file was followed, and asks for it to be
     /// opened, scrolled to the heading named `anchor` if there is one.
     OpenFile {
@@ -240,6 +245,8 @@ pub struct DocumentView {
     /// Whether the mouse button went down in the document and is still
     /// down, so moving it extends the selection.
     dragging: bool,
+    /// Whether clicked links go to the host rather than being followed.
+    links_to_host: bool,
     /// The checkbox the mouse button went down on, by where its `[ ]`
     /// starts, so it toggles when the button goes up on it.
     pressed_task: Option<usize>,
@@ -295,6 +302,7 @@ impl DocumentView {
             caret_visible: true,
             line_scroll: None,
             dragging: false,
+            links_to_host: false,
             pressed_task: None,
             blink_epoch: 0,
             confirming: false,

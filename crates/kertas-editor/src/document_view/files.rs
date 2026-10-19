@@ -273,6 +273,32 @@ impl DocumentView {
         }
     }
 
+    /// Sends links that are clicked to the host, as
+    /// [`DocumentEvent::LinkClicked`], instead of following them (#118).
+    /// The host decides what each one opens, and can still follow one as
+    /// the view would with [`follow_link`](Self::follow_link). It's off
+    /// until the host turns it on.
+    pub fn set_links_to_host(&mut self, on: bool) {
+        self.links_to_host = on;
+    }
+
+    /// A link to `destination` was clicked: it's followed, or passed on to
+    /// the host (see [`set_links_to_host`](Self::set_links_to_host)).
+    pub(crate) fn click_link(
+        &mut self,
+        destination: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.links_to_host {
+            cx.emit(DocumentEvent::LinkClicked {
+                destination: destination.to_owned(),
+            });
+        } else {
+            self.follow_link(destination, window, cx);
+        }
+    }
+
     /// Follows a clicked link: Markdown files are passed on with
     /// [`DocumentEvent::OpenFile`], and anything else opens in its own app. Shows an alert if the
     /// link can't be followed.
