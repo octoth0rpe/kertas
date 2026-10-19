@@ -33,6 +33,7 @@ impl DocumentView {
     /// Re-measures the items an edit changed and shows its selection,
     /// which reveals its item again.
     fn apply(&mut self, change: Change, cx: &mut Context<Self>) {
+        self.close_hover(cx);
         let Some(open) = &mut self.open else {
             return;
         };

@@ -177,6 +177,18 @@ impl ClickTarget {
             .ok();
     }
 
+    /// Tells the view the pointer moved onto `target`, whose popover would
+    /// go at `anchor`, or onto text with no link or mark.
+    pub fn hover(
+        &self,
+        at: Option<(crate::document_view::HoverTarget, gpui::Point<Pixels>)>,
+        cx: &mut App,
+    ) {
+        self.view
+            .update(cx, |view, cx| view.hover_text(at, cx))
+            .ok();
+    }
+
     /// Finishes editing, as Escape does.
     pub fn finish_editing(&self, cx: &mut App) {
         self.view
@@ -832,6 +844,7 @@ fn clickable_run(text: &InlineText, style: &TextStyle, accessible: bool) -> AnyE
     let click = style.click.clone();
     let (drag_layout, drag_inline, drag) = (layout.clone(), inline.clone(), click.clone());
     let (menu_layout, menu_inline, menu) = (layout.clone(), inline.clone(), click.clone());
+    let leave = click.clone();
     let content = if text.links.is_empty() {
         styled.into_any_element()
     } else {
@@ -885,6 +898,14 @@ fn clickable_run(text: &InlineText, style: &TextStyle, accessible: bool) -> AnyE
             if event.pressed_button == Some(MouseButton::Left) {
                 let (Ok(index) | Err(index)) = drag_layout.index_for_position(event.position);
                 drag.drag(drag_inline.source_offset(index), cx);
+            } else if event.pressed_button.is_none() {
+                let at = hovered(&drag_inline, &drag_layout, event.position, &drag);
+                drag.hover(at, cx);
+            }
+        })
+        .on_hover(move |hovered, _, cx| {
+            if !hovered {
+                leave.hover(None, cx);
             }
         })
         .on_mouse_down(MouseButton::Right, move |event, _, cx| {
@@ -898,6 +919,31 @@ fn clickable_run(text: &InlineText, style: &TextStyle, accessible: bool) -> AnyE
         .child(content)
         .children(scroll_to_reference)
         .into_any_element()
+}
+
+/// The link or mark at `position` in `text`, drawn with `layout`, and where
+/// its popover would go: below the start of its text.
+fn hovered(
+    text: &InlineText,
+    layout: &TextLayout,
+    position: gpui::Point<Pixels>,
+    click: &ClickTarget,
+) -> Option<(crate::document_view::HoverTarget, gpui::Point<Pixels>)> {
+    use crate::document_view::HoverTarget;
+
+    let index = layout.index_for_position(position).ok()?;
+    let (target, start) = match text.link_at(index) {
+        Some(link) => (HoverTarget::Link(link.clone()), link.display.start),
+        None => {
+            let mark = click.mark_at(text.source_offset(index))?;
+            let local = mark.range.start.saturating_sub(click.block_start)
+                ..mark.range.end.saturating_sub(click.block_start);
+            let start = text.display_range(local).map_or(index, |range| range.start);
+            (HoverTarget::Mark(mark), start)
+        }
+    };
+    let start = layout.position_for_index(start)?;
+    Some((target, gpui::point(start.x, start.y + layout.line_height())))
 }
 
 /// If the footnote reference the view is scrolling to is in `text`, drawn

@@ -421,7 +421,10 @@ impl DocumentView {
                 gpui::MouseButton::Left,
                 cx.listener(|this, _, _, _| this.end_drag()),
             )
-            .capture_key_down(cx.listener(|this, event, _, _| this.line_scroll_key_down(event)))
+            .capture_key_down(cx.listener(|this, event, _, cx| {
+                this.close_hover(cx);
+                this.line_scroll_key_down(event)
+            }))
             .on_key_up(cx.listener(|this, event, _, _| this.line_scroll_key_up(event)))
             .on_action(cx.listener(|this, _: &MoveLeft, _, cx| {
                 this.move_by(Motion::Grapheme, false, false, cx)
@@ -578,6 +581,7 @@ impl Render for DocumentView {
             cx.emit(DocumentEvent::DirtyChanged(dirty));
         }
         let disk_bar = self.render_disk_change(cx);
+        let hover = self.render_hover(window, cx);
         let web_images_bar = self.render_web_images_bar(cx);
         let name = self.display_name().unwrap_or_default();
         let now = Instant::now();
@@ -621,7 +625,9 @@ impl Render for DocumentView {
                         gpui::MouseButton::Left,
                         cx.listener(|this, _, _, cx| this.finish_editing(cx)),
                     )
+                    .on_scroll_wheel(cx.listener(|this, _, _, cx| this.close_hover(cx)))
                     .child(content),
             )
+            .children(hover)
     }
 }

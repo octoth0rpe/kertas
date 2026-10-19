@@ -55,8 +55,8 @@ pub use kertas_core;
 
 pub use assets::Assets;
 pub use document_view::{
-    CARET_BLINK_INTERVAL, DocumentEvent, DocumentView, EDIT_PAUSE, HeadingTarget, bar_button,
-    key_bindings,
+    CARET_BLINK_INTERVAL, DocumentEvent, DocumentView, EDIT_PAUSE, HOVER_DELAY, HeadingTarget,
+    HoverPopover, HoverTarget, bar_button, key_bindings,
 };
 pub use editor_config::EditorConfig;
 pub use marks::{Mark, MarkStyle};

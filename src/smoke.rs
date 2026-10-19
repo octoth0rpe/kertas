@@ -65,6 +65,7 @@ pub fn start_if_requested(window: DocumentWindowHandle, cx: &mut App) {
         "autosave" => smoke_autosave(window, cx),
         "edited" => smoke_edited(window, cx),
         "marks" => smoke_marks(window, cx),
+        "hover" => smoke_hover(window, cx),
         "rename" => smoke_rename(window, cx),
         "bench" => smoke_bench(window, cx),
         _ => smoke_steps(window, &mode, cx),
@@ -3350,6 +3351,110 @@ fn smoke_marks(window: DocumentWindowHandle, cx: &mut App) {
             ),
             *menus.borrow() == [(7, 0..2), (7, 0..2)] && caret.is_none(),
         );
+        checks.finish(cx);
+    })
+    .detach();
+}
+
+/// `KERTAS_SMOKE=hover`, on `marks.md` (#126): resting the pointer on a
+/// mark or a link asks the host for a popover after a delay, and it closes
+/// when the pointer leaves, or on typing.
+fn smoke_hover(window: DocumentWindowHandle, cx: &mut App) {
+    use gpui::{Modifiers, MouseMoveEvent, prelude::*};
+    use kertas_editor::{HOVER_DELAY, HoverTarget, Mark, MarkStyle};
+
+    cx.spawn(async move |cx| {
+        let mut checks = Checks::default();
+        pause(cx, 10).await;
+        let asked = Rc::new(RefCell::new(Vec::new()));
+        window
+            .update(cx, |view, _, cx| {
+                let asked = asked.clone();
+                view.set_hover_popover(
+                    Some(Rc::new(move |target: &HoverTarget, _, _| {
+                        asked.borrow_mut().push(target.clone());
+                        Some(gpui::div().child("Popover").into_any_element())
+                    })),
+                    cx,
+                );
+                // "Ann", at the start of the first paragraph.
+                let mark = Mark {
+                    range: 0..3,
+                    style: MarkStyle::Hidden,
+                    id: 4,
+                };
+                view.set_marks(vec![mark], cx);
+            })
+            .ok();
+        pause(cx, 3).await;
+        let origin = |index: usize, cx: &mut AsyncApp| {
+            window
+                .update(cx, |view, window, _| view.text_origin(index, window))
+                .ok()
+                .flatten()
+        };
+        let (Some(first), Some(second)) = (origin(0, cx), origin(1, cx)) else {
+            checks.check("the blocks are laid out", false);
+            return checks.finish(cx);
+        };
+        let move_to = |cx: &mut AsyncApp, position| {
+            gpui::AnyWindowHandle::from(window)
+                .update(cx, |_, window, cx| {
+                    window.dispatch_event(
+                        gpui::PlatformInput::MouseMove(MouseMoveEvent {
+                            position,
+                            pressed_button: None,
+                            modifiers: Modifiers::default(),
+                        }),
+                        cx,
+                    )
+                })
+                .ok();
+        };
+        let shown = |cx: &mut AsyncApp| {
+            window
+                .read_with(cx, |view, _| view.hover_shown())
+                .ok()
+                .flatten()
+        };
+        let line = gpui::px(12.);
+        move_to(cx, first + gpui::point(gpui::px(6.), line));
+        pause(cx, 2).await;
+        let early = shown(cx);
+        cx.background_executor().timer(HOVER_DELAY * 2).await;
+        let mark = shown(cx);
+        checks.check(
+            &format!("a mark's popover waits, then shows ({early:?} → {mark:?})"),
+            early.is_none() && matches!(&mark, Some(HoverTarget::Mark(mark)) if mark.id == 4),
+        );
+        checks.check(
+            "the host is asked for it",
+            asked
+                .borrow()
+                .iter()
+                .any(|target| matches!(target, HoverTarget::Mark(_))),
+        );
+        // Off the text, onto the window's side.
+        move_to(cx, gpui::point(gpui::px(2.), first.y + line));
+        cx.background_executor().timer(HOVER_DELAY * 2).await;
+        checks.check("leaving closes it", shown(cx).is_none());
+
+        // "A [link](…)": the link's text starts after "A ".
+        move_to(cx, second + gpui::point(gpui::px(24.), line));
+        cx.background_executor().timer(HOVER_DELAY * 2).await;
+        let link = shown(cx);
+        checks.check(
+            &format!("so does a link's ({link:?})"),
+            matches!(&link, Some(HoverTarget::Link(link)) if link.destination == "https://example.com"),
+        );
+        window
+            .update(cx, |view, window, cx| {
+                view.click(0, false, window, cx);
+                view.replace_text_in_range(None, "x", window, cx);
+            })
+            .ok();
+        pause(cx, 2).await;
+        checks.check("typing closes it", shown(cx).is_none());
         checks.finish(cx);
     })
     .detach();
