@@ -39,8 +39,13 @@ pub struct Segment {
 pub struct Link {
     /// Byte range in [`InlineText::text`].
     pub display: Range<usize>,
-    /// Where the link points, as written (reference links resolved).
+    /// Where the link points, as written (reference links resolved). For a
+    /// wiki link, its target.
     pub destination: String,
+    /// Whether it's a `[[wiki link]]` (see
+    /// [`Syntax::wiki_links`](crate::blocks::Syntax::wiki_links)), whose
+    /// target the host resolves.
+    pub wiki: bool,
 }
 
 /// An image in display text. Its alt text is in the display text, so the
@@ -116,6 +121,7 @@ impl InlineText {
             self.links.push(Link {
                 display,
                 destination: back_link_destination(label, reference),
+                wiki: false,
             });
         }
     }
@@ -157,6 +163,7 @@ impl InlineText {
                 Some(Link {
                     display: clip(&link.display)?,
                     destination: link.destination.clone(),
+                    wiki: link.wiki,
                 })
             })
             .collect();
@@ -259,7 +266,7 @@ pub(crate) struct InlineBuilder {
     strikethrough: usize,
     /// The links being built: where each one's text starts, and its
     /// destination.
-    links: Vec<(usize, String)>,
+    links: Vec<(usize, String, bool)>,
     /// The images being built, likewise.
     images: Vec<(usize, String)>,
     /// How many hidden `<a id>` tags are waiting for their `</a>`.
@@ -296,10 +303,11 @@ impl InlineBuilder {
                     LinkType::Email => format!("mailto:{dest_url}"),
                     _ => dest_url.to_string(),
                 };
-                self.links.push((self.output.text.len(), destination));
+                let wiki = matches!(link_type, LinkType::WikiLink { .. });
+                self.links.push((self.output.text.len(), destination, wiki));
             }
             Event::End(TagEnd::Link) => {
-                if let Some((start, destination)) = self.links.pop() {
+                if let Some((start, destination, wiki)) = self.links.pop() {
                     let end = self.output.text.len();
                     // An image with no alt text has no text, but can still
                     // be clicked.
@@ -312,6 +320,7 @@ impl InlineBuilder {
                         self.output.links.push(Link {
                             display: start..end,
                             destination,
+                            wiki,
                         });
                     }
                 }
@@ -338,7 +347,7 @@ impl InlineBuilder {
     /// superscript, which links to the note (#90).
     pub(crate) fn footnote_reference(&mut self, label: &str, number: usize, range: Range<usize>) {
         let start = self.output.text.len();
-        self.links.push((start, footnote_destination(label)));
+        self.links.push((start, footnote_destination(label), false));
         self.push(&superscript(number), range, false);
         self.handle(&Event::End(TagEnd::Link), 0..0);
     }
@@ -471,6 +480,7 @@ impl InlineBuilder {
             self.output.links.push(Link {
                 display,
                 destination,
+                wiki: false,
             });
         }
     }
@@ -705,6 +715,35 @@ mod tests {
         );
         assert!(inline.link_at(3).is_none());
         assert!(inline.link_at(13).is_none());
+    }
+
+    #[test]
+    fn wiki_links_only_when_turned_on() {
+        let source = "Ask [[Michael]] or [[Michael Smith|Mikey]].";
+        let syntax = crate::blocks::Syntax { wiki_links: true };
+        let on = render_inline(source, &Definitions::from_text_with("", syntax));
+        let links: Vec<(&str, &str, bool)> = on
+            .links
+            .iter()
+            .map(|link| {
+                (
+                    &on.text[link.display.clone()],
+                    link.destination.as_str(),
+                    link.wiki,
+                )
+            })
+            .collect();
+        assert_eq!(
+            links,
+            [
+                ("Michael", "Michael", true),
+                ("Mikey", "Michael Smith", true)
+            ]
+        );
+        assert_eq!(on.text, "Ask Michael or Mikey.");
+        let off = render_inline(source, &Definitions::default());
+        assert!(off.links.is_empty());
+        assert_eq!(off.text, source);
     }
 
     #[test]

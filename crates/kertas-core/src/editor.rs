@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Instant;
 
-use crate::blocks::BlockKind;
+use crate::blocks::{BlockKind, Syntax};
 use crate::document::{DiskChange, DiskChangeKind, Document, SaveError};
 use crate::editing;
 use crate::history::{EditKind, History};
@@ -98,7 +98,12 @@ pub struct Editor {
 
 impl Editor {
     pub fn new(document: Document, read_only: bool) -> Self {
-        let model = Model::new(&document.buffer().rope().to_string());
+        Self::new_with(document, read_only, Syntax::default())
+    }
+
+    /// An editor for `document`, read with `syntax`.
+    pub fn new_with(document: Document, read_only: bool, syntax: Syntax) -> Self {
+        let model = Model::new_with(&document.buffer().rope().to_string(), syntax);
         let dirty = document.is_dirty();
         Self {
             document,
@@ -412,6 +417,17 @@ impl Editor {
         );
         self.marked = None;
         Some(self.text_changed(selection))
+    }
+
+    /// Reads the document with `syntax` from now on. Returns the items that
+    /// changed, or `None` if the syntax is the same.
+    pub fn set_syntax(&mut self, syntax: Syntax) -> Option<Splice> {
+        if syntax == self.model.syntax() {
+            return None;
+        }
+        let (model, splice) = self.model.with_syntax(syntax);
+        self.model = Rc::new(model);
+        Some(splice)
     }
 
     /// Rebuilds the model after the buffer changed and selects `selection`.

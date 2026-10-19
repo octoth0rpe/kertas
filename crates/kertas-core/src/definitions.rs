@@ -20,7 +20,7 @@ use std::ops::Range;
 
 use pulldown_cmark::{Event, Parser, RefDefs};
 
-use crate::blocks::{normalize_label as normalize, parser_options};
+use crate::blocks::{Syntax, normalize_label as normalize, parser_options_for};
 
 /// Link definitions by label, and footnote numbers.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -30,6 +30,9 @@ pub struct Definitions {
     /// Each referenced footnote's number, keyed by its normalized label:
     /// 1 for the first one referred to, and so on.
     footnotes: HashMap<String, usize>,
+    /// The syntax the document is read with, which every block is parsed
+    /// with too.
+    syntax: Syntax,
 }
 
 impl Definitions {
@@ -38,6 +41,7 @@ impl Definitions {
     pub(crate) fn from_parser<'a>(
         definitions: &RefDefs,
         footnote_references: impl IntoIterator<Item = &'a str>,
+        syntax: Syntax,
     ) -> Self {
         let links = definitions
             .iter()
@@ -56,12 +60,28 @@ impl Definitions {
             let next = footnotes.len() + 1;
             footnotes.entry(label.to_owned()).or_insert(next);
         }
-        Self { links, footnotes }
+        Self {
+            links,
+            footnotes,
+            syntax,
+        }
+    }
+
+    /// The syntax the document is read with.
+    pub fn syntax(&self) -> Syntax {
+        self.syntax
     }
 
     /// The definitions in `text`, which is parsed as a whole document.
     pub fn from_text(text: &str) -> Self {
-        crate::blocks::Blocks::parse(text).definitions().clone()
+        Self::from_text_with(text, Syntax::default())
+    }
+
+    /// The definitions in `text`, read with `syntax`.
+    pub fn from_text_with(text: &str, syntax: Syntax) -> Self {
+        crate::blocks::Blocks::parse_with(text, syntax)
+            .definitions()
+            .clone()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -110,7 +130,7 @@ impl Definitions {
             let (destination, title) = self.links.get(&normalize(&link.reference))?;
             Some((destination.clone().into(), title.clone().into()))
         };
-        Parser::new_with_broken_link_callback(text, parser_options(), Some(resolve))
+        Parser::new_with_broken_link_callback(text, parser_options_for(self.syntax), Some(resolve))
             .into_offset_iter()
             .filter_map(move |(event, range)| {
                 if range.end <= len || text.len() == len {

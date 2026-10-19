@@ -31,6 +31,11 @@ pub struct EditorConfig {
     pub scrollbar: bool,
     /// Whether the block being edited shows its keyboard hints.
     pub editing_hint: bool,
+    /// Whether `[[wiki links]]` are links (#119). Kertas leaves them off;
+    /// a host that turns them on also takes clicked links
+    /// ([`DocumentView::set_links_to_host`](crate::DocumentView::set_links_to_host)),
+    /// since only it knows what a wiki link's target is.
+    pub wiki_links: bool,
 }
 
 impl Default for EditorConfig {
@@ -46,6 +51,7 @@ impl Default for EditorConfig {
             autosave: settings.autosave,
             scrollbar: settings.scrollbar,
             editing_hint: settings.editing_hint,
+            wiki_links: false,
         }
     }
 }
@@ -55,6 +61,13 @@ impl EditorConfig {
     /// shrinking with zoom.
     pub fn image_scale(&self) -> f32 {
         self.font_size as f32 / self.default_font_size as f32
+    }
+
+    /// The syntax documents are read with.
+    pub fn syntax(&self) -> kertas_core::blocks::Syntax {
+        kertas_core::blocks::Syntax {
+            wiki_links: self.wiki_links,
+        }
     }
 
     /// Whether the text size differs from the default one.

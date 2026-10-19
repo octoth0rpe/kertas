@@ -82,6 +82,8 @@ pub fn editor_config(cx: &App) -> EditorConfig {
         autosave: settings.autosave,
         scrollbar: settings.scrollbar,
         editing_hint: settings.editing_hint,
+        // Kertas reads standard Markdown; a host turns these on itself.
+        wiki_links: false,
     }
 }
 

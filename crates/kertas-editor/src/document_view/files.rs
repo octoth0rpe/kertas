@@ -282,17 +282,20 @@ impl DocumentView {
         self.links_to_host = on;
     }
 
-    /// A link to `destination` was clicked: it's followed, or passed on to
+    /// A link to `destination` (a wiki link's target if `wiki`) was
+    /// clicked: it's followed, or passed on to
     /// the host (see [`set_links_to_host`](Self::set_links_to_host)).
     pub(crate) fn click_link(
         &mut self,
         destination: &str,
+        wiki: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self.links_to_host {
             cx.emit(DocumentEvent::LinkClicked {
                 destination: destination.to_owned(),
+                wiki,
             });
         } else {
             self.follow_link(destination, window, cx);
