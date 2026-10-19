@@ -43,7 +43,9 @@
 //! On macOS, a host can print any document as Kertas does, with the
 //! standard print panel ([`print::print()`]), or write it as a PDF without
 //! one ([`print::save_pdf`]). Web images print once they've loaded, which
-//! needs [`web_images::init`].
+//! needs [`web_images::init`]. [`print::PrintOptions`] can start pages at
+//! given places and number them, and [`print::pages`] says which page a
+//! place lands on, say for a table of contents.
 
 pub mod app_settings;
 mod assets;

@@ -42,6 +42,8 @@ pub struct PrintLayout {
     /// The images, each standing in for an object replacement character
     /// (U+FFFC) in the text.
     pub images: Vec<PrintImage>,
+    /// Where each of the model's items starts in `text`, in order.
+    pub item_starts: Vec<usize>,
     /// The document's file, which images' relative paths start from.
     document: Option<PathBuf>,
     /// The web images that have been loaded, which print. Others print
@@ -151,10 +153,20 @@ impl PrintLayout {
             ..Self::default()
         };
         for item in &model.items {
+            layout.item_starts.push(layout.text.len());
             layout.block(&item.rendered, 0., RunStyle::default());
         }
         layout.notes(model);
         layout
+    }
+
+    /// Where the block holding `offset`, in the model's source, starts in
+    /// `text`.
+    pub fn text_offset(&self, model: &Model, offset: usize) -> usize {
+        self.item_starts
+            .get(model.item_at(offset))
+            .copied()
+            .unwrap_or(self.text.len())
     }
 
     /// The footnotes, after a rule at the end of the document, numbered as
@@ -463,6 +475,22 @@ mod tests {
             4,
             ListIndent::Standard,
         )
+    }
+
+    #[test]
+    fn source_offsets_map_to_where_their_blocks_start() {
+        let source = "# One\n\nText.\n\n# Two\n\nMore.\n";
+        let model = Model::new(source);
+        let layout = PrintLayout::new(&model, None, HashSet::new(), 4, ListIndent::Standard);
+        let two = source.find("# Two").unwrap();
+        let start = layout.text_offset(&model, two);
+        assert!(
+            layout.text[start..].starts_with("Two\n"),
+            "{:?}",
+            &layout.text[start..]
+        );
+        assert_eq!(layout.text_offset(&model, two + 3), start);
+        assert_eq!(layout.text_offset(&model, 0), 0);
     }
 
     /// The text of each paragraph, without its newline.
