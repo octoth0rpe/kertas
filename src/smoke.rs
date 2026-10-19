@@ -2104,6 +2104,44 @@ fn smoke_anchors(window: DocumentWindowHandle, cx: &mut App) {
             found && top == Some(33) && !caret,
         );
 
+        // A host selecting a range far below (#134): it's revealed and
+        // scrolled into view, with the caret at its end.
+        let range = window
+            .read_with(cx, |view, _| view.item_start(63))
+            .ok()
+            .flatten()
+            .map(|start| start + 3..start + 8);
+        let selected = window
+            .update(cx, |view, window, cx| {
+                range
+                    .clone()
+                    .is_some_and(|range| view.select_range(range, window, cx))
+            })
+            .unwrap_or(false);
+        pause(cx, 10).await;
+        let (selection, on_screen) = window
+            .read_with(cx, |view, _| {
+                (view.reveal_state().1, view.caret_on_screen())
+            })
+            .unwrap_or_default();
+        checks.check(
+            &format!("select_range selects and shows it ({selection:?}, on screen {on_screen:?})"),
+            selected
+                && range.is_some_and(|range| {
+                    selection.is_some_and(|s| s.anchor == range.start && s.head == range.end)
+                })
+                && on_screen == Some(true),
+        );
+        let refused = window
+            .update(cx, |view, window, cx| {
+                !view.select_range(0..usize::MAX, window, cx)
+            })
+            .unwrap_or(false);
+        checks.check("a range past the text is refused", refused);
+        dispatch(window, cx, Box::new(Unreveal));
+        pause(cx, 2).await;
+
+        let before = top_item(window, cx);
         window
             .update(cx, |view, window, cx| {
                 view.follow_link("#no-such-heading", window, cx)
@@ -2112,7 +2150,7 @@ fn smoke_anchors(window: DocumentWindowHandle, cx: &mut App) {
         pause(cx, 5).await;
         checks.check(
             "a missing heading stays put",
-            top_item(window, cx) == Some(33),
+            top_item(window, cx) == before,
         );
 
         // An HTML anchor, with and without GitHub's prefix (#96). It's on
@@ -2202,6 +2240,15 @@ fn smoke_anchors(window: DocumentWindowHandle, cx: &mut App) {
                 again == Some(61),
             );
         }
+
+        // Text shown view-only can't be selected (#134).
+        let refused = window
+            .update(cx, |view, window, cx| {
+                view.show_text("# Help\n\nText.\n", "Help", window, cx);
+                !view.select_range(0..4, window, cx) && !view.has_caret()
+            })
+            .unwrap_or(false);
+        checks.check("a read-only document refuses select_range", refused);
         checks.finish(cx);
     })
     .detach();

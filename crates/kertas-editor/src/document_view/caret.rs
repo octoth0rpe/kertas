@@ -1,6 +1,7 @@
 //! The caret and the selection: clicks, movement, blinking, and revealing
 //! the items the selection touches.
 
+use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::{Context, ListOffset, Pixels, Window, point, px};
@@ -45,6 +46,43 @@ impl DocumentView {
                 .open
                 .as_ref()
                 .is_some_and(|open| open.editor.selection().is_some())
+    }
+
+    /// Selects `range` of the document's text, or puts the caret at its
+    /// start if it's empty, as clicking or dragging there would (#134): the
+    /// view takes the focus, and the selection's block is revealed and
+    /// scrolled into view. The selection's moving end is `range.end`.
+    /// Returns false, changing nothing, if the document is read-only or
+    /// `range` isn't whole characters of the text.
+    pub fn select_range(
+        &mut self,
+        range: Range<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(open) = &mut self.open else {
+            return false;
+        };
+        let text = open.editor.text();
+        if open.editor.read_only()
+            || range.start > range.end
+            || !text.is_char_boundary(range.start)
+            || !text.is_char_boundary(range.end)
+        {
+            return false;
+        }
+        open.goal_x = None;
+        open.editor.unmark();
+        open.editor.break_group();
+        self.focus_handle.focus(window, cx);
+        self.set_selection(
+            Selection {
+                anchor: range.start,
+                head: range.end,
+            },
+            cx,
+        );
+        true
     }
 
     /// Stops extending the selection when the mouse moves.
