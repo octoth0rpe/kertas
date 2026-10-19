@@ -200,6 +200,21 @@ impl DocumentView {
         })
     }
 
+    /// Forgets the document's unsaved changes, without asking, so closing
+    /// it doesn't ask about them: for a host that has just deleted its
+    /// file, say. The text shown stays as it is, and autosave doesn't save
+    /// it.
+    pub fn discard_changes(&mut self, cx: &mut Context<Self>) {
+        let Some(open) = &mut self.open else {
+            return;
+        };
+        if open.editor.is_dirty() {
+            open.editor.discard_changes();
+            cx.emit(DocumentEvent::DirtyChanged(false));
+            cx.notify();
+        }
+    }
+
     /// Moves the document's file to `path`, keeping the document open as
     /// it is: its text, unsaved changes, undo history, caret and scroll
     /// position. Watching for changes by other apps follows the file, and

@@ -3076,6 +3076,27 @@ fn smoke_edited(window: DocumentWindowHandle, cx: &mut App) {
             "so does Escape, leaving no caret",
             moved.get() == 2 && caret.is_none(),
         );
+
+        // A host forgetting unsaved changes, as after deleting the file.
+        window
+            .update(cx, |view, window, cx| {
+                view.click(0, false, window, cx);
+                view.replace_text_in_range(None, "x", window, cx);
+            })
+            .ok();
+        let dirty = cx.update(|cx| view.read(cx).is_dirty());
+        window
+            .update(cx, |view, _, cx| view.discard_changes(cx))
+            .ok();
+        let ready = window
+            .update(cx, |view, window, cx| {
+                !view.is_dirty() && view.ready_to_close(window, cx)
+            })
+            .unwrap_or(false);
+        checks.check(
+            "discard_changes leaves nothing to ask about",
+            dirty && ready,
+        );
         checks.finish(cx);
     })
     .detach();
