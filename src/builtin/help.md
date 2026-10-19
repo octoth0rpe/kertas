@@ -80,9 +80,12 @@ scrollbar = false     # hide the scrollbar (also View → Show Scrollbar)
 fade_other_blocks = true # fade every block but the one being edited (View → Fade Other Blocks)
 typewriter_scrolling = true # keep the line being typed in the middle (View → Typewriter Scrolling)
 autosave = 5          # save 5 seconds after typing stops; "off" if not set
+spelling_language = "en-GB" # the spelling dictionary: "en-US" (the default), "en-GB" or one you add
 ```
 
 If the file has a mistake, Kertas uses the default for that setting and shows what's wrong at the bottom of the window.
+
+Kertas comes with English (US) and English (UK) spelling dictionaries. For another language, put a Hunspell dictionary's two files in the `dictionaries` folder next to `config.toml` (**Open Dictionaries Folder** in Settings opens it), named after the language, such as `fr.aff` and `fr.dic`, and choose it under **Spelling**. A language with a region, such as `fr-CA`, uses `fr` if there's no `fr-CA`. If there's no dictionary for the language, spelling isn't checked, and Kertas says so at the bottom of the window.
 
 **Tab character width** only changes how tab characters in code look. It doesn't change what the Tab key inserts or how lists are indented. **List indent** only changes how far nested list items are drawn in; the Markdown keeps whatever indentation it has.
 

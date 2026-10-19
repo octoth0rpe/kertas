@@ -14,6 +14,7 @@ use gpui::{
     SharedString, Stateful, Subscription, Toggled, Window, WindowBounds, WindowHandle, WindowKind,
     WindowOptions, actions, anchored, deferred, div, prelude::*, px, size,
 };
+use kertas_core::dictionaries::{self, DEFAULT_LANGUAGE};
 use kertas_core::settings::{DEFAULT_THEME, Kind, SETTINGS, Setting, Settings};
 
 use crate::Theme;
@@ -322,8 +323,48 @@ impl SettingsWindow {
         self.labelled(setting.label, content).into_any_element()
     }
 
-    /// A pop-up button for a setting that names a `noun` (a font or a
-    /// theme), showing `shown`. It opens a list of `options`.
+    /// The spelling language: a pop-up of the dictionaries there are, and
+    /// a button opening the folder of the user's own.
+    fn language(
+        &self,
+        setting: &'static Setting,
+        current: &str,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let dictionaries = app_settings::dictionaries(cx);
+        let chosen = dictionaries::find(dictionaries, current);
+        let options = dictionaries
+            .iter()
+            .map(|dictionary| PopupOption {
+                label: dictionary.name.clone().into(),
+                // The default is set by not setting it.
+                value: (dictionary.tag != DEFAULT_LANGUAGE).then(|| dictionary.tag.clone()),
+                selected: chosen.is_some_and(|chosen| chosen.tag == dictionary.tag),
+            })
+            .collect();
+        // A language without a dictionary shows as its tag.
+        let shown = chosen.map_or_else(|| current.to_owned(), |chosen| chosen.name.clone());
+        let folder = self
+            .button(
+                "open-dictionaries-folder",
+                "Open Dictionaries Folder",
+                "Open Dictionaries Folder",
+                cx,
+                |_, cx| cx.defer(app_settings::open_dictionaries_folder),
+            )
+            .into_any_element();
+        let popup = self.popup(setting, "language", shown, options, cx);
+        let content = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(popup)
+            .child(folder);
+        self.labelled(setting.label, content).into_any_element()
+    }
+
+    /// A pop-up button for a setting that names a `noun` (a font, a theme
+    /// or a language), showing `shown`. It opens a list of `options`.
     fn popup(
         &self,
         setting: &'static Setting,
@@ -677,6 +718,7 @@ impl SettingsWindow {
                 .font(setting, default, get(settings), cx)
                 .into_any_element(),
             Kind::Theme { get, .. } => self.theme(setting, get(settings), cx),
+            Kind::Language { get, .. } => self.language(setting, get(settings), cx),
             Kind::Bool { get, .. } => self.checkbox(setting, get(settings)).into_any_element(),
             Kind::OffOrInteger { on, get, .. } => {
                 let current = get(settings);

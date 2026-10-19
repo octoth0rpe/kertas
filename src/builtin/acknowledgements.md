@@ -231,6 +231,7 @@
 | slotmap | 1.1.1 | Zlib |
 | smallvec | 1.16.3 | MIT OR Apache-2.0 |
 | smol_str | 0.3.6 | MIT OR Apache-2.0 |
+| spellbook | 0.4.2 | MPL-2.0 |
 | spin | 0.9.9 | MIT |
 | spin | 0.10.1 | MIT |
 | stable_deref_trait | 1.2.1 | MIT OR Apache-2.0 |
@@ -301,3 +302,4 @@
 | Solarized (theme colors) | | MIT |
 | Gruvbox (theme colors) | | MIT |
 | Catppuccin (theme colors) | | MIT |
+| SCOWL English dictionaries (spelling) | 2020.12.07 | MIT AND BSD |

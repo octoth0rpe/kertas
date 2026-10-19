@@ -11,6 +11,7 @@ use std::ops::RangeInclusive;
 
 use toml_edit::{DocumentMut, Item, Value};
 
+use crate::dictionaries::{self, DEFAULT_LANGUAGE};
 use crate::rendered::CODE_FONT;
 use crate::tabs::{DEFAULT_TAB_WIDTH, TAB_WIDTHS};
 use crate::themes;
@@ -121,6 +122,9 @@ pub struct Settings {
     /// Save documents once typing has paused this many seconds, or
     /// `None` not to save them automatically (F6).
     pub autosave: Option<u32>,
+    /// The language spelling is checked in, as a language tag naming a
+    /// dictionary (#140).
+    pub spelling_language: String,
 }
 
 impl Default for Settings {
@@ -140,6 +144,7 @@ impl Default for Settings {
             fade_other_blocks: false,
             typewriter_scrolling: false,
             autosave: None,
+            spelling_language: DEFAULT_LANGUAGE.to_owned(),
         }
     }
 }
@@ -215,6 +220,13 @@ pub enum Kind {
     },
     /// A color theme's name.
     Theme {
+        get: fn(&Settings) -> &str,
+        apply: fn(&mut Settings, String),
+    },
+    /// A language tag, naming a spelling dictionary. Whether there's a
+    /// dictionary for it isn't checked here, since a missing one keeps
+    /// the language, unlike a missing theme.
+    Language {
         get: fn(&Settings) -> &str,
         apply: fn(&mut Settings, String),
     },
@@ -389,6 +401,15 @@ pub const SETTINGS: &[Setting] = &[
         },
     },
     Setting {
+        key: "spelling_language",
+        label: "Spelling",
+        note: None,
+        kind: Kind::Language {
+            get: |settings| &settings.spelling_language,
+            apply: |settings, tag| settings.spelling_language = tag,
+        },
+    },
+    Setting {
         key: "layout",
         label: "Open documents in",
         note: Some("Takes effect the next time Kertas starts."),
@@ -458,6 +479,10 @@ impl Kind {
                 },
                 None => return invalid(),
             },
+            Self::Language { apply, .. } => match value.as_str() {
+                Some(tag) if dictionaries::is_language_tag(tag) => apply(settings, tag.to_owned()),
+                _ => return invalid(),
+            },
             Self::Bool { apply, .. } => match value.as_bool() {
                 Some(value) => apply(settings, value),
                 None => return invalid(),
@@ -487,6 +512,7 @@ impl Kind {
             }
             Self::Font { .. } => "a font name, e.g. \"Charter\"".to_owned(),
             Self::Theme { .. } => "a theme's name, e.g. \"Kertas\"".to_owned(),
+            Self::Language { .. } => "a language tag, e.g. \"en-GB\"".to_owned(),
             Self::Bool { .. } => one_of(&["true", "false"]),
             Self::OffOrInteger { range, .. } => format!(
                 "`off` or a whole number from {} to {}",
@@ -773,6 +799,7 @@ mod tests {
                 fade_other_blocks: false,
                 typewriter_scrolling: false,
                 autosave: None,
+                spelling_language: "en-US".into(),
             }
         );
     }
@@ -1139,6 +1166,11 @@ mod tests {
                     assert_eq!(get(&parse(&text).0), "Kertas", "{}", setting.key);
                     let text = remove(&text, setting.key).unwrap();
                     assert_eq!(get(&parse(&text).0), DEFAULT_THEME, "{}", setting.key);
+                }
+                Kind::Language { get, .. } => {
+                    let text = set("", setting.key, "en-GB").unwrap();
+                    assert_eq!(get(&parse(&text).0), "en-GB", "{}", setting.key);
+                    assert!(set("", setting.key, "en US").is_err(), "{}", setting.key);
                 }
                 Kind::Bool { get, .. } => {
                     for b in [true, false] {
