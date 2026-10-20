@@ -40,9 +40,10 @@ if $release; then
     trap 'git -C "$root" worktree remove --force "$worktree"' EXIT
     echo "Release build of $(git rev-parse --short HEAD)"
     "$worktree/scripts/check.sh"
-    # The smoke tests open windows and take keyboard focus for about two
-    # minutes.
+    # The smoke tests open windows and take keyboard focus for a minute or
+    # two, and the benchmark for about 20 seconds.
     "$worktree/scripts/smoke.sh"
+    "$worktree/scripts/bench.sh"
     cd "$worktree"
 fi
 

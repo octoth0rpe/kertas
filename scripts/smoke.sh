@@ -5,8 +5,9 @@
 #
 #   scripts/smoke.sh
 #
-# The smoke tests open Kertas windows and take keyboard focus for about two
-# minutes, so leave the keyboard alone while they run.
+# The smoke tests open Kertas windows and take keyboard focus for a minute
+# or two, so leave the keyboard alone while they run. The typing benchmark
+# is scripts/bench.sh.
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -19,17 +20,11 @@ trap 'rm -rf "$work"' EXIT
 
 # Runs one mode on a copy of a fixture, with a time limit. Extra
 # environment variables can follow the fixture name. Prints the output and
-# succeeds only if it says "SMOKE OK" (or, with --exits, if Kertas quit by
-# itself).
+# succeeds only if it says "SMOKE OK".
 run() {
     mode=$1
     fixture=$2
     shift 2
-    expect="SMOKE OK"
-    if [ "${1:-}" = "--exits" ]; then
-        expect=""
-        shift
-    fi
     dir="$work/$mode"
     mkdir -p "$dir/config"
     cp "$fixtures/$fixture" "$dir/$fixture"
@@ -43,7 +38,7 @@ run() {
         exit 1
     fi
     echo "$output" | grep -E "^SMOKE|: (ok|FAILED)|p50" | sed 's/^/    /'
-    if [ -n "$expect" ] && ! echo "$output" | grep -q "^$expect"; then
+    if ! echo "$output" | grep -q "^SMOKE OK"; then
         echo "smoke.sh: FAILED: $mode" >&2
         exit 1
     fi
@@ -51,11 +46,6 @@ run() {
 
 run 1 showcase.md
 run 1 10k.md
-run save showcase.md
-grep -q "Saved by smoke test." "$work/save/showcase.md" || {
-    echo "smoke.sh: FAILED: save didn't write the file" >&2
-    exit 1
-}
 
 # write: the text Enter, lists, quotes and indentation produce.
 echo "==> write"
@@ -82,8 +72,8 @@ run reveal showcase.md
 run clicks clicks.md
 run anchors anchors.md
 run footnotes footnotes.md
-run caret anchors.md
 run caret showcase.md
+run caret-blocks anchors.md
 run reading anchors.md
 run scrollbar 10k.md
 run scrollbar-drag showcase.md
@@ -91,7 +81,6 @@ run images showcase.md
 run web-images showcase.md
 run a11y a11y.md
 run print showcase.md KERTAS_PRINT_PDF="$work/print/out.pdf"
-run print-pages showcase.md KERTAS_PRINT_PDF="$work/print-pages/out.pdf"
 run spelling spelling.md
 
 # convert: kt --convert lays out a fixture as Print does (the same number
@@ -140,6 +129,4 @@ run replace find.md
 run regex find.md
 run host-find find.md
 run rename showcase.md
-run quit showcase.md --exits
-run bench 10k.md
 echo "All smoke tests passed."

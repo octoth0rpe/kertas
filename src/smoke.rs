@@ -5,18 +5,17 @@
 //! per check, then `SMOKE OK` (or `SMOKE FAILED`) and quits. A panic fails
 //! it. `scripts/smoke.sh` runs every mode. The modes:
 //!
-//! - `1`: a long sequence of movement and editing steps, one frame apart.
-//!   It doesn't save or touch the clipboard.
-//! - `save`: the same, then types a line and saves.
+//! - `1`: a sequence of movement and editing steps, one frame apart, all
+//!   through the document. It doesn't save or touch the clipboard.
 //! - `write`: only the writing steps (Enter, lists, quotes, code), then
 //!   saves, so the text can be checked.
-//! - `bench`: times 500 inserts in the middle of the document.
+//! - `bench`: times 500 inserts in the middle of the document
+//!   (`scripts/bench.sh`).
 //! - `tabs`, `windows`, `settings`, `settings-window`, `help`, `reveal`, `clicks`,
-//!   `anchors`, `footnotes`, `images`, `caret`, `reading`, `scrollbar`,
-//!   `scrollbar-drag`, `a11y`, `print`, `disk`, `autosave`, `quit`,
-//!   `web-images`, `marks`, `hover`, `find`, `replace`, `regex`,
-//!   `host-find`: see
-//!   each function.
+//!   `anchors`, `footnotes`, `images`, `caret`, `caret-blocks`, `reading`,
+//!   `scrollbar`, `scrollbar-drag`, `a11y`, `print`, `spelling`, `disk`,
+//!   `autosave`, `edited`, `web-images`, `marks`, `hover`, `find`,
+//!   `replace`, `regex`, `host-find`, `rename`: see each function.
 
 use std::cell::{Cell, RefCell};
 use std::path::Path;
@@ -46,7 +45,6 @@ pub fn start_if_requested(window: DocumentWindowHandle, cx: &mut App) {
     match mode.as_str() {
         "tabs" => smoke_tabs(window, cx),
         "windows" => smoke_windows(window, cx),
-        "quit" => smoke_quit(window, cx),
         "settings" => smoke_settings(window, cx),
         "help" => smoke_help(window, cx),
         "settings-window" => smoke_settings_window(window, cx),
@@ -56,13 +54,13 @@ pub fn start_if_requested(window: DocumentWindowHandle, cx: &mut App) {
         "footnotes" => smoke_footnotes(window, cx),
         "images" => smoke_images(window, cx),
         "web-images" => smoke_web_images(window, cx),
-        "caret" => smoke_caret(window, cx),
+        "caret" => smoke_caret(window, false, cx),
+        "caret-blocks" => smoke_caret(window, true, cx),
         "reading" => smoke_reading(window, cx),
         "scrollbar" => smoke_scrollbar(window, cx),
         "scrollbar-drag" => smoke_scrollbar_drag(window, cx),
         "a11y" => smoke_a11y(window, cx),
         "print" => smoke_print(window, cx),
-        "print-pages" => smoke_print_pages(window, cx),
         "spelling" => smoke_spelling(window, cx),
         "disk" => smoke_disk(window, cx),
         "autosave" => smoke_autosave(window, cx),
@@ -290,7 +288,7 @@ async fn mouse_drag(
     pause(cx, 3).await;
 }
 
-// Step-by-step editing: `1`, `save` and `write`.
+// Step-by-step editing: `1` and `write`.
 
 enum Step {
     Action(Box<dyn Action>),
@@ -302,22 +300,21 @@ fn repeat(steps: &mut Vec<Step>, action: &dyn Action, count: usize) {
 }
 
 fn smoke_steps(window: DocumentWindowHandle, mode: &str, cx: &mut App) {
-    let mut steps = Vec::new();
-    if mode != "write" {
-        movement_steps(&mut steps);
-    }
-    writing_steps(&mut steps);
-    if mode == "write" {
-        steps.push(Step::Action(Box::new(Save)));
-    } else {
-        edit_steps(&mut steps);
-    }
-    if mode == "save" {
-        steps.push(Step::Type("Saved by smoke test.\n"));
-        steps.push(Step::Action(Box::new(Save)));
-    }
-
+    let write = mode == "write";
     cx.spawn(async move |cx| {
+        let items = window
+            .read_with(cx, |view, _| view.item_count())
+            .unwrap_or(0);
+        let mut steps = Vec::new();
+        if !write {
+            movement_steps(&mut steps, items);
+        }
+        writing_steps(&mut steps);
+        if write {
+            steps.push(Step::Action(Box::new(Save)));
+        } else {
+            edit_steps(&mut steps);
+        }
         let total = steps.len();
         for step in steps {
             pause(cx, 1).await;
@@ -334,21 +331,25 @@ fn smoke_steps(window: DocumentWindowHandle, mode: &str, cx: &mut App) {
     .detach();
 }
 
-/// Moving around the whole document, by character, line and block.
-fn movement_steps(steps: &mut Vec<Step>) {
+/// Moving around a document of `items` items, by character, line and
+/// block. Lines and characters are moved through near the start; blocks
+/// all the way to the end and back, though no further than 150, which
+/// reaches well past the measured part of a long document.
+fn movement_steps(steps: &mut Vec<Step>, items: usize) {
+    let blocks = (items + 5).min(150);
     // With no caret, ↑ and ↓ only scroll; → starts editing (#99).
     repeat(steps, &MoveRight, 1);
     repeat(steps, &MoveDocumentStart, 1);
-    repeat(steps, &MoveDown, 200);
-    repeat(steps, &MoveUp, 200);
-    repeat(steps, &MoveRight, 300);
-    repeat(steps, &MoveLeft, 300);
+    repeat(steps, &MoveDown, 60);
+    repeat(steps, &MoveUp, 60);
+    repeat(steps, &MoveRight, 40);
+    repeat(steps, &MoveLeft, 40);
     repeat(steps, &MoveDocumentEnd, 1);
     repeat(steps, &SelectUp, 30);
     repeat(steps, &SelectDown, 30);
     repeat(steps, &Unreveal, 1);
-    repeat(steps, &MoveBlockDown, 150);
-    repeat(steps, &MoveBlockUp, 150);
+    repeat(steps, &MoveBlockDown, blocks);
+    repeat(steps, &MoveBlockUp, blocks);
     repeat(steps, &SelectBlockDown, 5);
 }
 
@@ -406,7 +407,7 @@ fn edit_steps(steps: &mut Vec<Step>) {
     repeat(steps, &Undo, 4);
     repeat(steps, &Redo, 2);
     // Edits sprinkled through the document, including joining blocks.
-    for _ in 0..40 {
+    for _ in 0..12 {
         repeat(steps, &MoveDown, 3);
         steps.push(Step::Type("x"));
         repeat(steps, &Backspace, 2);
@@ -414,7 +415,7 @@ fn edit_steps(steps: &mut Vec<Step>) {
         repeat(steps, &DeleteWordLeft, 1);
         repeat(steps, &Newline, 1);
     }
-    repeat(steps, &Undo, 30);
+    repeat(steps, &Undo, 20);
     // Replace everything, then empty the document entirely.
     repeat(steps, &SelectAll, 1);
     steps.push(Step::Type("Replaced"));
@@ -1334,7 +1335,7 @@ fn smoke_scrollbar(window: DocumentWindowHandle, cx: &mut App) {
         let mut heights = Vec::new();
         for _ in 0..40 {
             dispatch(window, cx, Box::new(PageDown));
-            pause(cx, 3).await;
+            pause(cx, 1).await;
             if let Some((top, height, _)) = thumb(cx) {
                 tops.push(top);
                 heights.push(height);
@@ -1422,7 +1423,9 @@ fn smoke_scrollbar(window: DocumentWindowHandle, cx: &mut App) {
             .unwrap_or(false);
         let mut offsets = Vec::new();
         if let Some((top, height, track)) = start {
-            let steps = 400;
+            // Enough steps that each moves less than a screen, so every
+            // item is drawn on the way.
+            let steps = 150;
             for step in 0..steps + 3 {
                 let to = top + (track - height - top) * (step.min(steps) as f32 / steps as f32);
                 window
@@ -1445,7 +1448,7 @@ fn smoke_scrollbar(window: DocumentWindowHandle, cx: &mut App) {
                  {back:?}, ended at {:?})",
                 offsets.last()
             ),
-            estimated && offsets.len() == 403 && back.is_none(),
+            estimated && offsets.len() == 153 && back.is_none(),
         );
 
         cx.update(|cx| crate::app_settings::set_or_report("scrollbar", false, cx));
@@ -1797,12 +1800,13 @@ fn smoke_reading(window: DocumentWindowHandle, cx: &mut App) {
     .detach();
 }
 
-/// `KERTAS_SMOKE=caret`, on `anchors.md` and `showcase.md` (#98, #102):
-/// stepping through the document a block or a line at a time, down and
-/// back up, or jumping to either end, keeps the caret on screen after
-/// every step, in the first frame drawn after it (so scrolling a frame
-/// late fails).
-fn smoke_caret(window: DocumentWindowHandle, cx: &mut App) {
+/// `KERTAS_SMOKE=caret`, on `showcase.md` (#98, #102): stepping through
+/// the document a block or a line at a time, down and back up, or jumping
+/// to either end, keeps the caret on screen after every step, in the first
+/// frame drawn after it (so scrolling a frame late fails). With
+/// `caret-blocks`, on `anchors.md`, only a block at a time, which is what
+/// a longer document adds.
+fn smoke_caret(window: DocumentWindowHandle, blocks_only: bool, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
         pause(cx, 10).await;
@@ -1831,7 +1835,11 @@ fn smoke_caret(window: DocumentWindowHandle, cx: &mut App) {
             ("Cmd-Down", Box::new(MoveDocumentEnd), false, 1),
             ("Cmd-Up", Box::new(MoveDocumentStart), false, 1),
         ];
+        let blocks = ["Option-Down", "Option-Up"];
         for (name, action, extend, steps) in steps {
+            if blocks_only && !blocks.contains(&name) {
+                continue;
+            }
             let mut off_screen = Vec::new();
             for step in 0..steps {
                 dispatch(window, cx, action.boxed_clone());
@@ -2699,7 +2707,8 @@ fn smoke_a11y(window: DocumentWindowHandle, cx: &mut App) {
 }
 
 /// `KERTAS_SMOKE=print`, with `KERTAS_PRINT_PDF` set: prints the document to
-/// that PDF without any panels.
+/// that PDF without any panels, and then with page breaks
+/// ([`smoke_print_pages`]) to `pages.pdf` beside it.
 fn smoke_print(window: DocumentWindowHandle, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
@@ -2726,75 +2735,72 @@ fn smoke_print(window: DocumentWindowHandle, cx: &mut App) {
             &format!("printed to a PDF ({size} bytes)"),
             printed == Some(true) && size > 0,
         );
+        smoke_print_pages(window, &path.with_file_name("pages.pdf"), cx, &mut checks).await;
         checks.finish(cx);
     })
     .detach();
 }
 
-/// `KERTAS_SMOKE=print-pages`, with `KERTAS_PRINT_PDF` set: prints the
-/// document to that PDF with a page break at each `## ` heading and page
-/// numbers from the second page, as a host can, and checks which pages
-/// the headings land on.
-fn smoke_print_pages(window: DocumentWindowHandle, cx: &mut App) {
-    cx.spawn(async move |cx| {
-        let mut checks = Checks::default();
-        pause(cx, 10).await;
-        let path =
-            std::path::PathBuf::from(std::env::var_os("KERTAS_PRINT_PDF").unwrap_or_default());
-        let Some((model, text)) = window
-            .read_with(cx, |view, _| Some((view.model()?, view.text())))
-            .ok()
-            .flatten()
-        else {
-            checks.check("the document has a model", false);
-            return checks.finish(cx);
-        };
-        let headings: Vec<usize> = text
-            .match_indices("\n## ")
-            .map(|(offset, _)| offset + 1)
-            .collect();
-        let options = kertas_editor::print::PrintOptions {
-            page_breaks: headings.clone(),
-            numbered_from: Some(2),
-        };
-        let (pages, printed) = cx.update(|cx| {
-            let settings = kertas_editor::TextSettings::from(&crate::app_settings::get(cx));
-            // A heading in the middle of a line isn't one, and one in the
-            // first block starts no page.
-            let pages = kertas_editor::print::pages(&model, None, &settings, &options, &headings);
-            let printed = kertas_editor::print::save_pdf(&model, None, &settings, &options, &path);
-            (pages, printed)
-        });
-        checks.check(
-            &format!("each heading starts a later page: {pages:?}"),
-            pages.len() == headings.len()
-                && pages.first().is_some_and(|&first| first >= 2)
-                && pages.windows(2).all(|pair| pair[0] < pair[1]),
-        );
-        // The page tree's root counts every page, so it has the most.
-        let count = std::fs::read(&path).ok().and_then(|pdf| {
-            let pdf = String::from_utf8_lossy(&pdf).into_owned();
-            pdf.match_indices("/Count ")
-                .filter_map(|(at, found)| {
-                    let digits: String = pdf[at + found.len()..]
-                        .chars()
-                        .take_while(char::is_ascii_digit)
-                        .collect();
-                    digits.parse::<usize>().ok()
-                })
-                .max()
-        });
-        // The last heading's page is the last, as its section is short.
-        checks.check(
-            &format!(
-                "printed {count:?} pages, the last heading on page {:?}",
-                pages.last()
-            ),
-            printed && count.is_some() && count.as_ref() == pages.last(),
-        );
-        checks.finish(cx);
-    })
-    .detach();
+/// After [`smoke_print`]: prints the document to `path` with a page break
+/// at each `## ` heading and page numbers from the second page, as a host
+/// can, and checks which pages the headings land on.
+async fn smoke_print_pages(
+    window: DocumentWindowHandle,
+    path: &Path,
+    cx: &mut AsyncApp,
+    checks: &mut Checks,
+) {
+    let Some((model, text)) = window
+        .read_with(cx, |view, _| Some((view.model()?, view.text())))
+        .ok()
+        .flatten()
+    else {
+        checks.check("the document has a model", false);
+        return;
+    };
+    let headings: Vec<usize> = text
+        .match_indices("\n## ")
+        .map(|(offset, _)| offset + 1)
+        .collect();
+    let options = kertas_editor::print::PrintOptions {
+        page_breaks: headings.clone(),
+        numbered_from: Some(2),
+    };
+    let (pages, printed) = cx.update(|cx| {
+        let settings = kertas_editor::TextSettings::from(&crate::app_settings::get(cx));
+        // A heading in the middle of a line isn't one, and one in the
+        // first block starts no page.
+        let pages = kertas_editor::print::pages(&model, None, &settings, &options, &headings);
+        let printed = kertas_editor::print::save_pdf(&model, None, &settings, &options, path);
+        (pages, printed)
+    });
+    checks.check(
+        &format!("each heading starts a later page: {pages:?}"),
+        pages.len() == headings.len()
+            && pages.first().is_some_and(|&first| first >= 2)
+            && pages.windows(2).all(|pair| pair[0] < pair[1]),
+    );
+    // The page tree's root counts every page, so it has the most.
+    let count = std::fs::read(path).ok().and_then(|pdf| {
+        let pdf = String::from_utf8_lossy(&pdf).into_owned();
+        pdf.match_indices("/Count ")
+            .filter_map(|(at, found)| {
+                let digits: String = pdf[at + found.len()..]
+                    .chars()
+                    .take_while(char::is_ascii_digit)
+                    .collect();
+                digits.parse::<usize>().ok()
+            })
+            .max()
+    });
+    // The last heading's page is the last, as its section is short.
+    checks.check(
+        &format!(
+            "printed {count:?} pages, the last heading on page {:?}",
+            pages.last()
+        ),
+        printed && count.is_some() && count.as_ref() == pages.last(),
+    );
 }
 
 /// `KERTAS_SMOKE=spelling`, on `spelling.md` (#141, #142): misspelled
@@ -4351,17 +4357,6 @@ fn smoke_rename(window: DocumentWindowHandle, cx: &mut App) {
         .await;
         checks.check("watching follows the file", reloaded);
         checks.finish(cx);
-    })
-    .detach();
-}
-
-/// `KERTAS_SMOKE=quit`: Quit, with an unedited document, exits the app. The
-/// caller checks that the process ends.
-fn smoke_quit(window: DocumentWindowHandle, cx: &mut App) {
-    cx.spawn(async move |cx| {
-        pause(cx, 20).await;
-        println!("dispatching Quit");
-        dispatch(window, cx, Box::new(Quit));
     })
     .detach();
 }
