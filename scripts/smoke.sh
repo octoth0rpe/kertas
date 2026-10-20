@@ -10,6 +10,7 @@
 # is scripts/bench.sh.
 set -eu
 
+suite_started=$(date +%s)
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
 cargo build --quiet
@@ -20,7 +21,9 @@ trap 'rm -rf "$work"' EXIT
 
 # Runs one mode on a copy of a fixture, with a time limit. Extra
 # environment variables can follow the fixture name. Prints the output and
-# succeeds only if it says "SMOKE OK".
+# how long the mode took, and succeeds only if it says "SMOKE OK". The
+# output is printed with printf, as /bin/sh's echo turns a check's `\n`
+# into a line break.
 run() {
     mode=$1
     fixture=$2
@@ -30,15 +33,17 @@ run() {
     cp "$fixtures/$fixture" "$dir/$fixture"
     cp -R "$fixtures/images" "$dir/images"
     echo "==> $mode ($fixture)"
+    started=$(date +%s)
     # macOS has no timeout(1); perl's alarm kills Kertas if it hangs.
     if ! output=$(env KERTAS_SMOKE="$mode" KERTAS_CONFIG_DIR="$dir/config" "$@" \
         perl -e 'alarm shift; exec @ARGV' 300 "$kertas" "$dir/$fixture" 2>&1); then
-        echo "$output" | tail -20
+        printf '%s\n' "$output" | tail -20
         echo "smoke.sh: FAILED: $mode exited with an error" >&2
         exit 1
     fi
-    echo "$output" | grep -E "^SMOKE|: (ok|FAILED)|p50" | sed 's/^/    /'
-    if ! echo "$output" | grep -q "^SMOKE OK"; then
+    printf '%s\n' "$output" | grep -E "^SMOKE|: (ok|FAILED)|p50" | sed 's/^/    /'
+    echo "    ($(($(date +%s) - started)) s)"
+    if ! printf '%s\n' "$output" | grep -q "^SMOKE OK"; then
         echo "smoke.sh: FAILED: $mode" >&2
         exit 1
     fi
@@ -129,4 +134,4 @@ run replace find.md
 run regex find.md
 run host-find find.md
 run rename showcase.md
-echo "All smoke tests passed."
+echo "All smoke tests passed, in $(($(date +%s) - suite_started)) s."
