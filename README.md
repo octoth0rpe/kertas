@@ -69,16 +69,16 @@ Run it after adding or updating a dependency, or let git do it: after `git confi
 
 `scripts/check.sh` runs every check a release must pass: formatting, clippy, the tests, and `cargo-deny`, which checks dependency licenses against the allow-list in `deny.toml` (REQUIREMENTS T6–T7), security advisories, and where crates come from, and that the About tab acknowledges every library. It needs `cargo install --locked cargo-deny` and cargo-about (see above).
 
-`scripts/smoke.sh` runs the smoke tests (`src/smoke.rs`): Kertas drives itself through editing, tabs, settings, help, revealing blocks, printing and quitting, on scratch copies of the fixtures. It takes about two and a half minutes, opens windows and takes keyboard focus, so leave the keyboard alone while it runs.
+`scripts/smoke.sh` runs the smoke tests (`src/smoke.rs`): Kertas drives itself through editing, tabs, settings, help, revealing blocks, printing and quitting, on scratch copies of the fixtures. It takes a minute or two, opens windows and takes keyboard focus, so leave the keyboard alone while it runs.
 
-Speed is checked too, so Kertas doesn't get slower without anyone noticing. Baselines on an M2 MacBook Air (2026-10-13), debug build, with `tests/fixtures/10k.md`:
+Speed is checked too, so Kertas doesn't get slower without anyone noticing: by two tests in `cargo test`, and by `scripts/bench.sh`, which types into a document in a window and times it. A release (`scripts/bundle-macos.sh --release`) runs both. Baselines on an M2 MacBook Air (2026-10-13), debug build, with `tests/fixtures/10k.md`:
 
 | Check | Typical | Fails above |
 |---|---|---|
 | Parse and render the whole document (`large_document_renders_quickly`) | 34 ms | 150 ms |
 | Update the model after one keystroke (`typing_in_large_document_is_fast`) | 13 ms | 100 ms |
-| Smoke `bench`: handle one insert, 95th percentile | 14 ms | 60 ms |
-| Smoke `bench`: insert until its frame is drawn, 95th percentile | 30 ms | 120 ms |
+| `scripts/bench.sh`: handle one insert, 95th percentile | 14 ms | 60 ms |
+| `scripts/bench.sh`: insert until its frame is drawn, 95th percentile | 30 ms | 120 ms |
 
 Release builds are roughly ten times faster.
 
