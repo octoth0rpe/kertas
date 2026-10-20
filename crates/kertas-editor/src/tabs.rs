@@ -415,8 +415,19 @@ impl DocumentTabs {
                 .border_color(theme.rule)
                 .text_size(px(12.))
                 .line_height(px(STRIP_HEIGHT))
+                .relative()
+                // The active tab has a bar of the accent color along its
+                // bottom, to stand out from the others.
                 .when(active, |this| {
-                    this.bg(theme.background).text_color(theme.text)
+                    this.bg(theme.background).text_color(theme.text).child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .right_0()
+                            .bottom_0()
+                            .h(px(2.))
+                            .bg(theme.caret),
+                    )
                 })
                 .when(!active, |this| {
                     this.text_color(theme.muted_text)
