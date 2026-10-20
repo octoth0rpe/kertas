@@ -9,6 +9,7 @@ What's new in each version of Kertas, newest first.
 - **Regex** in the find bar searches with a regular expression, and a replacement can use its groups, as `$1` or `${name}`. A pattern with a mistake says what's wrong in the bar.
 - **`fade_other_blocks = true`** in the settings file draws every block but the one you're editing faded, to keep your eye on what you're writing. Faded text stays readable in every theme, so some themes fade less than others. It's off unless you turn it on.
 - **View → Typewriter Scrolling** keeps the line you're typing on in the middle of the window, scrolling the text up as you write. You can still scroll away, and the next keystroke brings it back.
+- The active tab is underlined in the theme's accent color, so it's easier to tell from the others.
 
 ## 0.4.0 — 2026-10-16
 

@@ -12,17 +12,21 @@
 //! the window, the app asks [`DocumentTabs::ready_to_close`] and, if that
 //! says no, [`DocumentTabs::confirm_close`], which asks about each tab
 //! with unsaved changes in turn.
+//!
+//! An app's own tab strips, such as one switching between panels, can look
+//! the same: [`tab_strip`] is the bar, and [`tab`] each tab in it.
 
 use gpui::{
-    AccessibleAction, AnyElement, App, Context, Entity, EventEmitter, Focusable, KeyBinding,
-    MouseButton, Render, Role, ScrollHandle, SharedString, Subscription, Task, Window, actions,
-    div, prelude::*, px,
+    AccessibleAction, AnyElement, App, Context, Div, ElementId, Entity, EventEmitter, Focusable,
+    KeyBinding, MouseButton, Render, Role, ScrollHandle, SharedString, Stateful, Subscription,
+    Task, Window, actions, div, prelude::*, px,
 };
 
 use crate::{DocumentEvent, DocumentView, Theme};
 use kertas_core::titles;
 
-const STRIP_HEIGHT: f32 = 30.;
+/// How tall a strip of tabs is.
+pub const STRIP_HEIGHT: f32 = 30.;
 const MIN_TAB_WIDTH: f32 = 100.;
 const MAX_TAB_WIDTH: f32 = 240.;
 
@@ -43,6 +47,75 @@ actions!(
         SelectTab9,
     ]
 );
+
+/// A strip of tabs, `label` for VoiceOver, for an app's own tabs, as
+/// [`DocumentTabs`] draws its: add [`tab`]s to it.
+pub fn tab_strip(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    theme: Theme,
+) -> Stateful<Div> {
+    div()
+        .id(id)
+        .role(Role::TabList)
+        .aria_label(label)
+        .flex_none()
+        .flex()
+        .h(px(STRIP_HEIGHT))
+        .w_full()
+        .bg(theme.table_header_background)
+        .border_b_1()
+        .border_color(theme.rule)
+}
+
+/// A tab called `label`, the `index`th of `count` in its [`tab_strip`],
+/// as [`DocumentTabs`] draws its: the active one stands out, with a bar
+/// of the accent color along its bottom. The app sizes it and says what
+/// choosing it does; to reach it with the keyboard, the app makes it
+/// focusable, and it's outlined while it has the keyboard.
+pub fn tab(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    active: bool,
+    (index, count): (usize, usize),
+    theme: Theme,
+) -> Stateful<Div> {
+    let label = label.into();
+    div()
+        .id(id)
+        .role(Role::Tab)
+        .aria_label(label.clone())
+        .aria_selected(active)
+        .aria_position_in_set(index + 1)
+        .aria_size_of_set(count)
+        .relative()
+        .h_full()
+        .px_3()
+        .flex()
+        .items_center()
+        .gap_2()
+        .border_r_1()
+        .border_color(theme.rule)
+        .text_size(px(12.))
+        .line_height(px(STRIP_HEIGHT))
+        .when(active, |this| {
+            this.bg(theme.background).text_color(theme.text).child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .h(px(2.))
+                    .bg(theme.caret),
+            )
+        })
+        .when(!active, |this| {
+            this.text_color(theme.muted_text)
+                .hover(|style| style.text_color(theme.text))
+        })
+        .focus_visible(move |style| style.border_1().border_color(theme.caret))
+        .child(div().flex_1().min_w(px(0.)).truncate().child(label))
+}
 
 /// Key bindings for tabs (macOS conventions).
 pub fn key_bindings() -> Vec<KeyBinding> {
@@ -385,13 +458,7 @@ impl DocumentTabs {
                 title: title.clone(),
                 theme,
             };
-            div()
-                .id(("tab", index))
-                .role(Role::Tab)
-                .aria_label(title.clone())
-                .aria_selected(active)
-                .aria_position_in_set(index + 1)
-                .aria_size_of_set(count)
+            self::tab(("tab", index), title.clone(), active, (index, count), theme)
                 .when(dirty, |this| this.aria_description("Edited"))
                 .on_a11y_action(AccessibleAction::Click, {
                     let this = this.clone();
@@ -406,22 +473,6 @@ impl DocumentTabs {
                 .flex_basis(px(MAX_TAB_WIDTH))
                 .min_w(px(MIN_TAB_WIDTH))
                 .max_w(px(MAX_TAB_WIDTH))
-                .h_full()
-                .px_3()
-                .flex()
-                .items_center()
-                .gap_2()
-                .border_r_1()
-                .border_color(theme.rule)
-                .text_size(px(12.))
-                .line_height(px(STRIP_HEIGHT))
-                .when(active, |this| {
-                    this.bg(theme.background).text_color(theme.text)
-                })
-                .when(!active, |this| {
-                    this.text_color(theme.muted_text)
-                        .hover(|style| style.text_color(theme.text))
-                })
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, _, window, cx| {
@@ -442,7 +493,6 @@ impl DocumentTabs {
                 .on_drop(cx.listener(move |this, dragged: &DraggedTab, _, cx| {
                     this.move_tab(dragged.index, index, cx);
                 }))
-                .child(div().flex_1().min_w(px(0.)).truncate().child(title))
                 .child(
                     div()
                         .id(("close-tab", index))
@@ -471,19 +521,9 @@ impl DocumentTabs {
                 )
         });
 
-        div()
-            .id("tabs")
-            .role(Role::TabList)
-            .aria_label("Documents")
-            .flex_none()
-            .flex()
-            .h(px(STRIP_HEIGHT))
-            .w_full()
+        tab_strip("tabs", "Documents", theme)
             .overflow_x_scroll()
             .track_scroll(&self.scroll_handle)
-            .bg(theme.table_header_background)
-            .border_b_1()
-            .border_color(theme.rule)
             .children(tabs)
             // Dropping past the last tab moves the tab to the end.
             .child(
