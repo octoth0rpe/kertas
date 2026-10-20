@@ -1,37 +1,14 @@
 //! The document view in GPUI's headless test windows (spike #150), with a
 //! clock the test moves on rather than real pauses. GPUI's test text
-//! system gives every glyph the same width; [`down_moves_a_wrapped_line`]
-//! uses the real macOS one.
+//! system gives every glyph the same width; tests/layout.rs uses the real
+//! macOS one.
 
-use std::cell::RefCell;
-use std::rc::Rc;
+mod common;
 
-use gpui::{Entity, TestAppContext, VisualTestContext};
-use kertas_editor::{DocumentEvent, DocumentView, EDIT_PAUSE, EditorConfig, Mark, MarkStyle};
+use gpui::TestAppContext;
+use kertas_editor::{DocumentEvent, EDIT_PAUSE, Mark, MarkStyle};
 
-/// The events a view sent.
-type Events = Rc<RefCell<Vec<DocumentEvent>>>;
-
-/// A window showing a new untitled document, ready for typing, and the
-/// events the view sends.
-fn untitled(cx: &mut TestAppContext) -> (Entity<DocumentView>, &mut VisualTestContext, Events) {
-    cx.update(|cx| cx.bind_keys(kertas_editor::key_bindings()));
-    let (view, cx) = cx.add_window_view(|window, cx| {
-        let mut view = DocumentView::new(EditorConfig::default(), window, cx);
-        view.start_untitled(window, cx);
-        view
-    });
-    let events = Events::default();
-    cx.update(|_, cx| {
-        let events = events.clone();
-        cx.subscribe(&view, move |_, event: &DocumentEvent, _| {
-            events.borrow_mut().push(event.clone())
-        })
-        .detach();
-    });
-    cx.run_until_parked();
-    (view, cx, events)
-}
+use common::{Events, untitled};
 
 fn edits(events: &Events) -> usize {
     events
@@ -157,23 +134,4 @@ fn page_down_scrolls(cx: &mut TestAppContext) {
     cx.run_until_parked();
     let (top, _) = view.read_with(cx, |view, _| view.scroll_top()).unwrap();
     assert!(top > 10, "scrolled to {top}");
-}
-
-/// Down moves the caret a line within a paragraph that wraps, with the real
-/// macOS text system, so the lines break where they do in the app.
-#[cfg(target_os = "macos")]
-#[test]
-fn down_moves_a_wrapped_line() {
-    let text_system = std::sync::Arc::new(gpui_apple::AppleTextSystem::new());
-    let mut cx =
-        TestAppContext::build_with_text_system(gpui::TestDispatcher::new(0), None, text_system);
-    let (view, cx, _) = untitled(&mut cx);
-    let sentence = "The quick brown fox jumps over the lazy dog. ";
-    cx.simulate_input(&sentence.repeat(20));
-    cx.update(|window, cx| view.update(cx, |view, cx| view.click(0, false, window, cx)));
-    cx.simulate_keystrokes("down");
-    cx.run_until_parked();
-    let caret = view.read_with(cx, |view, _| view.caret_offset()).unwrap();
-    let len = sentence.len() * 20;
-    assert!(caret > 20 && caret < len / 2, "caret {caret} of {len}");
 }

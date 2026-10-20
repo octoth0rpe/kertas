@@ -49,7 +49,6 @@ run() {
     fi
 }
 
-run 1 showcase.md
 run 1 10k.md
 
 # write: the text Enter, lists, quotes and indentation produce.
@@ -77,8 +76,6 @@ run reveal showcase.md
 run clicks clicks.md
 run anchors anchors.md
 run footnotes footnotes.md
-run caret showcase.md
-run caret-blocks anchors.md
 run reading anchors.md
 run scrollbar 10k.md
 run scrollbar-drag showcase.md

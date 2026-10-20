@@ -5,16 +5,18 @@
 //! per check, then `SMOKE OK` (or `SMOKE FAILED`) and quits. A panic fails
 //! it. `scripts/smoke.sh` runs every mode. The modes:
 //!
-//! - `1`: a sequence of movement and editing steps, one frame apart, all
-//!   through the document. It doesn't save or touch the clipboard.
+//! - `1`: a sequence of movement and editing steps (`smoke/steps.rs`), one
+//!   frame apart, all through the document. It doesn't save or touch the
+//!   clipboard. scripts/smoke.sh runs it on 10k.md; kertas-editor's
+//!   tests/layout.rs takes the same steps through showcase.md, headless.
 //! - `write`: only the writing steps (Enter, lists, quotes, code), then
 //!   saves, so the text can be checked.
 //! - `bench`: times 500 inserts in the middle of the document
 //!   (`scripts/bench.sh`).
 //! - `tabs`, `windows`, `settings`, `settings-window`, `help`, `reveal`, `clicks`,
-//!   `anchors`, `footnotes`, `images`, `caret`, `caret-blocks`, `reading`,
-//!   `scrollbar`, `scrollbar-drag`, `a11y`, `print`, `spelling`, `disk`,
-//!   `autosave`, `edited`, `marks`, `find`, `rename`: see each function.
+//!   `anchors`, `footnotes`, `images`, `reading`, `scrollbar`, `scrollbar-drag`,
+//!   `a11y`, `print`, `spelling`, `disk`, `autosave`, `edited`, `marks`,
+//!   `find`, `rename`: see each function.
 
 use std::cell::{Cell, RefCell};
 use std::path::Path;
@@ -26,13 +28,15 @@ use gpui::{Action, App, AsyncApp, EntityInputHandler};
 use crate::document_window::{CloseWindow, DocumentWindowHandle, New, Quit};
 use kertas_editor::DocumentView;
 use kertas_editor::actions::{
-    Backspace, Delete, DeleteWordLeft, IndentLines, IndentTab, InsertTab, LineBreak, MoveBlockDown,
-    MoveBlockUp, MoveDocumentEnd, MoveDocumentStart, MoveDown, MoveLeft, MoveRight, MoveUp,
-    Newline, OutdentTab, Redo, Save, SelectAll, SelectBlockDown, SelectDown, SelectUp, Undo,
-    Unreveal,
+    Backspace, IndentTab, MoveDocumentEnd, MoveDocumentStart, MoveDown, MoveRight, Newline, Redo,
+    Save, SelectAll, Undo, Unreveal,
 };
 use kertas_editor::gpui::Entity;
 use kertas_editor::tabs::{CloseTab, SelectTab1};
+
+mod steps;
+
+use steps::{Step, edit_steps, movement_steps, writing_steps};
 
 const STEP: Duration = Duration::from_millis(16);
 
@@ -52,8 +56,6 @@ pub fn start_if_requested(window: DocumentWindowHandle, cx: &mut App) {
         "anchors" => smoke_anchors(window, cx),
         "footnotes" => smoke_footnotes(window, cx),
         "images" => smoke_images(window, cx),
-        "caret" => smoke_caret(window, false, cx),
-        "caret-blocks" => smoke_caret(window, true, cx),
         "reading" => smoke_reading(window, cx),
         "scrollbar" => smoke_scrollbar(window, cx),
         "scrollbar-drag" => smoke_scrollbar_drag(window, cx),
@@ -284,15 +286,6 @@ async fn mouse_drag(
 
 // Step-by-step editing: `1` and `write`.
 
-enum Step {
-    Action(Box<dyn Action>),
-    Type(&'static str),
-}
-
-fn repeat(steps: &mut Vec<Step>, action: &dyn Action, count: usize) {
-    steps.extend((0..count).map(|_| Step::Action(action.boxed_clone())));
-}
-
 fn smoke_steps(window: DocumentWindowHandle, mode: &str, cx: &mut App) {
     let write = mode == "write";
     cx.spawn(async move |cx| {
@@ -323,101 +316,6 @@ fn smoke_steps(window: DocumentWindowHandle, mode: &str, cx: &mut App) {
         cx.update(|cx| cx.quit());
     })
     .detach();
-}
-
-/// Moving around a document of `items` items, by character, line and
-/// block. Lines and characters are moved through near the start; blocks
-/// all the way to the end and back, though no further than 150, which
-/// reaches well past the measured part of a long document.
-fn movement_steps(steps: &mut Vec<Step>, items: usize) {
-    let blocks = (items + 5).min(150);
-    // With no caret, ↑ and ↓ only scroll; → starts editing (#99).
-    repeat(steps, &MoveRight, 1);
-    repeat(steps, &MoveDocumentStart, 1);
-    repeat(steps, &MoveDown, 60);
-    repeat(steps, &MoveUp, 60);
-    repeat(steps, &MoveRight, 40);
-    repeat(steps, &MoveLeft, 40);
-    repeat(steps, &MoveDocumentEnd, 1);
-    repeat(steps, &SelectUp, 30);
-    repeat(steps, &SelectDown, 30);
-    repeat(steps, &Unreveal, 1);
-    repeat(steps, &MoveBlockDown, blocks);
-    repeat(steps, &MoveBlockUp, blocks);
-    repeat(steps, &SelectBlockDown, 5);
-}
-
-/// Writing at the end: paragraphs through the gap, a list, a quote and a
-/// code block with indentation.
-fn writing_steps(steps: &mut Vec<Step>) {
-    // With no caret, ⌘↓ only scrolls; → starts editing (#99).
-    repeat(steps, &MoveRight, 1);
-    repeat(steps, &MoveDocumentEnd, 1);
-    repeat(steps, &Newline, 2);
-    repeat(steps, &MoveUp, 3);
-    repeat(steps, &MoveDown, 3);
-    repeat(steps, &Newline, 1);
-    steps.push(Step::Type("New paragraph"));
-    repeat(steps, &LineBreak, 1);
-    steps.push(Step::Type("second line"));
-    repeat(steps, &Newline, 2);
-    steps.push(Step::Type("- item"));
-    repeat(steps, &Newline, 1);
-    steps.push(Step::Type("[ ] task"));
-    repeat(steps, &IndentTab, 1);
-    repeat(steps, &Newline, 1);
-    steps.push(Step::Type("sub"));
-    repeat(steps, &OutdentTab, 1);
-    repeat(steps, &Newline, 2);
-    steps.push(Step::Type("> quote"));
-    repeat(steps, &LineBreak, 1);
-    repeat(steps, &Newline, 3);
-    repeat(steps, &MoveBlockUp, 4);
-    repeat(steps, &MoveBlockDown, 4);
-    repeat(steps, &MoveDocumentEnd, 1);
-    steps.push(Step::Type("```"));
-    repeat(steps, &Newline, 1);
-    steps.push(Step::Type("fn"));
-    repeat(steps, &IndentTab, 1);
-    repeat(steps, &Newline, 1);
-    steps.push(Step::Type("    x"));
-    repeat(steps, &IndentLines, 1);
-    repeat(steps, &Newline, 1);
-    steps.push(Step::Type("y"));
-    repeat(steps, &OutdentTab, 1);
-    repeat(steps, &InsertTab, 1);
-    repeat(steps, &Undo, 1);
-}
-
-/// Edits all over the document, undo and redo, and replacing everything.
-fn edit_steps(steps: &mut Vec<Step>) {
-    // Editing at the start: a new heading and paragraph, then undo/redo.
-    repeat(steps, &MoveDocumentStart, 1);
-    steps.push(Step::Type("# Smoke"));
-    repeat(steps, &Newline, 2);
-    steps.push(Step::Type("Typed **bold** text"));
-    repeat(steps, &Newline, 2);
-    repeat(steps, &Backspace, 5);
-    repeat(steps, &Undo, 4);
-    repeat(steps, &Redo, 2);
-    // Edits sprinkled through the document, including joining blocks.
-    for _ in 0..12 {
-        repeat(steps, &MoveDown, 3);
-        steps.push(Step::Type("x"));
-        repeat(steps, &Backspace, 2);
-        repeat(steps, &Delete, 1);
-        repeat(steps, &DeleteWordLeft, 1);
-        repeat(steps, &Newline, 1);
-    }
-    repeat(steps, &Undo, 20);
-    // Replace everything, then empty the document entirely.
-    repeat(steps, &SelectAll, 1);
-    steps.push(Step::Type("Replaced"));
-    repeat(steps, &SelectAll, 1);
-    repeat(steps, &Backspace, 1);
-    steps.push(Step::Type("a"));
-    repeat(steps, &Backspace, 3);
-    repeat(steps, &Undo, 3);
 }
 
 // `bench`: typing speed.
@@ -1783,70 +1681,6 @@ fn smoke_reading(window: DocumentWindowHandle, cx: &mut App) {
             &format!("after Escape, ↓ scrolls from where the window is ({before} -> {after})"),
             (after - before - 40.).abs() < 1. && !caret(cx),
         );
-        checks.finish(cx);
-    })
-    .detach();
-}
-
-/// `KERTAS_SMOKE=caret`, on `showcase.md` (#98, #102): stepping through
-/// the document a block or a line at a time, down and back up, or jumping
-/// to either end, keeps the caret on screen after every step, in the first
-/// frame drawn after it (so scrolling a frame late fails). With
-/// `caret-blocks`, on `anchors.md`, only a block at a time, which is what
-/// a longer document adds.
-fn smoke_caret(window: DocumentWindowHandle, blocks_only: bool, cx: &mut App) {
-    cx.spawn(async move |cx| {
-        let mut checks = Checks::default();
-        laid_out(window, cx).await;
-        let item_count = window
-            .read_with(cx, |view, _| view.item_count())
-            .unwrap_or(0);
-        // The other movements, checked for the same problem: arrows a line
-        // at a time (twice as many steps, as blank lines count), and the
-        // document's ends.
-        let steps = [
-            (
-                "Option-Down",
-                Box::new(MoveBlockDown) as Box<dyn Action>,
-                false,
-                item_count,
-            ),
-            ("Option-Up", Box::new(MoveBlockUp), false, item_count),
-            (
-                "Option-Shift-Down",
-                Box::new(SelectBlockDown),
-                true,
-                item_count,
-            ),
-            ("Down", Box::new(MoveDown), false, item_count * 2),
-            ("Up", Box::new(MoveUp), false, item_count * 2),
-            ("Cmd-Down", Box::new(MoveDocumentEnd), false, 1),
-            ("Cmd-Up", Box::new(MoveDocumentStart), false, 1),
-        ];
-        let blocks = ["Option-Down", "Option-Up"];
-        for (name, action, extend, steps) in steps {
-            if blocks_only && !blocks.contains(&name) {
-                continue;
-            }
-            let mut off_screen = Vec::new();
-            for step in 0..steps {
-                dispatch(window, cx, action.boxed_clone());
-                let on_screen = after_frames(window, cx, 1, |view| view.caret_on_screen())
-                    .await
-                    .flatten();
-                if on_screen != Some(true) {
-                    off_screen.push(step);
-                }
-            }
-            checks.check(
-                &format!("{name} keeps the caret on screen (off at steps {off_screen:?})"),
-                off_screen.is_empty(),
-            );
-            if extend {
-                dispatch(window, cx, Box::new(MoveDocumentStart));
-                pause(cx, 5).await;
-            }
-        }
         checks.finish(cx);
     })
     .detach();

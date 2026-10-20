@@ -71,6 +71,8 @@ Run it after adding or updating a dependency, or let git do it: after `git confi
 
 `scripts/smoke.sh` runs the smoke tests (`src/smoke.rs`): Kertas drives itself through editing, tabs, settings, help, revealing blocks, printing and quitting, on scratch copies of the fixtures. It takes a minute or two, opens windows and takes keyboard focus, so leave the keyboard alone while it runs.
 
+What doesn't need a real window runs in `cargo test` instead, in GPUI's headless test windows: `crates/kertas-editor/tests/`. `layout.rs` there lays text out with the real macOS text system, to move the caret through the fixtures as the app would.
+
 Speed is checked too, so Kertas doesn't get slower without anyone noticing: by two tests in `cargo test`, and by `scripts/bench.sh`, which types into a document in a window and times it. A release (`scripts/bundle-macos.sh --release`) runs both. Baselines on an M2 MacBook Air (2026-10-13), debug build, with `tests/fixtures/10k.md`:
 
 | Check | Typical | Fails above |
