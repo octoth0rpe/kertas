@@ -134,7 +134,13 @@ impl DocumentView {
     }
 
     pub(super) fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
+        let Some(item) = cx.read_from_clipboard() else {
+            return;
+        };
+        if self.paste_images(&item, cx) {
+            return;
+        }
+        let Some(text) = item.text() else {
             return;
         };
         self.edit(cx, |editor| editor.paste(&text));

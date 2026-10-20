@@ -6,16 +6,18 @@
 mod common;
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use gpui::{
-    EntityInputHandler, IntoElement, Modifiers, MouseButton, ParentElement, TestAppContext, point,
-    px,
+    ClipboardEntry, ClipboardItem, ClipboardString, EntityInputHandler, ExternalPaths,
+    FileDropEvent, ImageFormat, IntoElement, Modifiers, MouseButton, ParentElement, TestAppContext,
+    point, px,
 };
 use kertas_editor::actions::Unreveal;
 use kertas_editor::kertas_core::rendered::RenderedBlock;
 use kertas_editor::{
-    DocumentEvent, DocumentView, EDIT_PAUSE, HOVER_DELAY, HoverTarget, Mark, MarkStyle,
+    AddedImages, DocumentEvent, DocumentView, EDIT_PAUSE, HOVER_DELAY, HoverTarget, Mark, MarkStyle,
 };
 
 use common::Events;
@@ -257,4 +259,108 @@ fn hovering_asks_the_host_for_a_popover(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     assert_eq!(shown(cx), None, "typing closes it");
+}
+
+/// The images a host was sent, and where they go.
+fn images_added(events: &Events) -> Vec<(AddedImages, usize)> {
+    events
+        .borrow()
+        .iter()
+        .filter_map(|event| match event {
+            DocumentEvent::ImagesAdded { images, at } => Some((images.clone(), *at)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn image_item(bytes: &[u8]) -> ClipboardItem {
+    ClipboardItem {
+        entries: vec![ClipboardEntry::Image(gpui::Image {
+            format: ImageFormat::Png,
+            bytes: bytes.to_vec(),
+            id: 1,
+        })],
+    }
+}
+
+/// Pasting an image (#155) goes to a host that takes images, at the caret,
+/// a selection deleted first; otherwise pasting is as it was.
+#[gpui::test]
+fn pasted_images_go_to_the_host(cx: &mut TestAppContext) {
+    let (view, cx, events) = common::showing("Before after.\n", cx);
+    cx.update(|window, cx| view.update(cx, |view, cx| view.click(7, false, window, cx)));
+    cx.write_to_clipboard(image_item(b"png"));
+    cx.simulate_keystrokes("cmd-v");
+    assert!(images_added(&events).is_empty(), "not unless the host asks");
+    assert_eq!(view.read_with(cx, |view, _| view.text()), "Before after.\n");
+
+    view.update(cx, |view, _| view.set_accepts_images(true));
+    cx.simulate_keystrokes("cmd-v");
+    let data = AddedImages::Data {
+        bytes: b"png".to_vec(),
+        format: ImageFormat::Png,
+    };
+    assert_eq!(images_added(&events), [(data.clone(), 7)]);
+
+    // A selection goes, as a paste would replace it.
+    events.borrow_mut().clear();
+    cx.update(|window, cx| view.update(cx, |view, cx| view.select_range(0..7, window, cx)));
+    cx.simulate_keystrokes("cmd-v");
+    assert_eq!(view.read_with(cx, |view, _| view.text()), "after.\n");
+    assert_eq!(images_added(&events), [(data, 0)]);
+
+    // Image files copied in the Finder, which puts their names there as
+    // text too, go as files; text alone is pasted as text.
+    events.borrow_mut().clear();
+    let files = ClipboardItem {
+        entries: vec![
+            ClipboardEntry::String(ClipboardString::new("map.png notes.md".into())),
+            ClipboardEntry::ExternalPaths(ExternalPaths(
+                vec![PathBuf::from("/a/map.png"), PathBuf::from("/a/notes.md")].into(),
+            )),
+        ],
+    };
+    cx.write_to_clipboard(files);
+    cx.simulate_keystrokes("cmd-v");
+    assert_eq!(
+        images_added(&events),
+        [(AddedImages::Files(vec![PathBuf::from("/a/map.png")]), 0)]
+    );
+    cx.write_to_clipboard(ClipboardItem::new_string("Text ".into()));
+    cx.simulate_keystrokes("cmd-v");
+    assert_eq!(view.read_with(cx, |view, _| view.text()), "Text after.\n");
+}
+
+/// Image files dropped on a block (#155) go to the end of it; other files
+/// aren't taken.
+#[gpui::test]
+fn dropped_images_go_to_the_host(cx: &mut TestAppContext) {
+    let (view, cx, events) = common::showing("First block.\n\nSecond block.\n", cx);
+    view.update(cx, |view, _| view.set_accepts_images(true));
+    let drop = |cx: &mut gpui::VisualTestContext, position, paths: Vec<PathBuf>| {
+        cx.simulate_event(FileDropEvent::Entered {
+            position,
+            paths: ExternalPaths(paths.into()),
+        });
+        cx.simulate_event(FileDropEvent::Submit { position });
+        cx.run_until_parked();
+    };
+    let on_first = common::origin(&view, cx, 0) + point(px(20.), px(8.));
+    drop(cx, on_first, vec![PathBuf::from("/a/notes.md")]);
+    assert!(images_added(&events).is_empty(), "only images");
+    drop(
+        cx,
+        on_first,
+        vec![PathBuf::from("/a/one.jpg"), PathBuf::from("/a/two.svg")],
+    );
+    assert_eq!(
+        images_added(&events),
+        [(
+            AddedImages::Files(vec![
+                PathBuf::from("/a/one.jpg"),
+                PathBuf::from("/a/two.svg")
+            ]),
+            "First block.".len()
+        )]
+    );
 }

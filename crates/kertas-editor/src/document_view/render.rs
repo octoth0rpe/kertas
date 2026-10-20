@@ -633,8 +633,7 @@ impl Render for DocumentView {
             .children(disk_bar)
             .children(web_images_bar)
             .child(
-                div()
-                    .id("document")
+                super::images::on_drop(div().id("document"), cx)
                     .when(self.open.is_some(), |this| {
                         this.role(Role::Document).aria_label(name)
                     })

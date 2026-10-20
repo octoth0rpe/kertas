@@ -165,7 +165,8 @@ impl DocumentWindow {
                 _,
                 DocumentEvent::LinkClicked { .. }
                 | DocumentEvent::MarkMenu { .. }
-                | DocumentEvent::AddWord { .. },
+                | DocumentEvent::AddWord { .. }
+                | DocumentEvent::ImagesAdded { .. },
             ) => {}
             TabsEvent::Document(_, DocumentEvent::OpenFile { path, anchor }) => {
                 let (path, anchor) = (path.clone(), anchor.clone());
