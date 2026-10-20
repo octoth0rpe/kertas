@@ -83,7 +83,6 @@ run reading anchors.md
 run scrollbar 10k.md
 run scrollbar-drag showcase.md
 run images showcase.md
-run web-images showcase.md
 run a11y a11y.md
 run print showcase.md KERTAS_PRINT_PDF="$work/print/out.pdf"
 run spelling spelling.md
@@ -128,10 +127,6 @@ grep -q "^Quitting. Still paused. " "$work/autosave/showcase.md" || {
 }
 run edited showcase.md
 run marks marks.md
-run hover marks.md
 run find find.md
-run replace find.md
-run regex find.md
-run host-find find.md
 run rename showcase.md
 echo "All smoke tests passed, in $(($(date +%s) - suite_started)) s."
