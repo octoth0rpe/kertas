@@ -15,8 +15,8 @@
 //!   (`scripts/bench.sh`).
 //! - `tabs`, `windows`, `settings`, `settings-window`, `help`, `reveal`, `clicks`,
 //!   `anchors`, `footnotes`, `images`, `reading`, `scrollbar`, `scrollbar-drag`,
-//!   `a11y`, `print`, `spelling`, `disk`, `autosave`, `edited`, `marks`,
-//!   `find`, `rename`: see each function.
+//!   `a11y`, `print`, `spelling`, `disk`, `autosave`, `rename`: see each
+//!   function.
 
 use std::cell::{Cell, RefCell};
 use std::path::Path;
@@ -64,9 +64,6 @@ pub fn start_if_requested(window: DocumentWindowHandle, cx: &mut App) {
         "spelling" => smoke_spelling(window, cx),
         "disk" => smoke_disk(window, cx),
         "autosave" => smoke_autosave(window, cx),
-        "edited" => smoke_edited(window, cx),
-        "marks" => smoke_marks(window, cx),
-        "find" => smoke_find(window, cx),
         "rename" => smoke_rename(window, cx),
         "bench" => smoke_bench(window, cx),
         _ => smoke_steps(window, &mode, cx),
@@ -2612,12 +2609,12 @@ async fn smoke_print_pages(
     );
 }
 
-/// `KERTAS_SMOKE=spelling`, on `spelling.md` (#141, #142): misspelled
-/// words are found in the background and underlined, an edited word loses
-/// its underline until it's checked again, and the language and View →
-/// Check Spelling change what's underlined. Right-clicking a misspelled
-/// word opens its menu, whose suggestions replace it, and whose Ignore and
-/// Add to Dictionary make it known, Add to Dictionary in the word list.
+/// `KERTAS_SMOKE=spelling`, on `spelling.md`: what of spelling goes
+/// through Kertas's settings. The `spelling_language` setting and View →
+/// Check Spelling change what's underlined, Add for This Document keeps
+/// the word in the settings, and Add to Dictionary in the word list, which
+/// is read again when the dictionaries folder changes. Underlines, the
+/// menu and a host's hooks are tested in kertas-editor's tests/spelling.rs.
 fn smoke_spelling(window: DocumentWindowHandle, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
@@ -2635,39 +2632,18 @@ fn smoke_spelling(window: DocumentWindowHandle, cx: &mut App) {
             found,
         );
 
-        let text = window
-            .read_with(cx, |view, _| view.text())
-            .unwrap_or_default();
-        let at = text.find("wrod").unwrap_or_default();
-        window
-            .update(cx, |view, _, cx| {
-                view.replace_ranges(vec![(at..at + 4, "word".into())], cx)
-            })
-            .ok();
-        pause(cx, 1).await;
-        let right_away = misspelled(cx);
-        checks.check(
-            &format!("an edited word loses its underline straight away: {right_away:?}"),
-            !right_away.contains(&"word".to_owned()) && !right_away.contains(&"wrod".to_owned()),
-        );
-        let fixed = misspelled_became(
-            window,
-            cx,
-            &["Teh", "lnik", "Colour", "Zorbly", "Quixlet", "Blimsy"],
-        )
-        .await;
-        checks.check(&format!("and the rest stay: {:?}", misspelled(cx)), fixed);
-
         cx.update(|cx| crate::app_settings::set_or_report("spelling_language", "en-GB", cx));
         let british = misspelled_became(
             window,
             cx,
-            &["Teh", "lnik", "color", "Zorbly", "Quixlet", "Blimsy"],
+            &[
+                "Teh", "wrod", "lnik", "color", "Zorbly", "Quixlet", "Blimsy",
+            ],
         )
         .await;
         checks.check(
             &format!(
-                "in British English, colour is right and color isn't: {:?}",
+                "the setting's language, British English: colour is right and color isn't: {:?}",
                 misspelled(cx)
             ),
             british,
@@ -2688,20 +2664,22 @@ fn smoke_spelling(window: DocumentWindowHandle, cx: &mut App) {
         let on = misspelled_became(
             window,
             cx,
-            &["Teh", "lnik", "color", "Zorbly", "Quixlet", "Blimsy"],
+            &[
+                "Teh", "wrod", "lnik", "color", "Zorbly", "Quixlet", "Blimsy",
+            ],
         )
         .await;
         checks.check("and on again", on);
 
         smoke_spelling_menu(window, cx, &mut checks).await;
-        smoke_spelling_hooks(window, cx, &mut checks).await;
         checks.finish(cx);
     })
     .detach();
 }
 
-/// The spelling menu (#142), opened by right-clicking the first word of
-/// items 0, 3, 4 and 5 of `spelling.md`, and used with the keyboard.
+/// The spelling menu's items that write Kertas's settings, chosen with the
+/// keyboard after right-clicking the first word of items 4 and 5 of
+/// `spelling.md`.
 async fn smoke_spelling_menu(window: DocumentWindowHandle, cx: &mut AsyncApp, checks: &mut Checks) {
     let path = window
         .read_with(cx, |view, _| view.document_path().map(Path::to_owned))
@@ -2733,75 +2711,17 @@ async fn smoke_spelling_menu(window: DocumentWindowHandle, cx: &mut AsyncApp, ch
         items.unwrap_or_default()
     };
     let any = gpui::AnyWindowHandle::from(window);
-    let open = |cx: &mut AsyncApp| {
-        window
-            .update(cx, |view, _, cx| view.spelling_menu_items(cx).is_some())
-            .unwrap_or_default()
-    };
-
-    let items = right_click(cx, 0).await;
-    checks.check(
-        &format!("right-clicking a misspelled word opens its menu: {items:?}"),
-        items.contains(&"The".to_owned())
-            && items.ends_with(&[
-                "Ignore".to_owned(),
-                "Add for This Document".to_owned(),
-                "Add to Dictionary".to_owned(),
-            ]),
-    );
-    press_key(any, cx, "escape").await;
-    pause(cx, 2).await;
-    checks.check("Esc closes it", !open(cx));
-
-    let items = right_click(cx, 0).await;
-    let the = items
-        .iter()
-        .position(|item| item == "The")
-        .unwrap_or_default();
-    for _ in 0..=the {
-        press_key(any, cx, "down").await;
-    }
-    press_key(any, cx, "enter").await;
-    let text = |cx: &mut AsyncApp| {
-        window
-            .read_with(cx, |view, _| view.text())
-            .unwrap_or_default()
-    };
-    let replaced = wait_for(cx, Duration::from_secs(2), |cx| {
-        text(cx).starts_with("# The spelling test")
-    })
-    .await;
-    checks.check("a suggestion replaces the word", replaced && !open(cx));
-    let gone = misspelled_became(
-        window,
-        cx,
-        &["lnik", "color", "Zorbly", "Quixlet", "Blimsy"],
-    )
-    .await;
-    checks.check(
-        &format!("and it's spelled right: {:?}", misspelled_words(window, cx)),
-        gone,
-    );
-
-    right_click(cx, 3).await;
-    press_key(any, cx, "end").await;
-    press_key(any, cx, "up").await;
-    press_key(any, cx, "up").await;
-    press_key(any, cx, "enter").await;
-    let ignored = misspelled_became(window, cx, &["lnik", "color", "Quixlet", "Blimsy"]).await;
-    checks.check(
-        &format!(
-            "Ignore makes a word known: {:?}",
-            misspelled_words(window, cx)
-        ),
-        ignored,
-    );
 
     let items = right_click(cx, 5).await;
     press_key(any, cx, "end").await;
     press_key(any, cx, "up").await;
     press_key(any, cx, "enter").await;
-    let for_document = misspelled_became(window, cx, &["lnik", "color", "Quixlet"]).await;
+    let for_document = misspelled_became(
+        window,
+        cx,
+        &["Teh", "wrod", "lnik", "color", "Zorbly", "Quixlet"],
+    )
+    .await;
     let settings = cx.update(|cx| kertas_editor::app_settings::document_words(&path, cx).to_vec());
     checks.check(
         &format!(
@@ -2814,7 +2734,8 @@ async fn smoke_spelling_menu(window: DocumentWindowHandle, cx: &mut AsyncApp, ch
     right_click(cx, 4).await;
     press_key(any, cx, "end").await;
     press_key(any, cx, "enter").await;
-    let added = misspelled_became(window, cx, &["lnik", "color"]).await;
+    let known = ["Teh", "wrod", "lnik", "color", "Zorbly"];
+    let added = misspelled_became(window, cx, &known).await;
     let word_list = cx
         .update(|cx| kertas_editor::app_settings::word_list(cx))
         .and_then(|path| std::fs::read_to_string(path).ok())
@@ -2828,111 +2749,11 @@ async fn smoke_spelling_menu(window: DocumentWindowHandle, cx: &mut AsyncApp, ch
     );
     // Still known once the word list is read again, as the folder changed.
     pause(cx, 30).await;
-    let still = misspelled_became(window, cx, &["lnik", "color"]).await;
+    let still = misspelled_became(window, cx, &known).await;
     checks.check(
         "and still known once the dictionaries are read again",
         still,
     );
-}
-
-/// What a host can set about spelling (#143), after
-/// [`smoke_spelling_menu`]: its known words, the language, and its own
-/// item in the menu.
-async fn smoke_spelling_hooks(
-    window: DocumentWindowHandle,
-    cx: &mut AsyncApp,
-    checks: &mut Checks,
-) {
-    window
-        .update(cx, |view, _, cx| {
-            view.set_known_words(vec!["lnik".into()], cx)
-        })
-        .ok();
-    let known = misspelled_became(window, cx, &["color"]).await;
-    checks.check(
-        &format!(
-            "a host's words are known: {:?}",
-            misspelled_words(window, cx)
-        ),
-        known,
-    );
-
-    window
-        .update(cx, |view, _, cx| {
-            view.set_spelling_language(Some("en-US".into()), cx)
-        })
-        .ok();
-    let american = misspelled_became(window, cx, &["Colour"]).await;
-    checks.check(
-        &format!(
-            "a host's language replaces the setting: {:?}",
-            misspelled_words(window, cx)
-        ),
-        american,
-    );
-
-    let added = Rc::new(RefCell::new(Vec::new()));
-    let view = window.update(cx, |_, _, cx| cx.entity()).ok();
-    let _subscription = view.map(|view| {
-        let added = added.clone();
-        cx.update(|cx| {
-            cx.subscribe(&view, move |_, event, _| {
-                if let kertas_editor::DocumentEvent::AddWord { word } = event {
-                    added.borrow_mut().push(word.clone());
-                }
-            })
-        })
-    });
-    window
-        .update(cx, |view, _, _| {
-            view.set_add_word_item(Some("Add to Project".into()))
-        })
-        .ok();
-    let origin = window
-        .update(cx, |view, window, _| view.text_origin(2, window))
-        .ok()
-        .flatten()
-        .unwrap_or_default();
-    click_with(
-        window,
-        cx,
-        origin + gpui::point(gpui::px(12.), gpui::px(10.)),
-        gpui::MouseButton::Right,
-    )
-    .await;
-    let mut items = Vec::new();
-    wait_for(cx, Duration::from_secs(2), |cx| {
-        items = window
-            .update(cx, |view, _, cx| view.spelling_menu_items(cx))
-            .ok()
-            .flatten()
-            .unwrap_or_default();
-        !items.is_empty()
-    })
-    .await;
-    let any = gpui::AnyWindowHandle::from(window);
-    press_key(any, cx, "end").await;
-    press_key(any, cx, "up").await;
-    press_key(any, cx, "enter").await;
-    let sent = wait_for(cx, Duration::from_secs(2), |_| !added.borrow().is_empty()).await;
-    checks.check(
-        &format!(
-            "a host's item replaces Add for This Document, and sends the word: {items:?}, {:?}",
-            added.borrow()
-        ),
-        sent && *added.borrow() == ["Colour"]
-            && items.ends_with(&[
-                "Ignore".to_owned(),
-                "Add to Project".to_owned(),
-                "Add to Dictionary".to_owned(),
-            ]),
-    );
-
-    window
-        .update(cx, |view, _, cx| view.set_spelling_language(None, cx))
-        .ok();
-    let setting = misspelled_became(window, cx, &["color"]).await;
-    checks.check("and without it, the setting's language is back", setting);
 }
 
 /// `KERTAS_SMOKE=images`, on `showcase.md` with its `images` folder:
@@ -2943,34 +2764,6 @@ fn smoke_images(window: DocumentWindowHandle, cx: &mut App) {
         let mut checks = Checks::default();
         images_section(window, cx, &mut checks).await;
         web_images_section(window, cx, &mut checks).await;
-        checks.finish(cx);
-    })
-    .detach();
-}
-
-/// `KERTAS_SMOKE=marks`, on `marks.md`: a host's marks
-/// ([`marks_section`]), then hover popovers ([`hover_section`]).
-fn smoke_marks(window: DocumentWindowHandle, cx: &mut App) {
-    cx.spawn(async move |cx| {
-        let mut checks = Checks::default();
-        marks_section(window, cx, &mut checks).await;
-        hover_section(window, cx, &mut checks).await;
-        checks.finish(cx);
-    })
-    .detach();
-}
-
-/// `KERTAS_SMOKE=find`, on `find.md`: finding ([`find_section`]),
-/// replacing ([`replace_section`]), what a host can do
-/// ([`host_find_section`]), and regular expressions, last, as they leave
-/// the text changed ([`regex_section`]).
-fn smoke_find(window: DocumentWindowHandle, cx: &mut App) {
-    cx.spawn(async move |cx| {
-        let mut checks = Checks::default();
-        find_section(window, cx, &mut checks).await;
-        replace_section(window, cx, &mut checks).await;
-        host_find_section(window, cx, &mut checks).await;
-        regex_section(window, cx, &mut checks).await;
         checks.finish(cx);
     })
     .detach();
@@ -3109,6 +2902,18 @@ fn smoke_disk(window: DocumentWindowHandle, cx: &mut App) {
             return checks.finish(cx);
         };
         let original = std::fs::read_to_string(&path).unwrap_or_default();
+        // A reload sends Edited, as an edit does, for the host's outline.
+        let edited = Rc::new(Cell::new(0));
+        let _subscription = tab_views(window, cx).into_iter().next().map(|view| {
+            let edited = edited.clone();
+            cx.update(|cx| {
+                cx.subscribe(&view, move |_, event, _| {
+                    if *event == kertas_editor::DocumentEvent::Edited {
+                        edited.set(edited.get() + 1);
+                    }
+                })
+            })
+        });
         let state = |cx: &mut AsyncApp| {
             window
                 .read_with(cx, |view, _| {
@@ -3138,6 +2943,8 @@ fn smoke_disk(window: DocumentWindowHandle, cx: &mut App) {
             "reloads a change with no unsaved changes",
             reloaded && !dirty && !bar,
         );
+        let sent = wait_until(cx, |_| edited.get() == 1).await;
+        checks.check("and sends Edited", sent);
         let after = scroll(cx);
         checks.check(
             &format!("keeps the scroll position ({before:?} -> {after:?})"),
@@ -3359,673 +3166,6 @@ fn smoke_autosave(window: DocumentWindowHandle, cx: &mut App) {
         dispatch(window, cx, Box::new(Quit));
     })
     .detach();
-}
-
-/// `KERTAS_SMOKE=edited`: a burst of typing sends one
-/// [`DocumentEvent::Edited`] once it pauses, after which the headings and
-/// word count are up to date; a reload from the file sends one too.
-fn smoke_edited(window: DocumentWindowHandle, cx: &mut App) {
-    use kertas_editor::{DocumentEvent, EDIT_PAUSE};
-
-    cx.spawn(async move |cx| {
-        let mut checks = Checks::default();
-        laid_out(window, cx).await;
-        let Some(view) = tab_views(window, cx).into_iter().next() else {
-            checks.check("there's a tab", false);
-            return checks.finish(cx);
-        };
-        let edited = Rc::new(Cell::new(0));
-        let _subscription = cx.update(|cx| {
-            let edited = edited.clone();
-            cx.subscribe(&view, move |_, event, _| {
-                if *event == DocumentEvent::Edited {
-                    edited.set(edited.get() + 1);
-                }
-            })
-        });
-        let words_before = cx.update(|cx| view.read(cx).word_count());
-        for text in ["# Fresh ", "heading", "\n\n"] {
-            window
-                .update(cx, |view, window, cx| {
-                    if text.starts_with('#') {
-                        view.click(0, false, window, cx);
-                    }
-                    view.replace_text_in_range(None, text, window, cx);
-                })
-                .ok();
-            pause(cx, 1).await;
-        }
-        checks.check("not sent while typing", edited.get() == 0);
-        let sent = wait_until(cx, |_| edited.get() > 0).await;
-        cx.background_executor().timer(EDIT_PAUSE * 2).await;
-        checks.check("sent once after the pause", sent && edited.get() == 1);
-        let (first, words) = cx.update(|cx| {
-            let view = view.read(cx);
-            let first = view.headings().first().map(|heading| heading.text.clone());
-            (first, view.word_count())
-        });
-        checks.check(
-            "the headings are up to date",
-            first.as_deref() == Some("Fresh heading"),
-        );
-        checks.check("so is the word count", words == words_before + 2);
-
-        dispatch(window, cx, Box::new(Save));
-        wait_until(cx, |cx| !cx.update(|cx| view.read(cx).is_dirty())).await;
-        let path = cx.update(|cx| view.read(cx).document_path().map(Path::to_owned));
-        if let Some(path) = path {
-            std::fs::write(&path, "# Theirs\n\nText.\n").ok();
-        }
-        let reloaded = wait_until(cx, |_| edited.get() == 2).await;
-        let first = cx.update(|cx| {
-            view.read(cx)
-                .headings()
-                .first()
-                .map(|heading| heading.text.clone())
-        });
-        checks.check(
-            "a reload sends it too",
-            reloaded && first.as_deref() == Some("Theirs"),
-        );
-
-        // The caret moving without an edit is sent right away, and the
-        // view says where it is.
-        let moved = Rc::new(Cell::new(0));
-        let _caret_subscription = cx.update(|cx| {
-            let moved = moved.clone();
-            cx.subscribe(&view, move |_, event, _| {
-                if *event == DocumentEvent::CaretMoved {
-                    moved.set(moved.get() + 1);
-                }
-            })
-        });
-        window
-            .update(cx, |view, window, cx| view.click(3, false, window, cx))
-            .ok();
-        let caret = cx.update(|cx| view.read(cx).caret_offset());
-        checks.check(
-            &format!("a click sends CaretMoved (caret {caret:?})"),
-            moved.get() == 1 && caret == Some(3),
-        );
-        dispatch(window, cx, Box::new(Unreveal));
-        pause(cx, 2).await;
-        let caret = cx.update(|cx| view.read(cx).caret_offset());
-        checks.check(
-            "so does Escape, leaving no caret",
-            moved.get() == 2 && caret.is_none(),
-        );
-
-        // A host turning on wiki links (#119): the open document is read
-        // again, and `[[Ada|her]]` becomes a link to Ada.
-        window
-            .update(cx, |view, window, cx| {
-                view.click(0, false, window, cx);
-                view.replace_text_in_range(None, "Ask [[Ada|her]].\n\n", window, cx);
-            })
-            .ok();
-        dispatch(window, cx, Box::new(Unreveal));
-        pause(cx, 2).await;
-        let first_links = |view: &DocumentView| {
-            let model = view.model()?;
-            match &*model.items.first()?.rendered {
-                kertas_core::rendered::RenderedBlock::Paragraph(text) => Some(
-                    text.links
-                        .iter()
-                        .map(|link| (link.destination.clone(), link.wiki))
-                        .collect::<Vec<_>>(),
-                ),
-                _ => None,
-            }
-        };
-        let before = cx.update(|cx| first_links(view.read(cx)));
-        window
-            .update(cx, |view, window, cx| {
-                let mut config = view.config().clone();
-                config.wiki_links = true;
-                view.set_config(config, window, cx);
-            })
-            .ok();
-        let after = cx.update(|cx| first_links(view.read(cx)));
-        checks.check(
-            &format!("turning on wiki links reads them ({before:?} → {after:?})"),
-            before == Some(Vec::new()) && after == Some(vec![("Ada".to_owned(), true)]),
-        );
-
-        // A host's check of which links lead anywhere is used as the
-        // document is drawn.
-        let checked = Rc::new(RefCell::new(Vec::new()));
-        window
-            .update(cx, |view, _, cx| {
-                let checked = checked.clone();
-                view.set_link_check(
-                    Some(Rc::new(move |link: &kertas_core::inline::Link| {
-                        checked.borrow_mut().push(link.destination.clone());
-                        false
-                    })),
-                    cx,
-                );
-            })
-            .ok();
-        wait_until(cx, |_| {
-            checked
-                .borrow()
-                .iter()
-                .any(|destination| destination == "Ada")
-        })
-        .await;
-        checks.check(
-            &format!(
-                "the link check is asked about links drawn ({:?})",
-                checked.borrow().first()
-            ),
-            checked
-                .borrow()
-                .iter()
-                .any(|destination| destination == "Ada"),
-        );
-        window
-            .update(cx, |view, _, cx| view.set_link_check(None, cx))
-            .ok();
-
-        // A host forgetting unsaved changes, as after deleting the file.
-        window
-            .update(cx, |view, window, cx| {
-                view.click(0, false, window, cx);
-                view.replace_text_in_range(None, "x", window, cx);
-            })
-            .ok();
-        let dirty = cx.update(|cx| view.read(cx).is_dirty());
-        window
-            .update(cx, |view, _, cx| view.discard_changes(cx))
-            .ok();
-        let ready = window
-            .update(cx, |view, window, cx| {
-                !view.is_dirty() && view.ready_to_close(window, cx)
-            })
-            .unwrap_or(false);
-        checks.check(
-            "discard_changes leaves nothing to ask about",
-            dirty && ready,
-        );
-        checks.finish(cx);
-    })
-    .detach();
-}
-
-/// A host's marks (#120), on `marks.md`: a right-click or a
-/// Control-click on a host's mark tells the host. How marks move with
-/// edits is unit-tested in `marks.rs`.
-async fn marks_section(window: DocumentWindowHandle, cx: &mut AsyncApp, checks: &mut Checks) {
-    use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
-    use kertas_editor::{DocumentEvent, Mark, MarkStyle};
-
-    laid_out(window, cx).await;
-    let Some(view) = tab_views(window, cx).into_iter().next() else {
-        checks.check("there's a tab", false);
-        return;
-    };
-    let mark = |range, id| Mark {
-        range,
-        style: MarkStyle::Hidden,
-        id,
-    };
-
-    // A right-click and a Control-click on "Dr", drawn rendered.
-    let menus = Rc::new(RefCell::new(Vec::new()));
-    let _subscription = cx.update(|cx| {
-        let menus = menus.clone();
-        cx.subscribe(&view, move |_, event, _| {
-            if let DocumentEvent::MarkMenu { id, range, .. } = event {
-                menus.borrow_mut().push((*id, range.clone()));
-            }
-        })
-    });
-    window
-        .update(cx, |view, _, cx| view.set_marks(vec![mark(0..2, 7)], cx))
-        .ok();
-    pause(cx, 2).await;
-    let origin = window
-        .update(cx, |view, window, _| view.text_origin(0, window))
-        .ok()
-        .flatten();
-    let Some(origin) = origin else {
-        checks.check("the first block is laid out", false);
-        return;
-    };
-    let position = origin + gpui::point(gpui::px(4.), gpui::px(12.));
-    let send = |cx: &mut AsyncApp, event: gpui::PlatformInput| {
-        gpui::AnyWindowHandle::from(window)
-            .update(cx, |_, window, cx| window.dispatch_event(event, cx))
-            .ok();
-    };
-    for (button, modifiers) in [
-        (MouseButton::Right, Modifiers::default()),
-        (MouseButton::Left, Modifiers::control()),
-    ] {
-        send(
-            cx,
-            gpui::PlatformInput::MouseMove(MouseMoveEvent {
-                position,
-                pressed_button: None,
-                modifiers,
-            }),
-        );
-        pause(cx, 2).await;
-        send(
-            cx,
-            gpui::PlatformInput::MouseDown(MouseDownEvent {
-                button,
-                position,
-                modifiers,
-                click_count: 1,
-                first_mouse: false,
-            }),
-        );
-        pause(cx, 2).await;
-        send(
-            cx,
-            gpui::PlatformInput::MouseUp(MouseUpEvent {
-                button,
-                position,
-                modifiers,
-                click_count: 1,
-            }),
-        );
-        pause(cx, 3).await;
-    }
-    let caret = cx.update(|cx| view.read(cx).caret_offset());
-    checks.check(
-        &format!(
-            "both tell the host, leaving it rendered ({:?}, caret {caret:?})",
-            menus.borrow()
-        ),
-        *menus.borrow() == [(7, 0..2), (7, 0..2)] && caret.is_none(),
-    );
-}
-
-/// The find bar (#122): ⌘F, typing a query, ↩ and ⌘G from match to match
-/// with wrapping, Esc leaving the match selected, and ⌘E.
-async fn find_section(window: DocumentWindowHandle, cx: &mut AsyncApp, checks: &mut Checks) {
-    laid_out(window, cx).await;
-    let handle = gpui::AnyWindowHandle::from(window);
-    let text = window
-        .read_with(cx, |view, _| view.text())
-        .unwrap_or_default();
-    // "bold" as it's shown: in `**bold**`, "a bold claim" and `*bold*`.
-    let starts: Vec<usize> = text.match_indices("bold").map(|(at, _)| at).collect();
-    let status = |cx: &mut AsyncApp| {
-        window
-            .read_with(cx, |view, _| (view.find_shown(), view.find_status()))
-            .unwrap_or_default()
-    };
-    let selection = |cx: &mut AsyncApp| {
-        window
-            .read_with(cx, |view, _| view.reveal_state().1)
-            .ok()
-            .flatten()
-            .map(|selection| selection.range())
-    };
-
-    press_key(handle, cx, "cmd-f").await;
-    window
-        .update(cx, |view, _, cx| view.type_find_query("one more", cx))
-        .ok();
-    pause(cx, 5).await;
-    let shown = after_frames(window, cx, 2, |view| {
-        let last = view.item_count() - 1;
-        (view.row_on_screen(last), view.reveal_state())
-    })
-    .await;
-    checks.check(
-        &format!("typing scrolls to a match far below, without selecting it ({shown:?})"),
-        shown.is_some_and(|(on_screen, (revealed, selection))| {
-            on_screen && revealed == 0 && selection.is_none()
-        }),
-    );
-    window
-        .update(cx, |view, _, cx| view.type_find_query("bold", cx))
-        .ok();
-    pause(cx, 3).await;
-    let found = status(cx);
-    // With no caret, from the top of the window, which is at the end.
-    checks.check(
-        &format!("typing finds every match, from the top of the window ({found:?})"),
-        found == (true, (Some(2), 3)),
-    );
-
-    press_key(handle, cx, "enter").await;
-    let found = status(cx);
-    let selected = selection(cx);
-    checks.check(
-        &format!("↩ wraps around to the first match and selects it ({found:?}, {selected:?})"),
-        found.1 == (Some(0), 3) && selected == Some(starts[0]..starts[0] + 4),
-    );
-    press_key(handle, cx, "cmd-g").await;
-    let found = status(cx);
-    let selected = selection(cx);
-    checks.check(
-        &format!("⌘G goes to the next ({found:?}, {selected:?})"),
-        found.1 == (Some(1), 3) && selected == Some(starts[1]..starts[1] + 4),
-    );
-    press_key(handle, cx, "cmd-g").await;
-    pause(cx, 5).await;
-    let on_screen = after_frames(window, cx, 2, |view| view.caret_on_screen())
-        .await
-        .flatten();
-    let found = status(cx);
-    checks.check(
-        &format!("⌘G goes to the last match, far below, and shows it ({found:?}, {on_screen:?})"),
-        found.1 == (Some(2), 3) && on_screen == Some(true),
-    );
-    press_key(handle, cx, "cmd-g").await;
-    let found = status(cx);
-    checks.check(
-        &format!("⌘G wraps around to the first ({found:?})"),
-        found.1 == (Some(0), 3),
-    );
-    press_key(handle, cx, "cmd-shift-g").await;
-    let found = status(cx);
-    checks.check(
-        &format!("⇧⌘G wraps around to the last ({found:?})"),
-        found.1 == (Some(2), 3),
-    );
-    let unchanged = window
-        .read_with(cx, |view, _| view.text() == text)
-        .unwrap_or(false);
-    checks.check("keys typed in the bar don't edit the document", unchanged);
-
-    press_key(handle, cx, "escape").await;
-    let found = status(cx);
-    let selected = selection(cx);
-    checks.check(
-        &format!("Esc closes the bar, leaving the match selected ({found:?}, {selected:?})"),
-        !found.0 && selected == Some(starts[2]..starts[2] + 4),
-    );
-
-    window
-        .update(cx, |view, _, cx| view.type_find_query("no such text", cx))
-        .ok();
-    press_key(handle, cx, "cmd-g").await;
-    let found = status(cx);
-    checks.check(
-        &format!("a query with no matches finds nothing ({found:?})"),
-        found.1 == (None, 0),
-    );
-
-    // ⌘E on "claim".
-    let claim = text.find("claim").unwrap_or(0);
-    window
-        .update(cx, |view, window, cx| {
-            view.select_range(claim..claim + 5, window, cx)
-        })
-        .ok();
-    pause(cx, 3).await;
-    press_key(handle, cx, "cmd-e").await;
-    let found = status(cx);
-    checks.check(
-        &format!("⌘E looks for the selection ({found:?})"),
-        found == (true, (Some(0), 1)),
-    );
-}
-
-/// Replace (#123): Replace selects the match first and replaces it the
-/// second time.
-async fn replace_section(window: DocumentWindowHandle, cx: &mut AsyncApp, checks: &mut Checks) {
-    use kertas_editor::actions::Replace;
-
-    laid_out(window, cx).await;
-    let handle = gpui::AnyWindowHandle::from(window);
-    let read = |cx: &mut AsyncApp| {
-        window
-            .read_with(cx, |view, _| {
-                let selection = view.reveal_state().1.map(|s| s.range());
-                (view.text(), selection, view.find_status())
-            })
-            .unwrap_or_default()
-    };
-    // From the start, with the find bar closed, as after opening.
-    press_key(handle, cx, "escape").await;
-    window
-        .update(cx, |view, window, cx| view.click(0, false, window, cx))
-        .ok();
-    dispatch(window, cx, Box::new(Unreveal));
-    pause(cx, 2).await;
-    let (original, _, _) = read(cx);
-    let starts: Vec<usize> = original.match_indices("bold").map(|(at, _)| at).collect();
-
-    press_key(handle, cx, "alt-cmd-f").await;
-    window
-        .update(cx, |view, _, cx| {
-            view.type_find_query("bold", cx);
-            view.type_replacement("strong", cx);
-        })
-        .ok();
-    pause(cx, 3).await;
-    // With a query, ⌥⌘F goes to the replacement, where ↩ replaces.
-    press_key(handle, cx, "alt-cmd-f").await;
-    press_key(handle, cx, "enter").await;
-    let (text, selection, _) = read(cx);
-    checks.check(
-        &format!("Replace first selects the match ({selection:?})"),
-        text == original && selection == Some(starts[0]..starts[0] + 4),
-    );
-    dispatch(window, cx, Box::new(Replace));
-    pause(cx, 3).await;
-    let (text, selection, status) = read(cx);
-    let once = original.replacen("bold", "strong", 1);
-    let next = starts[1] + 2;
-    checks.check(
-        &format!("then replaces it and goes to the next ({selection:?}, {status:?})"),
-        text == once && selection == Some(next..next + 4) && status == (Some(0), 2),
-    );
-
-    // Replace All, and what it changes, are unit-tested in `find.rs`
-    // and `editor.rs`. Leave the text as it was.
-    press_key(handle, cx, "escape").await;
-    press_key(handle, cx, "cmd-z").await;
-}
-
-/// Regular expressions in find (#124): an invalid pattern shows its error
-/// and finds nothing, and a valid one finds. Replacing with groups is
-/// unit-tested in `find.rs`.
-async fn regex_section(window: DocumentWindowHandle, cx: &mut AsyncApp, checks: &mut Checks) {
-    laid_out(window, cx).await;
-    let handle = gpui::AnyWindowHandle::from(window);
-    let read = |cx: &mut AsyncApp| {
-        window
-            .read_with(cx, |view, _| {
-                (view.text(), view.find_status(), view.find_error())
-            })
-            .unwrap_or_default()
-    };
-    press_key(handle, cx, "alt-cmd-f").await;
-    window
-        .update(cx, |view, _, cx| {
-            view.set_find_regex(true, cx);
-            view.type_find_query("(b)(old", cx);
-        })
-        .ok();
-    pause(cx, 3).await;
-    let (_, status, error) = read(cx);
-    checks.check(
-        &format!("an invalid pattern shows why, and finds nothing ({status:?}, {error:?})"),
-        status == (None, 0) && error.as_deref() == Some("unclosed group"),
-    );
-    window
-        .update(cx, |view, _, cx| {
-            view.type_find_query("(b)(old)", cx);
-            view.type_replacement("$2$1", cx);
-        })
-        .ok();
-    pause(cx, 3).await;
-    let (_, status, error) = read(cx);
-    checks.check(
-        &format!("a valid one finds the text as shown ({status:?}, {error:?})"),
-        status.1 == 3 && error.is_none(),
-    );
-}
-
-/// What a host can do with find (#125): open the bar at a match, and leave
-/// out options. Replacing ranges is unit-tested in `editor.rs`.
-async fn host_find_section(window: DocumentWindowHandle, cx: &mut AsyncApp, checks: &mut Checks) {
-    use kertas_editor::kertas_core::find::{FindOptions, OfferedOptions};
-
-    laid_out(window, cx).await;
-    let text = |cx: &mut AsyncApp| {
-        window
-            .read_with(cx, |view, _| view.text())
-            .unwrap_or_default()
-    };
-    let original = text(cx);
-    let starts: Vec<usize> = original.match_indices("bold").map(|(at, _)| at).collect();
-    let regex = FindOptions {
-        regex: true,
-        ..FindOptions::default()
-    };
-    window
-        .update(cx, |view, window, cx| {
-            view.show_find_with("b.ld", regex, Some(starts[1] + 1), window, cx)
-        })
-        .ok();
-    pause(cx, 5).await;
-    let shown = window
-        .read_with(cx, |view, _| {
-            let selection = view.reveal_state().1.map(|s| s.range());
-            (view.find_shown(), view.find_status(), selection)
-        })
-        .ok();
-    checks.check(
-        &format!("a host opens the bar at the match after an offset ({shown:?})"),
-        shown == Some((true, (Some(2), 3), Some(starts[2]..starts[2] + 4))),
-    );
-
-    window
-        .update(cx, |view, window, cx| {
-            let config = kertas_editor::EditorConfig {
-                find_options: OfferedOptions {
-                    regex: false,
-                    ..OfferedOptions::default()
-                },
-                ..view.config().clone()
-            };
-            view.set_config(config, window, cx);
-        })
-        .ok();
-    pause(cx, 3).await;
-    let after = window
-        .read_with(cx, |view, _| {
-            (view.find_options().regex, view.find_status())
-        })
-        .ok();
-    checks.check(
-        &format!("leaving Regex out turns it off ({after:?})"),
-        after == Some((false, (None, 0))),
-    );
-}
-
-/// Hover popovers (#126), on `marks.md`: resting the pointer on a
-/// mark or a link asks the host for a popover after a delay, and it closes
-/// when the pointer leaves, or on typing.
-async fn hover_section(window: DocumentWindowHandle, cx: &mut AsyncApp, checks: &mut Checks) {
-    use gpui::{Modifiers, MouseMoveEvent, prelude::*};
-    use kertas_editor::{HOVER_DELAY, HoverTarget, Mark, MarkStyle};
-
-    laid_out(window, cx).await;
-    let asked = Rc::new(RefCell::new(Vec::new()));
-    window
-        .update(cx, |view, _, cx| {
-            let asked = asked.clone();
-            view.set_hover_popover(
-                Some(Rc::new(move |target: &HoverTarget, _, _| {
-                    asked.borrow_mut().push(target.clone());
-                    Some(gpui::div().child("Popover").into_any_element())
-                })),
-                cx,
-            );
-            // "Ann", at the start of the first paragraph.
-            let mark = Mark {
-                range: 0..3,
-                style: MarkStyle::Hidden,
-                id: 4,
-            };
-            view.set_marks(vec![mark], cx);
-        })
-        .ok();
-    pause(cx, 3).await;
-    let origin = |index: usize, cx: &mut AsyncApp| {
-        window
-            .update(cx, |view, window, _| view.text_origin(index, window))
-            .ok()
-            .flatten()
-    };
-    let (Some(first), Some(second)) = (origin(0, cx), origin(1, cx)) else {
-        checks.check("the blocks are laid out", false);
-        return;
-    };
-    let move_to = |cx: &mut AsyncApp, position| {
-        gpui::AnyWindowHandle::from(window)
-            .update(cx, |_, window, cx| {
-                window.dispatch_event(
-                    gpui::PlatformInput::MouseMove(MouseMoveEvent {
-                        position,
-                        pressed_button: None,
-                        modifiers: Modifiers::default(),
-                    }),
-                    cx,
-                )
-            })
-            .ok();
-    };
-    let shown = |cx: &mut AsyncApp| {
-        window
-            .read_with(cx, |view, _| view.hover_shown())
-            .ok()
-            .flatten()
-    };
-    let line = gpui::px(12.);
-    move_to(cx, first + gpui::point(gpui::px(6.), line));
-    pause(cx, 2).await;
-    let early = shown(cx);
-    // The host is asked once the delay has passed.
-    wait_for(cx, HOVER_DELAY * 4, |_| !asked.borrow().is_empty()).await;
-    let mark = shown(cx);
-    checks.check(
-        &format!("a mark's popover waits, then shows ({early:?} → {mark:?})"),
-        early.is_none() && matches!(&mark, Some(HoverTarget::Mark(mark)) if mark.id == 4),
-    );
-    checks.check(
-        "the host is asked for it",
-        asked
-            .borrow()
-            .iter()
-            .any(|target| matches!(target, HoverTarget::Mark(_))),
-    );
-    // Off the text, onto the window's side.
-    move_to(cx, gpui::point(gpui::px(2.), first.y + line));
-    let closed = wait_for(cx, HOVER_DELAY * 4, |cx| shown(cx).is_none()).await;
-    checks.check("leaving closes it", closed);
-    // Until its close timer has run, a new hover would be closed too.
-    cx.background_executor().timer(HOVER_DELAY).await;
-
-    // "A [link](…)": the link's text starts after "A ".
-    move_to(cx, second + gpui::point(gpui::px(24.), line));
-    wait_for(cx, HOVER_DELAY * 4, |cx| {
-        matches!(shown(cx), Some(HoverTarget::Link(_)))
-    })
-    .await;
-    let link = shown(cx);
-    checks.check(
-        &format!("so does a link's ({link:?})"),
-        matches!(&link, Some(HoverTarget::Link(link)) if link.destination == "https://example.com"),
-    );
-    window
-        .update(cx, |view, window, cx| {
-            view.click(0, false, window, cx);
-            view.replace_text_in_range(None, "x", window, cx);
-        })
-        .ok();
-    pause(cx, 2).await;
-    checks.check("typing closes it", shown(cx).is_none());
 }
 
 /// `KERTAS_SMOKE=rename`: renaming a document's file keeps it open as it

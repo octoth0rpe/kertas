@@ -8,7 +8,10 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
-use gpui::{Entity, PlatformTextSystem, TestAppContext, VisualTestContext};
+use gpui::{
+    Entity, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    PlatformTextSystem, Point, TestAppContext, VisualTestContext,
+};
 use kertas_editor::actions::Unreveal;
 use kertas_editor::{DocumentEvent, DocumentView, EditorConfig};
 
@@ -49,6 +52,8 @@ pub fn showing<'a>(
     });
     cx.dispatch_action(Unreveal);
     cx.run_until_parked();
+    // Only what the test does from here.
+    events.borrow_mut().clear();
     (view, cx, events)
 }
 
@@ -68,4 +73,59 @@ pub fn with_real_text() -> TestAppContext {
         .get_or_init(|| Arc::new(gpui_apple::AppleTextSystem::new()))
         .clone();
     TestAppContext::build_with_text_system(gpui::TestDispatcher::new(0), None, text_system)
+}
+
+/// Lets time pass for whatever waits for typing to pause, and for the
+/// work that starts then (checking spelling, sending Edited) to finish.
+pub fn settle(cx: &mut VisualTestContext) {
+    cx.executor().advance_clock(kertas_editor::EDIT_PAUSE * 2);
+    cx.run_until_parked();
+}
+
+/// Where the text of the view's `index`th block starts.
+pub fn origin(
+    view: &Entity<DocumentView>,
+    cx: &mut VisualTestContext,
+    index: usize,
+) -> Point<Pixels> {
+    cx.update(|window, cx| view.read(cx).text_origin(index, window))
+        .unwrap_or_else(|| panic!("block {index} isn't laid out"))
+}
+
+/// Moves the pointer to `position`.
+pub fn move_to(cx: &mut VisualTestContext, position: Point<Pixels>) {
+    cx.simulate_event(MouseMoveEvent {
+        position,
+        pressed_button: None,
+        modifiers: Modifiers::default(),
+    });
+    cx.run_until_parked();
+}
+
+/// Clicks `button` at `position`, holding `modifiers`.
+pub fn click(
+    cx: &mut VisualTestContext,
+    position: Point<Pixels>,
+    button: MouseButton,
+    modifiers: Modifiers,
+) {
+    cx.simulate_event(MouseMoveEvent {
+        position,
+        pressed_button: None,
+        modifiers,
+    });
+    cx.simulate_event(MouseDownEvent {
+        button,
+        position,
+        modifiers,
+        click_count: 1,
+        first_mouse: false,
+    });
+    cx.simulate_event(MouseUpEvent {
+        button,
+        position,
+        modifiers,
+        click_count: 1,
+    });
+    cx.run_until_parked();
 }

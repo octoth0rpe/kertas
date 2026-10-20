@@ -122,8 +122,5 @@ grep -q "^Quitting. Still paused. " "$work/autosave/showcase.md" || {
     echo "smoke.sh: FAILED: quitting didn't autosave" >&2
     exit 1
 }
-run edited showcase.md
-run marks marks.md
-run find find.md
 run rename showcase.md
 echo "All smoke tests passed, in $(($(date +%s) - suite_started)) s."
