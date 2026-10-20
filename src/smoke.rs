@@ -152,7 +152,7 @@ async fn click_with(
             modifiers: Modifiers::default(),
         }),
     );
-    pause(cx, 3).await;
+    pause(cx, 2).await;
     send(
         cx,
         gpui::PlatformInput::MouseDown(MouseDownEvent {
@@ -163,7 +163,7 @@ async fn click_with(
             first_mouse: false,
         }),
     );
-    pause(cx, 3).await;
+    pause(cx, 2).await;
     send(
         cx,
         gpui::PlatformInput::MouseUp(MouseUpEvent {
@@ -187,7 +187,7 @@ async fn press_key(window: gpui::AnyWindowHandle, cx: &mut AsyncApp, key: &str) 
             window.dispatch_keystroke(keystroke, cx);
         })
         .ok();
-    pause(cx, 2).await;
+    pause(cx, 1).await;
     window
         .update(cx, |_, window, cx| {
             window.dispatch_event(
@@ -196,7 +196,7 @@ async fn press_key(window: gpui::AnyWindowHandle, cx: &mut AsyncApp, key: &str) 
             );
         })
         .ok();
-    pause(cx, 3).await;
+    pause(cx, 1).await;
 }
 
 fn window_count(cx: &mut AsyncApp) -> usize {
@@ -546,18 +546,20 @@ fn percentiles(values: &mut [f64]) -> (f64, f64) {
 fn smoke_tabs(window: DocumentWindowHandle, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
-        for _ in 0..3 {
-            pause(cx, 10).await;
+        laid_out(window, cx).await;
+        for tabs in 2..=4 {
             dispatch(window, cx, Box::new(New));
+            wait_until(cx, |cx| tab_count(window, cx) == tabs).await;
         }
-        pause(cx, 20).await;
         checks.check(
-            "3 x New opens 3 tabs in the same window",
+            &format!(
+                "3 x New opens 3 tabs in the same window ({} windows, {} tabs)",
+                window_count(cx),
+                tab_count(window, cx)
+            ),
             window_count(cx) == 1 && tab_count(window, cx) == 4,
         );
         checks.check("the new tab is the active one", active_tab(window, cx) == 3);
-        // Hold so the window can be inspected from outside.
-        cx.background_executor().timer(Duration::from_secs(2)).await;
 
         // ⌘1 switches to the first tab, ⌘3 to the third, and ⌘9 does
         // nothing with four tabs. ⇧⌘] and ⌃⇥ go to the next tab, wrapping
@@ -613,9 +615,13 @@ fn smoke_tabs(window: DocumentWindowHandle, cx: &mut App) {
                 cx.update(|cx| crate::windows::activate(window, &other, cx));
             }
             press_key(window.into(), cx, "cmd-w").await;
-            pause(cx, 5).await;
+            wait_until(cx, |cx| tab_count(window, cx) == left).await;
             checks.check(
-                &format!("⌘W closes a tab, leaving {left}"),
+                &format!(
+                    "⌘W closes a tab, leaving {left} ({} tabs, {} windows)",
+                    tab_count(window, cx),
+                    window_count(cx)
+                ),
                 tab_count(window, cx) == left && window_count(cx) == 1,
             );
         }
@@ -623,9 +629,17 @@ fn smoke_tabs(window: DocumentWindowHandle, cx: &mut App) {
         // New in a tab showing the startup message starts the document
         // there instead of adding a tab.
         cx.update(|cx| crate::windows::open_window(cx, |_, _, _| {}));
-        pause(cx, 20).await;
+        wait_until(cx, |cx| tab_count(window, cx) == 2).await;
         dispatch(window, cx, Box::new(New));
-        pause(cx, 20).await;
+        wait_until(cx, |cx| {
+            window
+                .read_with(cx, |view, _| !view.is_blank())
+                .unwrap_or(false)
+        })
+        .await;
+        // Drawn, so it has the keyboard for Close Tab.
+        laid_out(window, cx).await;
+        pause(cx, 1).await;
         checks.check(
             "New replaces the startup message",
             tab_count(window, cx) == 2
@@ -634,7 +648,7 @@ fn smoke_tabs(window: DocumentWindowHandle, cx: &mut App) {
                     .unwrap_or(false),
         );
         dispatch(window, cx, Box::new(CloseTab));
-        pause(cx, 10).await;
+        wait_until(cx, |cx| tab_count(window, cx) == 1).await;
 
         // Files with the same name show their folders (#95).
         let folder = window
@@ -650,8 +664,9 @@ fn smoke_tabs(window: DocumentWindowHandle, cx: &mut App) {
                 let path = folder.join(name).join("README.md");
                 std::fs::create_dir_all(path.parent().unwrap()).ok();
                 std::fs::write(&path, format!("# {name}\n")).ok();
+                let tabs = tab_count(window, cx) + 1;
                 cx.update(|cx| crate::windows::open_path(path, cx));
-                pause(cx, 20).await;
+                wait_until(cx, |cx| tab_count(window, cx) == tabs).await;
             }
         }
         let both = tab_titles(window, cx);
@@ -669,10 +684,15 @@ fn smoke_tabs(window: DocumentWindowHandle, cx: &mut App) {
         });
         if let Some(docs) = docs {
             cx.update(|cx| crate::windows::activate(window, &docs, cx));
-            pause(cx, 5).await;
+            pause(cx, 1).await;
             dispatch(window, cx, Box::new(CloseTab));
         }
-        pause(cx, 20).await;
+        wait_until(cx, |cx| {
+            !tab_titles(window, cx)
+                .iter()
+                .any(|title| title.contains('—'))
+        })
+        .await;
         let one = tab_titles(window, cx);
         checks.check(
             &format!("closing one drops the other's folder ({one:?})"),
@@ -682,6 +702,9 @@ fn smoke_tabs(window: DocumentWindowHandle, cx: &mut App) {
         // Closing the window closes every tab, and so quits. The caller
         // checks that the process ends.
         checks.report();
+        // Drawn, so the remaining tab has the keyboard for Close Window.
+        laid_out(window, cx).await;
+        pause(cx, 1).await;
         println!("dispatching CloseWindow");
         dispatch(window, cx, Box::new(CloseWindow));
     })
@@ -694,9 +717,9 @@ fn smoke_tabs(window: DocumentWindowHandle, cx: &mut App) {
 fn smoke_windows(window: DocumentWindowHandle, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
-        pause(cx, 10).await;
+        laid_out(window, cx).await;
         dispatch(window, cx, Box::new(New));
-        pause(cx, 20).await;
+        wait_until(cx, |cx| window_count(cx) == 2).await;
         let windows: Vec<DocumentWindowHandle> = cx.update(|cx| {
             cx.windows()
                 .into_iter()
@@ -710,7 +733,7 @@ fn smoke_windows(window: DocumentWindowHandle, cx: &mut App) {
         if let Some(new) = windows.into_iter().find(|other| *other != window) {
             press_key(new.into(), cx, "cmd-w").await;
         }
-        pause(cx, 10).await;
+        wait_until(cx, |cx| window_count(cx) == 1).await;
         checks.check(
             "⌘W closes it",
             window_count(cx) == 1 && tab_count(window, cx) == 1,
@@ -736,12 +759,6 @@ fn smoke_settings(window: DocumentWindowHandle, cx: &mut App) {
         // Settings apply when macOS reports the file changed, which can
         // take a while on a busy machine, so checks wait for them to.
         const APPLY: Duration = Duration::from_secs(5);
-        // A pause for things that shouldn't happen.
-        let settle = async |cx: &mut AsyncApp| {
-            cx.background_executor()
-                .timer(Duration::from_millis(1500))
-                .await
-        };
         let theme = |cx: &mut AsyncApp| window.read_with(cx, |view, _| view.theme()).ok();
         let problems =
             |cx: &mut AsyncApp| cx.update(|cx| cx.global::<AppSettings>().problems.len());
@@ -936,7 +953,11 @@ fn smoke_settings(window: DocumentWindowHandle, cx: &mut App) {
             cx,
             Box::new(kertas_editor::view_menu::UseStandardWidth),
         );
-        settle(cx).await;
+        wait_for(cx, APPLY, |cx| {
+            cx.update(|cx| app_settings::get(cx).text_width)
+                == kertas_core::settings::TextWidth::Standard
+        })
+        .await;
 
         // Zoom steps through sizes, stops at the limits, and Reset Zoom
         // returns to the font_size setting, which also resets it. Each step
@@ -1013,9 +1034,13 @@ fn smoke_settings(window: DocumentWindowHandle, cx: &mut App) {
         cx.update(|cx| app_settings::set("layout", "windows", cx))
             .ok();
         dispatch(window, cx, Box::new(New));
-        settle(cx).await;
+        wait_until(cx, |cx| window_count(cx) == 2 || tab_count(window, cx) == 2).await;
         checks.check(
-            "layout change waits for a restart",
+            &format!(
+                "layout change waits for a restart ({} windows, {} tabs)",
+                window_count(cx),
+                tab_count(window, cx)
+            ),
             window_count(cx) == 1 && tab_count(window, cx) == 2,
         );
         checks.finish(cx);
@@ -1049,7 +1074,7 @@ fn smoke_help(window: DocumentWindowHandle, cx: &mut App) {
         };
 
         dispatch(window, cx, Box::new(OpenHelp));
-        pause(cx, 20).await;
+        wait_until(cx, |cx| help_window(cx).is_some()).await;
         let help = help_window(cx);
         checks.check("Kertas Help opens", help.is_some());
         let Some(help) = help else {
@@ -1079,7 +1104,7 @@ fn smoke_help(window: DocumentWindowHandle, cx: &mut App) {
             view.replace_text_in_range(Some(0..5), "typed", window, cx);
         })
         .ok();
-        pause(cx, 20).await;
+        pause(cx, 2).await;
         checks.check("it can't be edited", text(cx) == before);
         let state = help
             .read_with(cx, |view, _| (view.has_caret(), view.is_dirty()))
@@ -1087,36 +1112,46 @@ fn smoke_help(window: DocumentWindowHandle, cx: &mut App) {
         checks.check("no caret, nothing to save", state == (false, false));
 
         dispatch(window, cx, Box::new(OpenHelp));
-        pause(cx, 20).await;
+        pause(cx, 2).await;
+        let tabs = tab_count(window, cx);
         checks.check(
-            "opening it again switches to it",
-            tab_count(window, cx) == 2,
+            &format!("opening it again switches to it ({tabs} tabs)"),
+            tabs == 2,
         );
         dispatch(window, cx, Box::new(OpenMarkdownSyntax));
-        pause(cx, 20).await;
-        checks.check("Markdown Syntax opens", tab_count(window, cx) == 3);
+        wait_until(cx, |cx| tab_count(window, cx) == 3).await;
+        let tabs = tab_count(window, cx);
+        checks.check(&format!("Markdown Syntax opens ({tabs} tabs)"), tabs == 3);
         dispatch(window, cx, Box::new(OpenKeyboardShortcuts));
-        pause(cx, 20).await;
-        checks.check("Keyboard Shortcuts opens", tab_count(window, cx) == 4);
+        wait_until(cx, |cx| tab_count(window, cx) == 4).await;
+        let tabs = tab_count(window, cx);
+        checks.check(
+            &format!("Keyboard Shortcuts opens ({tabs} tabs)"),
+            tabs == 4,
+        );
         dispatch(window, cx, Box::new(OpenThemes));
-        pause(cx, 20).await;
-        checks.check("Themes opens", tab_count(window, cx) == 5);
+        wait_until(cx, |cx| tab_count(window, cx) == 5).await;
+        let tabs = tab_count(window, cx);
+        checks.check(&format!("Themes opens ({tabs} tabs)"), tabs == 5);
         dispatch(window, cx, Box::new(OpenReleaseNotes));
-        pause(cx, 20).await;
-        checks.check("Release Notes opens", tab_count(window, cx) == 6);
+        wait_until(cx, |cx| tab_count(window, cx) == 6).await;
+        let tabs = tab_count(window, cx);
+        checks.check(&format!("Release Notes opens ({tabs} tabs)"), tabs == 6);
         dispatch(window, cx, Box::new(OpenAbout));
-        pause(cx, 20).await;
-        checks.check("About Kertas opens", tab_count(window, cx) == 7);
+        wait_until(cx, |cx| tab_count(window, cx) == 7).await;
+        let tabs = tab_count(window, cx);
+        checks.check(&format!("About Kertas opens ({tabs} tabs)"), tabs == 7);
         dispatch(window, cx, Box::new(OpenLicenses));
-        pause(cx, 20).await;
-        checks.check("Licenses opens", tab_count(window, cx) == 8);
+        wait_until(cx, |cx| tab_count(window, cx) == 8).await;
+        let tabs = tab_count(window, cx);
+        checks.check(&format!("Licenses opens ({tabs} tabs)"), tabs == 8);
 
         // Close every tab but the first.
-        for _ in 0..7 {
+        for left in (1..8).rev() {
             dispatch(window, cx, Box::new(kertas_editor::tabs::SelectTab2));
-            pause(cx, 5).await;
+            pause(cx, 1).await;
             dispatch(window, cx, Box::new(CloseTab));
-            pause(cx, 20).await;
+            wait_until(cx, |cx| tab_count(window, cx) == left).await;
         }
         let left = tab_count(window, cx);
         checks.check(
@@ -1136,29 +1171,40 @@ fn smoke_settings_window(window: DocumentWindowHandle, cx: &mut App) {
 
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
-        for _ in 0..2 {
-            dispatch(window, cx, Box::new(OpenSettings));
-            pause(cx, 20).await;
-        }
-        checks.check("⌘, opens one settings window", window_count(cx) == 2);
+        laid_out(window, cx).await;
+        dispatch(window, cx, Box::new(OpenSettings));
+        wait_until(cx, |cx| window_count(cx) == 2).await;
+        dispatch(window, cx, Box::new(OpenSettings));
+        pause(cx, 2).await;
+        let windows = window_count(cx);
+        checks.check(
+            &format!("⌘, opens one settings window ({windows} windows)"),
+            windows == 2,
+        );
         // The sheet fits itself to its rows: they end 20 px above the Done
         // button, with autosave off or on (its note adds a line).
         for autosave in ["off", "on"] {
             if autosave == "on" {
                 cx.update(|cx| crate::app_settings::set("autosave", 5, cx))
                     .ok();
-                pause(cx, 10).await;
             }
-            let spare = cx.update(|cx| {
-                cx.try_global::<crate::settings_window::RowsFit>()
-                    .map(|fit| fit.footer_top - fit.rows_bottom)
-            });
+            let spare = |cx: &mut AsyncApp| {
+                cx.update(|cx| {
+                    cx.try_global::<crate::settings_window::RowsFit>()
+                        .map(|fit| fit.footer_top - fit.rows_bottom)
+                })
+            };
+            let fits = |spare: Option<gpui::Pixels>| {
+                spare.is_some_and(|spare| (spare - gpui::px(20.)).abs() <= gpui::px(1.))
+            };
+            wait_until(cx, |cx| fits(spare(cx))).await;
+            let spare = spare(cx);
             checks.check(
                 &format!(
                     "every row fits in the settings window, autosave {autosave} \
                      ({spare:?} below them)"
                 ),
-                spare.is_some_and(|spare| (spare - gpui::px(20.)).abs() <= gpui::px(1.)),
+                fits(spare),
             );
         }
 
@@ -1170,7 +1216,7 @@ fn smoke_settings_window(window: DocumentWindowHandle, cx: &mut App) {
         if let Some(settings) = settings {
             dispatch(settings, cx, Box::new(New));
         }
-        pause(cx, 20).await;
+        wait_until(cx, |cx| tab_count(window, cx) == 2).await;
         checks.check(
             "New from Settings opens a tab",
             window_count(cx) == 2 && tab_count(window, cx) == 2,
@@ -1183,18 +1229,15 @@ fn smoke_settings_window(window: DocumentWindowHandle, cx: &mut App) {
             settings
                 .update(cx, |_, window, _| window.activate_window())
                 .ok();
-            pause(cx, 10).await;
+            pause(cx, 2).await;
             press_key(settings, cx, "tab").await;
             press_key(settings, cx, "space").await;
-            pause(cx, 10).await;
             let light = theme(cx);
             press_key(settings, cx, "tab").await;
             press_key(settings, cx, "space").await;
-            pause(cx, 10).await;
             let dark = theme(cx);
             press_key(settings, cx, "shift-tab").await;
             press_key(settings, cx, "space").await;
-            pause(cx, 10).await;
             let back = theme(cx);
             checks.check(
                 &format!("Tab, ⇧Tab and Space choose settings ({light:?}, {dark:?}, {back:?})"),
@@ -1208,12 +1251,16 @@ fn smoke_settings_window(window: DocumentWindowHandle, cx: &mut App) {
                 })
                 .ok();
         }
-        pause(cx, 20).await;
-        checks.check("Esc closes Settings", window_count(cx) == 1);
+        wait_until(cx, |cx| window_count(cx) == 1).await;
+        let windows = window_count(cx);
+        checks.check(
+            &format!("Esc closes Settings ({windows} windows)"),
+            windows == 1,
+        );
 
         // Quit with Settings open still quits.
         dispatch(window, cx, Box::new(OpenSettings));
-        pause(cx, 20).await;
+        wait_until(cx, |cx| window_count(cx) == 2).await;
         checks.report();
         println!("dispatching Quit");
         dispatch(window, cx, Box::new(Quit));
@@ -1229,7 +1276,7 @@ fn smoke_reveal(window: DocumentWindowHandle, cx: &mut App) {
 
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
-        pause(cx, 10).await;
+        laid_out(window, cx).await;
         let position = |cx: &mut AsyncApp, index: usize| {
             window
                 .read_with(cx, |view, _| view.item_position(index))
@@ -1311,7 +1358,7 @@ fn smoke_scrollbar(window: DocumentWindowHandle, cx: &mut App) {
 
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
-        pause(cx, 10).await;
+        laid_out(window, cx).await;
         let thumb = |cx: &mut AsyncApp| {
             window
                 .update(cx, |view, window, _| view.scrollbar_thumb(window))
@@ -1468,7 +1515,7 @@ fn smoke_scrollbar(window: DocumentWindowHandle, cx: &mut App) {
 fn smoke_scrollbar_drag(window: DocumentWindowHandle, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
-        pause(cx, 10).await;
+        laid_out(window, cx).await;
         let exact = window
             .update(cx, |view, window, _| view.scrollbar_exact(window))
             .unwrap_or(false);
@@ -1606,7 +1653,7 @@ fn smoke_reading(window: DocumentWindowHandle, cx: &mut App) {
 
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
-        pause(cx, 10).await;
+        laid_out(window, cx).await;
         let offset = |cx: &mut AsyncApp| {
             window
                 .read_with(cx, |view, _| view.scroll_offset())
@@ -1809,7 +1856,7 @@ fn smoke_reading(window: DocumentWindowHandle, cx: &mut App) {
 fn smoke_caret(window: DocumentWindowHandle, blocks_only: bool, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
-        pause(cx, 10).await;
+        laid_out(window, cx).await;
         let item_count = window
             .read_with(cx, |view, _| view.item_count())
             .unwrap_or(0);
@@ -1870,7 +1917,7 @@ fn smoke_caret(window: DocumentWindowHandle, blocks_only: bool, cx: &mut App) {
 fn smoke_images(window: DocumentWindowHandle, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
-        pause(cx, 10).await;
+        laid_out(window, cx).await;
         let Some(folder) = window
             .read_with(cx, |view, _| {
                 view.document_path()
@@ -1934,7 +1981,7 @@ fn smoke_web_images(window: DocumentWindowHandle, cx: &mut App) {
 
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
-        pause(cx, 10).await;
+        laid_out(window, cx).await;
         checks.check(
             "a document with no web images doesn't ask",
             window
@@ -2067,7 +2114,7 @@ fn smoke_web_images(window: DocumentWindowHandle, cx: &mut App) {
 fn smoke_anchors(window: DocumentWindowHandle, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
-        pause(cx, 10).await;
+        laid_out(window, cx).await;
         let Some(path) = window
             .read_with(cx, |view, _| view.document_path().map(Path::to_owned))
             .ok()
@@ -2103,12 +2150,18 @@ fn smoke_anchors(window: DocumentWindowHandle, cx: &mut App) {
                 let position = origin + gpui::point(gpui::px(12.), gpui::px(10.));
                 mouse_click(window, cx, position).await;
             }
-            pause(cx, 10).await;
         };
+        // Waits until `window`'s top item is `expected`, and says what it
+        // is.
+        let top_became =
+            async |window: DocumentWindowHandle, expected: usize, cx: &mut AsyncApp| {
+                wait_until(cx, |cx| top_item(window, cx) == Some(expected)).await;
+                top_item(window, cx)
+            };
 
         // Item 1 links to #setup; the heading is item 63.
         click_link(1, cx).await;
-        let top = top_item(window, cx);
+        let top = top_became(window, 63, cx).await;
         checks.check(
             &format!("#setup scrolls to the heading (top item {top:?})"),
             top == Some(63),
@@ -2129,8 +2182,7 @@ fn smoke_anchors(window: DocumentWindowHandle, cx: &mut App) {
                 })
             })
             .unwrap_or(false);
-        pause(cx, 10).await;
-        let top = top_item(window, cx);
+        let top = top_became(window, 33, cx).await;
         let caret = window
             .read_with(cx, |view, _| view.has_caret())
             .unwrap_or(true);
@@ -2153,7 +2205,12 @@ fn smoke_anchors(window: DocumentWindowHandle, cx: &mut App) {
                     .is_some_and(|range| view.select_range(range, window, cx))
             })
             .unwrap_or(false);
-        pause(cx, 10).await;
+        wait_until(cx, |cx| {
+            window
+                .read_with(cx, |view, _| view.caret_on_screen() == Some(true))
+                .unwrap_or(false)
+        })
+        .await;
         let (selection, on_screen) = window
             .read_with(cx, |view, _| {
                 (view.reveal_state().1, view.caret_on_screen())
@@ -2182,7 +2239,7 @@ fn smoke_anchors(window: DocumentWindowHandle, cx: &mut App) {
                 view.follow_link("#no-such-heading", window, cx)
             })
             .ok();
-        pause(cx, 5).await;
+        pause(cx, 3).await;
         checks.check(
             "a missing heading stays put",
             top_item(window, cx) == before,
@@ -2196,12 +2253,11 @@ fn smoke_anchors(window: DocumentWindowHandle, cx: &mut App) {
                     view.follow_link("#anchors", window, cx)
                 })
                 .ok();
-            pause(cx, 5).await;
+            top_became(window, 0, cx).await;
             window
                 .update(cx, |view, window, cx| view.follow_link(link, window, cx))
                 .ok();
-            pause(cx, 10).await;
-            let top = top_item(window, cx);
+            let top = top_became(window, 33, cx).await;
             checks.check(
                 &format!("{link} scrolls to the <a id> (top item {top:?})"),
                 top == Some(33),
@@ -2214,8 +2270,11 @@ fn smoke_anchors(window: DocumentWindowHandle, cx: &mut App) {
                 view.follow_link("#anchors", window, cx)
             })
             .ok();
-        pause(cx, 10).await;
-        checks.check("#anchors goes back up", top_item(window, cx) == Some(0));
+        let top = top_became(window, 0, cx).await;
+        checks.check(
+            &format!("#anchors goes back up (top item {top:?})"),
+            top == Some(0),
+        );
         click_link(2, cx).await;
         let opened = wait_until(cx, |cx| {
             cx.update(|cx| {
@@ -2233,7 +2292,6 @@ fn smoke_anchors(window: DocumentWindowHandle, cx: &mut App) {
             })
         })
         .await;
-        pause(cx, 10).await;
         let other_window = cx.update(|cx| {
             cx.windows()
                 .into_iter()
@@ -2246,7 +2304,10 @@ fn smoke_anchors(window: DocumentWindowHandle, cx: &mut App) {
                         .is_some_and(|open| open.file_name() == other.file_name())
                 })
         });
-        let other_top = other_window.and_then(|other| top_item(other, cx));
+        let other_top = match other_window {
+            Some(other) => top_became(other, 61, cx).await,
+            None => None,
+        };
         checks.check(
             &format!("other.md#deep-dive opens it at the heading (top item {other_top:?})"),
             opened && other_top == Some(61),
@@ -2260,16 +2321,15 @@ fn smoke_anchors(window: DocumentWindowHandle, cx: &mut App) {
                     view.follow_link("#other", window, cx)
                 })
                 .ok();
-            pause(cx, 10).await;
+            wait_until(cx, |cx| top_item(other_window, cx) != Some(61)).await;
             dispatch(window, cx, Box::new(SelectTab1));
-            pause(cx, 10).await;
+            pause(cx, 2).await;
             window
                 .update(cx, |view, window, cx| {
                     view.follow_link("other.md#deep-dive", window, cx)
                 })
                 .ok();
-            pause(cx, 20).await;
-            let again = top_item(other_window, cx);
+            let again = top_became(other_window, 61, cx).await;
             checks.check(
                 &format!("an already open file scrolls too (top item {again:?})"),
                 again == Some(61),
@@ -2279,13 +2339,13 @@ fn smoke_anchors(window: DocumentWindowHandle, cx: &mut App) {
         // A host deciding what links open (#118): the click is passed on,
         // and the view stays put.
         dispatch(window, cx, Box::new(SelectTab1));
-        pause(cx, 5).await;
+        pause(cx, 2).await;
         window
             .update(cx, |view, window, cx| {
                 view.follow_link("#anchors", window, cx)
             })
             .ok();
-        pause(cx, 5).await;
+        top_became(window, 0, cx).await;
         let clicked = Rc::new(RefCell::new(Vec::new()));
         let host_view = tab_views(window, cx).into_iter().next();
         let _links_subscription = host_view.as_ref().map(|view| {
@@ -2302,6 +2362,9 @@ fn smoke_anchors(window: DocumentWindowHandle, cx: &mut App) {
             .update(cx, |view, _, _| view.set_links_to_host(true))
             .ok();
         click_link(1, cx).await;
+        wait_until(cx, |_| !clicked.borrow().is_empty()).await;
+        // And nothing scrolls.
+        pause(cx, 3).await;
         let top = top_item(window, cx);
         checks.check(
             &format!(
@@ -2334,7 +2397,7 @@ fn smoke_anchors(window: DocumentWindowHandle, cx: &mut App) {
 fn smoke_footnotes(window: DocumentWindowHandle, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
-        pause(cx, 10).await;
+        laid_out(window, cx).await;
         let (first, count) = window
             .read_with(cx, |view, _| view.note_rows())
             .unwrap_or_default();
@@ -2430,7 +2493,7 @@ fn smoke_footnotes(window: DocumentWindowHandle, cx: &mut App) {
 fn smoke_clicks(window: DocumentWindowHandle, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
-        pause(cx, 10).await;
+        laid_out(window, cx).await;
         let Some(path) = window
             .read_with(cx, |view, _| view.document_path().map(Path::to_owned))
             .ok()
@@ -2572,7 +2635,7 @@ fn smoke_a11y(window: DocumentWindowHandle, cx: &mut App) {
 
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
-        pause(cx, 10).await;
+        laid_out(window, cx).await;
         // A second tab, so there's a tab strip, then back to the first.
         dispatch(window, cx, Box::new(New));
         pause(cx, 20).await;
@@ -2712,7 +2775,7 @@ fn smoke_a11y(window: DocumentWindowHandle, cx: &mut App) {
 fn smoke_print(window: DocumentWindowHandle, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
-        pause(cx, 10).await;
+        laid_out(window, cx).await;
         let path =
             std::path::PathBuf::from(std::env::var_os("KERTAS_PRINT_PDF").unwrap_or_default());
         let model = window.read_with(cx, |view, _| view.model()).ok().flatten();
@@ -3194,8 +3257,9 @@ async fn after_frames<T: 'static>(
     result.take()
 }
 
-/// Waits until `done` returns true, or `timeout` passes. Returns whether
-/// it did.
+/// Waits until `done` returns true, or `timeout` passes, asking once a
+/// frame. Returns whether it did. (Asking every millisecond made settings
+/// written straight after a reload go unnoticed now and then.)
 async fn wait_for(
     cx: &mut AsyncApp,
     timeout: Duration,
@@ -3206,9 +3270,39 @@ async fn wait_for(
         if done(cx) {
             return true;
         }
-        pause(cx, 2).await;
+        pause(cx, 1).await;
     }
     done(cx)
+}
+
+/// Waits until `window`'s document has been laid out and drawn, and has
+/// stopped changing height as its images load (its scrollbar's the same
+/// for three frames), as a mode does before it starts. Returns whether it
+/// was.
+async fn laid_out(window: DocumentWindowHandle, cx: &mut AsyncApp) -> bool {
+    let drawn = wait_until(cx, |cx| {
+        window
+            .update(cx, |view, window, _| {
+                view.is_blank() || view.text_origin(0, window).is_some()
+            })
+            .unwrap_or(false)
+    })
+    .await;
+    let thumb = |cx: &mut AsyncApp| {
+        window
+            .update(cx, |view, window, _| view.scrollbar_thumb(window))
+            .ok()
+            .flatten()
+    };
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let (mut last, mut same) = (thumb(cx), 0);
+    while same < 3 && Instant::now() < deadline {
+        pause(cx, 1).await;
+        let now = thumb(cx);
+        same = if now == last { same + 1 } else { 0 };
+        last = now;
+    }
+    drawn
 }
 
 /// `KERTAS_SMOKE=disk`: changes made to the file by "another app" (F5). With
@@ -3218,7 +3312,7 @@ async fn wait_for(
 fn smoke_disk(window: DocumentWindowHandle, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
-        pause(cx, 10).await;
+        laid_out(window, cx).await;
         let Some(path) = window
             .read_with(cx, |view, _| view.document_path().map(Path::to_owned))
             .ok()
@@ -3355,7 +3449,7 @@ fn smoke_autosave(window: DocumentWindowHandle, cx: &mut App) {
 
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
-        pause(cx, 10).await;
+        laid_out(window, cx).await;
         let Some(path) = window
             .read_with(cx, |view, _| view.document_path().map(Path::to_owned))
             .ok()
@@ -3365,6 +3459,8 @@ fn smoke_autosave(window: DocumentWindowHandle, cx: &mut App) {
             return checks.finish(cx);
         };
         let original = std::fs::read_to_string(&path).unwrap_or_default();
+        // A 1 s autosave can take longer on a busy machine.
+        const SAVE: Duration = Duration::from_secs(5);
         cx.update(|cx| crate::app_settings::set("autosave", 1, cx))
             .ok();
         let on_disk = || std::fs::read_to_string(&path).unwrap_or_default();
@@ -3388,7 +3484,7 @@ fn smoke_autosave(window: DocumentWindowHandle, cx: &mut App) {
             "doesn't save straight away",
             dirty(cx) && on_disk() == original,
         );
-        let saved = wait_until(cx, |cx| !dirty(cx)).await;
+        let saved = wait_for(cx, SAVE, |cx| !dirty(cx)).await;
         checks.check(
             "saves after the pause",
             saved && on_disk() == format!("Autosaved. {original}"),
@@ -3401,16 +3497,21 @@ fn smoke_autosave(window: DocumentWindowHandle, cx: &mut App) {
         checks.check("undo still undoes the edit", text == original);
         checks.check(
             "and that's saved too",
-            wait_until(cx, |cx| !dirty(cx)).await && on_disk() == original,
+            wait_for(cx, SAVE, |cx| !dirty(cx)).await && on_disk() == original,
         );
 
         // A change made elsewhere is never saved over.
         type_text(cx, "Mine. ");
         std::fs::write(&path, "Theirs.\n").ok();
-        pause(cx, 150).await;
-        let shown = window
-            .read_with(cx, |view, _| view.disk_change_shown())
-            .unwrap_or(false);
+        let disk_change = |cx: &mut AsyncApp| {
+            window
+                .read_with(cx, |view, _| view.disk_change_shown())
+                .unwrap_or(false)
+        };
+        wait_until(cx, disk_change).await;
+        // Longer than the 1 s autosave, which mustn't happen.
+        pause(cx, 80).await;
+        let shown = disk_change(cx);
         checks.check(
             "doesn't save over a change made elsewhere",
             on_disk() == "Theirs.\n" && shown && dirty(cx),
@@ -3418,13 +3519,16 @@ fn smoke_autosave(window: DocumentWindowHandle, cx: &mut App) {
         window.update(cx, |view, _, cx| view.keep_mine(cx)).ok();
         checks.check(
             "saves after Keep Mine",
-            wait_until(cx, |cx| !dirty(cx)).await && on_disk() == format!("Mine. {original}"),
+            wait_for(cx, SAVE, |cx| !dirty(cx)).await && on_disk() == format!("Mine. {original}"),
         );
 
         // Switching to another tab saves at once.
         type_text(cx, "Switching. ");
         dispatch(window, cx, Box::new(New));
-        pause(cx, 10).await;
+        wait_until(cx, |cx| tab_count(window, cx) == 2).await;
+        // Drawn, so it has the keyboard for the tab keys.
+        laid_out(window, cx).await;
+        pause(cx, 1).await;
         let first_dirty = tab_views(window, cx)
             .first()
             .is_none_or(|view| cx.update(|cx| view.read(cx).is_dirty()));
@@ -3433,7 +3537,8 @@ fn smoke_autosave(window: DocumentWindowHandle, cx: &mut App) {
             !first_dirty && on_disk().starts_with("Switching. "),
         );
         dispatch(window, cx, Box::new(SelectTab1));
-        pause(cx, 10).await;
+        wait_until(cx, |cx| active_tab(window, cx) == 0).await;
+        laid_out(window, cx).await;
 
         // A failed autosave pauses autosave until a manual save.
         let directory = path.parent().unwrap_or(Path::new("/")).to_owned();
@@ -3450,10 +3555,11 @@ fn smoke_autosave(window: DocumentWindowHandle, cx: &mut App) {
         checks.check("a failed autosave pauses autosave", paused && dirty(cx));
         permissions(0o755);
         type_text(cx, "Still paused. ");
-        pause(cx, 120).await;
+        // Longer than the 1 s autosave.
+        pause(cx, 80).await;
         checks.check("stays paused", dirty(cx));
         dispatch(window, cx, Box::new(Save));
-        pause(cx, 5).await;
+        wait_for(cx, SAVE, |cx| !dirty(cx)).await;
         let resumed = !window
             .read_with(cx, |view, _| view.autosave_paused())
             .unwrap_or(true);
@@ -3476,7 +3582,7 @@ fn smoke_edited(window: DocumentWindowHandle, cx: &mut App) {
 
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
-        pause(cx, 10).await;
+        laid_out(window, cx).await;
         let Some(view) = tab_views(window, cx).into_iter().next() else {
             checks.check("there's a tab", false);
             return checks.finish(cx);
@@ -3518,7 +3624,7 @@ fn smoke_edited(window: DocumentWindowHandle, cx: &mut App) {
         checks.check("so is the word count", words == words_before + 2);
 
         dispatch(window, cx, Box::new(Save));
-        pause(cx, 5).await;
+        wait_until(cx, |cx| !cx.update(|cx| view.read(cx).is_dirty())).await;
         let path = cx.update(|cx| view.read(cx).document_path().map(Path::to_owned));
         if let Some(path) = path {
             std::fs::write(&path, "# Theirs\n\nText.\n").ok();
@@ -3613,7 +3719,13 @@ fn smoke_edited(window: DocumentWindowHandle, cx: &mut App) {
                 );
             })
             .ok();
-        pause(cx, 3).await;
+        wait_until(cx, |_| {
+            checked
+                .borrow()
+                .iter()
+                .any(|destination| destination == "Ada")
+        })
+        .await;
         checks.check(
             &format!(
                 "the link check is asked about links drawn ({:?})",
@@ -3662,7 +3774,7 @@ fn smoke_marks(window: DocumentWindowHandle, cx: &mut App) {
 
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
-        pause(cx, 10).await;
+        laid_out(window, cx).await;
         let Some(view) = tab_views(window, cx).into_iter().next() else {
             checks.check("there's a tab", false);
             return checks.finish(cx);
@@ -3806,7 +3918,7 @@ fn smoke_marks(window: DocumentWindowHandle, cx: &mut App) {
 fn smoke_find(window: DocumentWindowHandle, cx: &mut App) {
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
-        pause(cx, 10).await;
+        laid_out(window, cx).await;
         let handle = gpui::AnyWindowHandle::from(window);
         let text = window
             .read_with(cx, |view, _| view.text())
@@ -3941,7 +4053,7 @@ fn smoke_replace(window: DocumentWindowHandle, cx: &mut App) {
 
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
-        pause(cx, 10).await;
+        laid_out(window, cx).await;
         let handle = gpui::AnyWindowHandle::from(window);
         let read = |cx: &mut AsyncApp| {
             window
@@ -4007,7 +4119,7 @@ fn smoke_regex(window: DocumentWindowHandle, cx: &mut App) {
 
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
-        pause(cx, 10).await;
+        laid_out(window, cx).await;
         let handle = gpui::AnyWindowHandle::from(window);
         let read = |cx: &mut AsyncApp| {
             window
@@ -4061,7 +4173,7 @@ fn smoke_host_find(window: DocumentWindowHandle, cx: &mut App) {
 
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
-        pause(cx, 10).await;
+        laid_out(window, cx).await;
         let handle = gpui::AnyWindowHandle::from(window);
         let text = |cx: &mut AsyncApp| {
             window
@@ -4158,7 +4270,7 @@ fn smoke_hover(window: DocumentWindowHandle, cx: &mut App) {
 
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
-        pause(cx, 10).await;
+        laid_out(window, cx).await;
         let asked = Rc::new(RefCell::new(Vec::new()));
         window
             .update(cx, |view, _, cx| {
@@ -4214,7 +4326,8 @@ fn smoke_hover(window: DocumentWindowHandle, cx: &mut App) {
         move_to(cx, first + gpui::point(gpui::px(6.), line));
         pause(cx, 2).await;
         let early = shown(cx);
-        cx.background_executor().timer(HOVER_DELAY * 2).await;
+        // The host is asked once the delay has passed.
+        wait_for(cx, HOVER_DELAY * 4, |_| !asked.borrow().is_empty()).await;
         let mark = shown(cx);
         checks.check(
             &format!("a mark's popover waits, then shows ({early:?} → {mark:?})"),
@@ -4229,12 +4342,17 @@ fn smoke_hover(window: DocumentWindowHandle, cx: &mut App) {
         );
         // Off the text, onto the window's side.
         move_to(cx, gpui::point(gpui::px(2.), first.y + line));
-        cx.background_executor().timer(HOVER_DELAY * 2).await;
-        checks.check("leaving closes it", shown(cx).is_none());
+        let closed = wait_for(cx, HOVER_DELAY * 4, |cx| shown(cx).is_none()).await;
+        checks.check("leaving closes it", closed);
+        // Until its close timer has run, a new hover would be closed too.
+        cx.background_executor().timer(HOVER_DELAY).await;
 
         // "A [link](…)": the link's text starts after "A ".
         move_to(cx, second + gpui::point(gpui::px(24.), line));
-        cx.background_executor().timer(HOVER_DELAY * 2).await;
+        wait_for(cx, HOVER_DELAY * 4, |cx| {
+            matches!(shown(cx), Some(HoverTarget::Link(_)))
+        })
+        .await;
         let link = shown(cx);
         checks.check(
             &format!("so does a link's ({link:?})"),
@@ -4261,7 +4379,7 @@ fn smoke_rename(window: DocumentWindowHandle, cx: &mut App) {
 
     cx.spawn(async move |cx| {
         let mut checks = Checks::default();
-        pause(cx, 10).await;
+        laid_out(window, cx).await;
         let Some(view) = tab_views(window, cx).into_iter().next() else {
             checks.check("there's a tab", false);
             return checks.finish(cx);
