@@ -12,7 +12,7 @@ use gpui::{
     Entity, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     PlatformTextSystem, Point, TestAppContext, VisualTestContext,
 };
-use kertas_editor::actions::Unreveal;
+use kertas_editor::actions::{MoveDocumentStart, Unreveal};
 use kertas_editor::{DocumentEvent, DocumentView, EditorConfig};
 
 /// The events a view sent.
@@ -50,6 +50,8 @@ pub fn showing<'a>(
     view.update(cx, |view, cx| {
         view.replace_ranges(vec![(0..0, text.to_owned())], cx)
     });
+    // At the top, as a document opens.
+    cx.dispatch_action(MoveDocumentStart);
     cx.dispatch_action(Unreveal);
     cx.run_until_parked();
     // Only what the test does from here.
@@ -114,6 +116,7 @@ pub fn click(
         pressed_button: None,
         modifiers,
     });
+    cx.run_until_parked();
     cx.simulate_event(MouseDownEvent {
         button,
         position,
@@ -121,6 +124,7 @@ pub fn click(
         click_count: 1,
         first_mouse: false,
     });
+    cx.run_until_parked();
     cx.simulate_event(MouseUpEvent {
         button,
         position,

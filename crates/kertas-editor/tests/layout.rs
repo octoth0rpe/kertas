@@ -125,3 +125,55 @@ fn down_moves_a_wrapped_line() {
     let len = sentence.len() * 20;
     assert!(caret > 20 && caret < len / 2, "caret {caret} of {len}");
 }
+
+/// Footnotes (#90), on `footnotes.md`: the notes are drawn in rows after
+/// the document's blocks; clicking a reference scrolls to its note; a
+/// back-link scrolls to its reference, even deep in a long list; and
+/// clicking a note's text reveals its definition where it is.
+#[test]
+fn footnotes() {
+    use gpui::{Modifiers, MouseButton, point, px};
+
+    let mut cx = common::with_real_text();
+    let (view, cx, _) = common::showing(&common::fixture("footnotes.md"), &mut cx);
+    // The heading, the paragraph with the first reference, 30 fillers,
+    // three definitions, the list and 30 more fillers.
+    let (first, count) = view.read_with(cx, |view, _| view.note_rows());
+    assert_eq!((first, count), (66, 3), "three notes after 66 items");
+    let on_screen =
+        |cx: &mut VisualTestContext, row| view.read_with(cx, |view, _| view.row_on_screen(row));
+    let follow = |cx: &mut VisualTestContext, link: &str| {
+        cx.update(|window, cx| view.update(cx, |view, cx| view.follow_link(link, window, cx)));
+        cx.run_until_parked();
+    };
+
+    // The paragraph starts with its reference.
+    let position = common::origin(&view, cx, 1) + point(px(2.), px(12.));
+    common::click(cx, position, MouseButton::Left, Modifiers::default());
+    assert!(
+        on_screen(cx, first) && !on_screen(cx, 1),
+        "clicking a reference scrolls to its note"
+    );
+    assert_eq!(view.read_with(cx, |view, _| view.caret_offset()), None);
+
+    follow(cx, "#fnref-list");
+    // The list's items are about 26 px high, and the reference is in its
+    // 36th.
+    let (item, offset) = view.read_with(cx, |view, _| view.scroll_top()).unwrap();
+    assert!(
+        item == 35 && offset > px(700.) && offset < px(1100.),
+        "a back-link scrolls to its reference in the list: {item}, {offset:?}"
+    );
+    follow(cx, "#fn-list");
+    assert!(on_screen(cx, first + 1), "#fn-list scrolls to the note");
+
+    // The second note has no rule above it; click its text.
+    let position = common::origin(&view, cx, first + 1) + point(px(120.), px(10.));
+    common::click(cx, position, MouseButton::Left, Modifiers::default());
+    let (item, shown) = view.read_with(cx, |view, _| {
+        let head = view.reveal_state().1.map(|selection| selection.head);
+        (head.map(|head| view.item_at(head)), view.caret_on_screen())
+    });
+    assert_eq!(item, Some(33), "clicking a note reveals its definition");
+    assert_eq!(shown, Some(true), "where it is");
+}

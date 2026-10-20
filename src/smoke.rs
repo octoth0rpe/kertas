@@ -13,10 +13,12 @@
 //!   saves, so the text can be checked.
 //! - `bench`: times 500 inserts in the middle of the document
 //!   (`scripts/bench.sh`).
-//! - `tabs`, `windows`, `settings`, `settings-window`, `help`, `reveal`, `clicks`,
-//!   `anchors`, `footnotes`, `images`, `reading`, `scrollbar`, `scrollbar-drag`,
-//!   `a11y`, `print`, `spelling`, `disk`, `autosave`, `rename`: see each
-//!   function.
+//! - `tabs`, `windows`, `settings`, `settings-window`, `help`, `anchors`,
+//!   `images`, `reading`, `scrollbar`, `scrollbar-drag`, `a11y`, `print`,
+//!   `spelling`, `disk`, `autosave`, `rename`: see each function.
+//!
+//! What needs no real window, display or watched files is tested in
+//! kertas-editor's tests/, headless.
 
 use std::cell::{Cell, RefCell};
 use std::path::Path;
@@ -51,10 +53,7 @@ pub fn start_if_requested(window: DocumentWindowHandle, cx: &mut App) {
         "settings" => smoke_settings(window, cx),
         "help" => smoke_help(window, cx),
         "settings-window" => smoke_settings_window(window, cx),
-        "reveal" => smoke_reveal(window, cx),
-        "clicks" => smoke_clicks(window, cx),
         "anchors" => smoke_anchors(window, cx),
-        "footnotes" => smoke_footnotes(window, cx),
         "images" => smoke_images(window, cx),
         "reading" => smoke_reading(window, cx),
         "scrollbar" => smoke_scrollbar(window, cx),
@@ -1104,87 +1103,6 @@ fn smoke_settings_window(window: DocumentWindowHandle, cx: &mut App) {
     .detach();
 }
 
-/// `KERTAS_SMOKE=reveal`: Page Down scrolls without moving the caret,
-/// clicking a block below a revealed one keeps it in place (C7), and
-/// dragging selects across blocks and reveals them all.
-fn smoke_reveal(window: DocumentWindowHandle, cx: &mut App) {
-    use kertas_editor::actions::PageDown;
-
-    cx.spawn(async move |cx| {
-        let mut checks = Checks::default();
-        laid_out(window, cx).await;
-        let position = |cx: &mut AsyncApp, index: usize| {
-            window
-                .read_with(cx, |view, _| view.item_position(index))
-                .ok()
-                .flatten()
-        };
-        let click = |cx: &mut AsyncApp, offset: usize| {
-            window
-                .update(cx, |view, window, cx| view.click(offset, false, window, cx))
-                .ok();
-        };
-        let state = |cx: &mut AsyncApp| {
-            window
-                .read_with(cx, |view, _| (view.scroll_top(), view.reveal_state().1))
-                .unwrap_or_default()
-        };
-
-        click(cx, 0);
-        pause(cx, 10).await;
-        let (scroll_before, selection_before) = state(cx);
-        dispatch(window, cx, Box::new(PageDown));
-        pause(cx, 10).await;
-        let (scroll_after, selection_after) = state(cx);
-        checks.check(
-            &format!("Page Down scrolls, caret stays ({scroll_before:?} -> {scroll_after:?})"),
-            scroll_after != scroll_before && selection_after == selection_before,
-        );
-
-        // Now well away from the top, so there's room to scroll, reveal a
-        // block, then click one further down: the first collapses above
-        // it, and the clicked block should stay put.
-        for _ in 0..2 {
-            dispatch(window, cx, Box::new(PageDown));
-            pause(cx, 10).await;
-        }
-        let (scroll_now, _) = state(cx);
-        let first = scroll_now.map_or(0, |(item, _)| item) + 1;
-        let (start, _) = position(cx, first).unwrap_or_default();
-        click(cx, start);
-        pause(cx, 10).await;
-        let before = position(cx, first + 3);
-        if let Some((start, _)) = before {
-            click(cx, start);
-        }
-        pause(cx, 10).await;
-        let after = position(cx, first + 3);
-        checks.check(
-            &format!("clicked block stays in place ({before:?} -> {after:?})"),
-            matches!((before, after), (Some((_, a)), Some((_, b))) if (a - b).abs() < gpui::px(1.)),
-        );
-
-        // Drag from there two blocks on: all three reveal.
-        let target = position(cx, first + 5).map(|(start, _)| start + 1);
-        if let Some(target) = target {
-            window
-                .update(cx, |view, _, cx| view.drag_to(target, cx))
-                .ok();
-        }
-        pause(cx, 10).await;
-        let (revealed, selection) = window
-            .read_with(cx, |view, _| view.reveal_state())
-            .unwrap_or_default();
-        checks.check(
-            &format!("dragging selects across blocks and reveals them ({revealed} revealed)"),
-            revealed == 3 && selection.is_some_and(|selection| Some(selection.head) == target),
-        );
-        window.update(cx, |view, _, _| view.end_drag()).ok();
-        checks.finish(cx);
-    })
-    .detach();
-}
-
 /// `KERTAS_SMOKE=scrollbar`, on `10k.md` (#88): the thumb starts at the top,
 /// keeps its size and only moves down while paging through, reaches the
 /// bottom at the end, and dragging it to the middle shows the middle.
@@ -2129,207 +2047,6 @@ fn smoke_anchors(window: DocumentWindowHandle, cx: &mut App) {
             .update(cx, |view, _, _| view.set_links_to_host(false))
             .ok();
 
-        checks.finish(cx);
-    })
-    .detach();
-}
-
-/// `KERTAS_SMOKE=footnotes`, on `footnotes.md` (#90): the notes are drawn
-/// in rows after the document's blocks; clicking a reference scrolls to its
-/// note; a back-link scrolls to its reference, even deep in a long list;
-/// and clicking a note's text reveals its definition where it is.
-fn smoke_footnotes(window: DocumentWindowHandle, cx: &mut App) {
-    cx.spawn(async move |cx| {
-        let mut checks = Checks::default();
-        laid_out(window, cx).await;
-        let (first, count) = window
-            .read_with(cx, |view, _| view.note_rows())
-            .unwrap_or_default();
-        // The heading, the paragraph with the first reference, 30 fillers,
-        // three definitions, the list and 30 more fillers.
-        checks.check(
-            &format!("three notes after 66 items (rows {first}+{count})"),
-            (first, count) == (66, 3),
-        );
-        let on_screen = |row: usize, cx: &mut AsyncApp| {
-            window
-                .read_with(cx, |view, _| view.row_on_screen(row))
-                .unwrap_or(false)
-        };
-        let caret = |cx: &mut AsyncApp| {
-            window
-                .read_with(cx, |view, _| view.reveal_state().1)
-                .ok()
-                .flatten()
-        };
-
-        // The paragraph starts with its reference.
-        let origin = window
-            .update(cx, |view, window, _| view.text_origin(1, window))
-            .ok()
-            .flatten();
-        if let Some(origin) = origin {
-            mouse_click(window, cx, origin + gpui::point(gpui::px(2.), gpui::px(12.))).await;
-        }
-        pause(cx, 10).await;
-        checks.check(
-            "clicking a reference scrolls to its note",
-            on_screen(first, cx) && !on_screen(1, cx) && caret(cx).is_none(),
-        );
-
-        window
-            .update(cx, |view, window, cx| {
-                view.follow_link("#fnref-list", window, cx)
-            })
-            .ok();
-        pause(cx, 10).await;
-        let top = window
-            .read_with(cx, |view, _| view.scroll_top())
-            .ok()
-            .flatten();
-        // The list's items are about 26 px high, and the reference is in
-        // its 36th.
-        checks.check(
-            &format!("a back-link scrolls to its reference in the list (top {top:?})"),
-            top.is_some_and(|(item, offset)| {
-                item == 35 && offset > gpui::px(700.) && offset < gpui::px(1100.)
-            }),
-        );
-
-        window
-            .update(cx, |view, window, cx| {
-                view.follow_link("#fn-list", window, cx)
-            })
-            .ok();
-        pause(cx, 10).await;
-        checks.check("#fn-list scrolls to the note", on_screen(first + 1, cx));
-
-        // The second note has no rule above it; click its text.
-        let origin = window
-            .update(cx, |view, window, _| view.text_origin(first + 1, window))
-            .ok()
-            .flatten();
-        if let Some(origin) = origin {
-            mouse_click(window, cx, origin + gpui::point(gpui::px(120.), gpui::px(10.))).await;
-        }
-        pause(cx, 15).await;
-        let head = caret(cx).map(|selection| selection.head);
-        let item = head.and_then(|head| window.read_with(cx, |view, _| view.item_at(head)).ok());
-        let shown = window
-            .read_with(cx, |view, _| view.caret_on_screen())
-            .ok()
-            .flatten();
-        checks.check(
-            &format!(
-                "clicking a note reveals its definition where it is (item {item:?}, on screen {shown:?})"
-            ),
-            item == Some(33) && shown == Some(true),
-        );
-        checks.finish(cx);
-    })
-    .detach();
-}
-
-/// `KERTAS_SMOKE=clicks`, on `clicks.md`: clicking a link to a Markdown file
-/// opens it in a tab and leaves the link's block rendered; clicking a
-/// checkbox toggles it, as one undo step, and leaves its list rendered;
-/// clicking plain text still reveals its block.
-fn smoke_clicks(window: DocumentWindowHandle, cx: &mut App) {
-    cx.spawn(async move |cx| {
-        let mut checks = Checks::default();
-        laid_out(window, cx).await;
-        let Some(path) = window
-            .read_with(cx, |view, _| view.document_path().map(Path::to_owned))
-            .ok()
-            .flatten()
-        else {
-            checks.check("the document has a file", false);
-            return checks.finish(cx);
-        };
-        let other = path.with_file_name("other.md");
-        std::fs::write(&other, "# Other\n").ok();
-        let origin = |cx: &mut AsyncApp, index: usize| {
-            window
-                .update(cx, |view, window, _| view.text_origin(index, window))
-                .ok()
-                .flatten()
-        };
-        let text_position =
-            |origin: gpui::Point<gpui::Pixels>| origin + gpui::point(gpui::px(12.), gpui::px(10.));
-
-        // The first block starts with a link to other.md.
-        let Some(first) = origin(cx, 0) else {
-            checks.check("the first block is laid out", false);
-            return checks.finish(cx);
-        };
-        mouse_click(window, cx, text_position(first)).await;
-        let opened = wait_until(cx, |cx| {
-            cx.update(|cx| {
-                cx.windows().into_iter().any(|handle| {
-                    DocumentWindowHandle::downcast(handle)
-                        .and_then(|handle| handle.read(cx).ok())
-                        .and_then(|view| view.document_path())
-                        .is_some_and(|open| open.file_name() == other.file_name())
-                })
-            })
-        })
-        .await;
-        checks.check("clicking a Markdown link opens the file", opened);
-        // Back to the first tab, once the new one is drawn.
-        pause(cx, 10).await;
-        dispatch(window, cx, Box::new(SelectTab1));
-        pause(cx, 10).await;
-        let (revealed, selection) = window
-            .read_with(cx, |view, _| view.reveal_state())
-            .unwrap_or_default();
-        checks.check(
-            &format!("the link's block stays rendered ({revealed} revealed, {selection:?})"),
-            revealed == 0 && selection.is_none(),
-        );
-
-        // The third block is a task list.
-        let text = |cx: &mut AsyncApp| {
-            window
-                .read_with(cx, |view, _| view.text())
-                .unwrap_or_default()
-        };
-        if let Some(list) = origin(cx, 2) {
-            mouse_click(window, cx, text_position(list)).await;
-        }
-        pause(cx, 5).await;
-        let (revealed, selection) = window
-            .read_with(cx, |view, _| view.reveal_state())
-            .unwrap_or_default();
-        let dirty = window
-            .read_with(cx, |view, _| view.is_dirty())
-            .unwrap_or(false);
-        checks.check(
-            &format!("clicking a checkbox ticks it ({revealed} revealed, {selection:?})"),
-            text(cx).ends_with("- [x] Task\n") && revealed == 0 && selection.is_none() && dirty,
-        );
-        dispatch(window, cx, Box::new(Undo));
-        pause(cx, 5).await;
-        dispatch(window, cx, Box::new(Unreveal));
-        pause(cx, 5).await;
-
-        // Plain text in the second block reveals it.
-        let start = window
-            .read_with(cx, |view, _| view.item_start(1))
-            .ok()
-            .flatten();
-        if let Some(second) = origin(cx, 1) {
-            mouse_click(window, cx, text_position(second)).await;
-        }
-        pause(cx, 5).await;
-        let (revealed, selection) = window
-            .read_with(cx, |view, _| view.reveal_state())
-            .unwrap_or_default();
-        checks.check(
-            &format!("clicking plain text reveals its block ({selection:?})"),
-            revealed == 1
-                && start
-                    .is_some_and(|start| selection.is_some_and(|selection| selection.head > start)),
-        );
         checks.finish(cx);
     })
     .detach();
