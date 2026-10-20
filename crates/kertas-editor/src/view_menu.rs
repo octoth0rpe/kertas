@@ -22,7 +22,6 @@ actions!(
         UseWideWidth,
         UseFullWidth,
         ToggleScrollbar,
-        ToggleFadeOtherBlocks,
         ToggleTypewriterScrolling,
         ToggleCheckSpelling,
     ]
@@ -76,12 +75,6 @@ pub fn init(cx: &mut App) {
             app_settings::set_or_report("scrollbar", show, cx);
         })
     });
-    cx.on_action(|_: &ToggleFadeOtherBlocks, cx| {
-        cx.defer(|cx| {
-            let fade = !app_settings::get(cx).fade_other_blocks;
-            app_settings::set_or_report("fade_other_blocks", fade, cx);
-        })
-    });
     cx.on_action(|_: &ToggleTypewriterScrolling, cx| {
         cx.defer(|cx| {
             let on = !app_settings::get(cx).typewriter_scrolling;
@@ -123,8 +116,6 @@ pub fn items(cx: &App) -> Vec<MenuItem> {
         MenuItem::action("Full Width", UseFullWidth).checked(width(TextWidth::Full)),
         MenuItem::separator(),
         MenuItem::action("Show Scrollbar", ToggleScrollbar).checked(settings.scrollbar),
-        MenuItem::action("Fade Other Blocks", ToggleFadeOtherBlocks)
-            .checked(settings.fade_other_blocks),
         MenuItem::action("Typewriter Scrolling", ToggleTypewriterScrolling)
             .checked(settings.typewriter_scrolling),
         MenuItem::action("Check Spelling", ToggleCheckSpelling).checked(settings.check_spelling),

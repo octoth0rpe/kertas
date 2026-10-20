@@ -765,7 +765,14 @@ fn smoke_settings(window: DocumentWindowHandle, cx: &mut App) {
 
         std::fs::write(&path, "theme = \"blue\"\nfont = 1\n").ok();
         let reported = wait_for(cx, APPLY, |cx| problems(cx) == 2).await;
-        checks.check("bad file reports 2 problems", reported);
+        let found = cx.update(|cx| {
+            cx.global::<AppSettings>()
+                .problems
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        });
+        checks.check(&format!("bad file reports 2 problems: {found:?}"), reported);
         // With no block being edited, Tab reaches the bar's dismiss button
         // and Space presses it.
         let shown = |cx: &mut AsyncApp| {

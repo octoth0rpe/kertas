@@ -157,11 +157,16 @@ fn stop_queue() -> Option<OwnedFd> {
 
 /// Sends on `changed` after each change to the paths `watched` gives,
 /// until the [`STOP`] event arrives or the receiver is gone.
+///
+/// A change is sent only once the paths are watched again, so a change
+/// made while they weren't, such as the rest of a write that truncated
+/// the file first, is seen by whoever reads the file on hearing of it.
 fn watch_until_stopped(
     watched: &dyn Fn() -> Vec<(PathBuf, u32)>,
     queue: i32,
     changed: &mpsc::UnboundedSender<()>,
 ) {
+    let mut pending = false;
     loop {
         let watched: Vec<_> = watched()
             .into_iter()
@@ -171,19 +176,26 @@ fn watch_until_stopped(
             .iter()
             .filter_map(|&(fd, flags)| fd.map(|fd| vnode_event(fd, flags)))
             .collect();
-        let mut event = vnode_event(0, 0);
-        // SAFETY: `changes` and `event` are valid for the lengths given,
-        // and the call blocks until an event arrives.
-        let received = unsafe {
+        // SAFETY: `changes` is valid for its length, and with no room for
+        // events the call only adds them, without waiting.
+        unsafe {
             libc::kevent(
                 queue,
                 changes.as_ptr(),
                 changes.len() as i32,
-                &mut event,
-                1,
+                std::ptr::null_mut(),
+                0,
                 std::ptr::null(),
             )
         };
+        if std::mem::take(&mut pending) && changed.unbounded_send(()).is_err() {
+            break;
+        }
+        let mut event = vnode_event(0, 0);
+        // SAFETY: `event` is valid for the one event asked for, and the
+        // call blocks until an event arrives.
+        let received =
+            unsafe { libc::kevent(queue, std::ptr::null(), 0, &mut event, 1, std::ptr::null()) };
         for fd in watched.iter().filter_map(|&(fd, _)| fd) {
             // SAFETY: `fd` was opened above and is closed once; closing it
             // also removes its kqueue registration.
@@ -196,9 +208,10 @@ fn watch_until_stopped(
             }
             break;
         }
-        if event.filter == libc::EVFILT_USER || changed.unbounded_send(()).is_err() {
+        if event.filter == libc::EVFILT_USER {
             break;
         }
+        pending = true;
     }
 }
 
