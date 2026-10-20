@@ -113,14 +113,42 @@ pub fn combine(bundled: Vec<Dictionary>, user: Vec<Dictionary>) -> Vec<Dictionar
 }
 
 /// The dictionary for `tag` among `dictionaries`: the one for exactly
-/// that language, or else for its language without the region.
+/// that language, or else for its language without the region. A bare
+/// language (`en`) with no dictionary of its own takes one of its regions:
+/// its home region (`fr-FR`, or `en-US`, Kertas's default language), or
+/// else the first by name. A tag with a region never takes another region.
 pub fn find<'a>(dictionaries: &'a [Dictionary], tag: &str) -> Option<&'a Dictionary> {
     let exact = |tag: &str| {
         dictionaries
             .iter()
             .find(|dictionary| dictionary.tag.eq_ignore_ascii_case(tag))
     };
-    exact(tag).or_else(|| exact(tag.split('-').next()?))
+    let language = tag.split('-').next()?;
+    exact(tag)
+        .or_else(|| exact(language))
+        .or_else(|| (language.len() == tag.len()).then(|| a_region_of(dictionaries, language))?)
+}
+
+/// A dictionary for one of `language`'s regions, its home region first.
+fn a_region_of<'a>(dictionaries: &'a [Dictionary], language: &str) -> Option<&'a Dictionary> {
+    let home = if language.eq_ignore_ascii_case("en") {
+        "US".to_owned()
+    } else {
+        language.to_ascii_uppercase()
+    };
+    let region = |dictionary: &Dictionary| {
+        let (of, region) = dictionary.tag.split_once('-')?;
+        of.eq_ignore_ascii_case(language)
+            .then(|| region.to_ascii_uppercase())
+    };
+    let regional = || {
+        dictionaries
+            .iter()
+            .filter(move |dictionary| region(dictionary).is_some())
+    };
+    regional()
+        .find(|dictionary| region(dictionary).as_deref() == Some(home.as_str()))
+        .or_else(|| regional().min_by_key(|dictionary| dictionary.name.to_lowercase()))
 }
 
 /// Whether `tag` is shaped like a BCP 47 language tag: a language of 2 to
@@ -258,6 +286,58 @@ mod tests {
         assert_eq!(find(&all, "EN-GB").unwrap().tag, "en-GB");
         assert!(find(&all, "en-AU").is_none());
         assert!(find(&all, "fr").is_none());
+    }
+
+    fn dictionary(tag: &str, name: &str) -> Dictionary {
+        Dictionary {
+            tag: tag.to_owned(),
+            name: name.to_owned(),
+            source: Source::Bundled { aff: "", dic: "" },
+        }
+    }
+
+    #[test]
+    fn a_bare_language_takes_one_of_its_regions() {
+        let all = combine(bundled(), Vec::new());
+        assert_eq!(
+            find(&all, "en").unwrap().tag,
+            "en-US",
+            "English's home is the US"
+        );
+        assert_eq!(find(&all, "EN").unwrap().tag, "en-US");
+        let gb = [dictionary("en-GB", "English (UK)")];
+        assert_eq!(find(&gb, "en").unwrap().tag, "en-GB", "with no US, another");
+
+        let french = [
+            dictionary("fr-CA", "French (Canada)"),
+            dictionary("fr-FR", "French (France)"),
+            dictionary("fr-BE", "French (Belgium)"),
+        ];
+        assert_eq!(find(&french, "fr").unwrap().tag, "fr-FR", "the home region");
+        let elsewhere = [
+            dictionary("pt-PT", "Portuguese (Portugal)"),
+            dictionary("pt-BR", "Portuguese (Brazil)"),
+        ];
+        assert_eq!(find(&elsewhere, "pt").unwrap().tag, "pt-PT");
+        let no_home = [
+            dictionary("fr-CA", "French (Canada)"),
+            dictionary("fr-BE", "French (Belgium)"),
+        ];
+        assert_eq!(
+            find(&no_home, "fr").unwrap().tag,
+            "fr-BE",
+            "else the first by name"
+        );
+
+        // The bare language's own dictionary still comes first, and a
+        // region never takes another.
+        let both = [
+            dictionary("fr-FR", "French (France)"),
+            dictionary("fr", "French"),
+        ];
+        assert_eq!(find(&both, "fr").unwrap().tag, "fr");
+        assert!(find(&french, "fr-CH").is_none());
+        assert!(find(&french, "frx").is_none());
     }
 
     #[test]
