@@ -40,6 +40,9 @@ multiple-versions = "allow"
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+# GPUI's test-support feature, which only the tests use, pins proptest to
+# a commit.
+allow-git = ["https://github.com/proptest-rs/proptest"]
 # GPUI is pinned to a Zed commit (Cargo.toml), and pins Zed's forks of a
 # few crates (e.g. font-kit) the same way.
 [sources.allow-org]
