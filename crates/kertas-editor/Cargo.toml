@@ -35,5 +35,12 @@ block2 = "0.6"
 # The NSWindow behind a GPUI window, to print as a sheet on it.
 raw-window-handle = "0.6"
 
+[dev-dependencies]
+# Headless windows and a test clock, for unit tests of the view.
+gpui = { workspace = true, features = ["test-support"] }
+# The real macOS text system, for tests that lay text out as the app does.
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+gpui_apple = { git = "https://github.com/zed-industries/zed", rev = "c66312b200d113694fca08c1d468669028a09a0e" }
+
 [lints]
 workspace = true
