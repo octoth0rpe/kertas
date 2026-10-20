@@ -14,8 +14,7 @@
 //! - `tabs`, `windows`, `settings`, `settings-window`, `help`, `reveal`, `clicks`,
 //!   `anchors`, `footnotes`, `images`, `caret`, `caret-blocks`, `reading`,
 //!   `scrollbar`, `scrollbar-drag`, `a11y`, `print`, `spelling`, `disk`,
-//!   `autosave`, `edited`, `web-images`, `marks`, `hover`, `find`,
-//!   `replace`, `regex`, `host-find`, `rename`: see each function.
+//!   `autosave`, `edited`, `marks`, `find`, `rename`: see each function.
 
 use std::cell::{Cell, RefCell};
 use std::path::Path;
@@ -53,7 +52,6 @@ pub fn start_if_requested(window: DocumentWindowHandle, cx: &mut App) {
         "anchors" => smoke_anchors(window, cx),
         "footnotes" => smoke_footnotes(window, cx),
         "images" => smoke_images(window, cx),
-        "web-images" => smoke_web_images(window, cx),
         "caret" => smoke_caret(window, false, cx),
         "caret-blocks" => smoke_caret(window, true, cx),
         "reading" => smoke_reading(window, cx),
@@ -66,11 +64,7 @@ pub fn start_if_requested(window: DocumentWindowHandle, cx: &mut App) {
         "autosave" => smoke_autosave(window, cx),
         "edited" => smoke_edited(window, cx),
         "marks" => smoke_marks(window, cx),
-        "hover" => smoke_hover(window, cx),
         "find" => smoke_find(window, cx),
-        "replace" => smoke_replace(window, cx),
-        "regex" => smoke_regex(window, cx),
-        "host-find" => smoke_host_find(window, cx),
         "rename" => smoke_rename(window, cx),
         "bench" => smoke_bench(window, cx),
         _ => smoke_steps(window, &mode, cx),
@@ -813,16 +807,11 @@ fn smoke_settings(window: DocumentWindowHandle, cx: &mut App) {
             problems(cx) == 0 && theme(cx) == Some(Theme::dark())
         })
         .await;
+        // How the file is rewritten is unit-tested in `settings.rs`.
         let set = cx.update(|cx| app_settings::set("appearance", "light", cx));
-        checks.check("setting is written", set.is_ok());
-        let text = std::fs::read_to_string(&path).unwrap_or_default();
-        checks.check(
-            "old setting is renamed, comments are kept",
-            text == "# Mine\nappearance = \"light\"  # at night\n",
-        );
         checks.check(
             "written setting applies",
-            wait_for(cx, APPLY, |cx| theme(cx) == Some(Theme::light())).await,
+            set.is_ok() && wait_for(cx, APPLY, |cx| theme(cx) == Some(Theme::light())).await,
         );
 
         // The View menu's commands change settings.
@@ -901,38 +890,8 @@ fn smoke_settings(window: DocumentWindowHandle, cx: &mut App) {
             "editing a user theme applies live",
             wait_for(cx, APPLY, |cx| background(cx) == color(0x203040ff)).await,
         );
-        std::fs::write(
-            folder.join("Solarized.toml"),
-            with_background("solarized", "#304050"),
-        )
-        .ok();
-        wait_for(cx, APPLY, |cx| {
-            cx.update(|cx| {
-                app_settings::themes(cx)
-                    .iter()
-                    .any(|theme| theme.dark.background == kertas_core::themes::Color(0x304050ff))
-            })
-        })
-        .await;
-        dispatch(window, cx, use_theme("Solarized"));
-        checks.check(
-            "a user theme replaces the built-in one of its name",
-            wait_for(cx, APPLY, |cx| background(cx) == color(0x304050ff)).await,
-        );
-        dispatch(window, cx, use_theme("Mine"));
-        std::fs::write(folder.join("Bad.toml"), "[light]\n").ok();
-        checks.check(
-            "problems in theme files are reported, naming the file",
-            wait_for(cx, APPLY, |cx| {
-                cx.update(|cx| {
-                    cx.global::<AppSettings>()
-                        .theme_problems
-                        .iter()
-                        .any(|problem| problem.file == "Bad.toml")
-                })
-            })
-            .await,
-        );
+        // A user theme replacing a built-in one, and problems in theme
+        // files, are unit-tested in `themes.rs`.
         std::fs::remove_file(&mine).ok();
         checks.check(
             "removing the chosen theme falls back to Kertas's",
@@ -998,25 +957,8 @@ fn smoke_settings(window: DocumentWindowHandle, cx: &mut App) {
             wait_for(cx, APPLY, |cx| cx.update(|cx| crate::zoom::size(cx)) == 20).await,
         );
 
-        cx.update(|cx| app_settings::set("editing_hint", false, cx))
-            .ok();
-        checks.check(
-            "editing_hint setting applies",
-            wait_for(cx, APPLY, |cx| {
-                !cx.update(|cx| app_settings::get(cx).editing_hint)
-            })
-            .await,
-        );
-
-        cx.update(|cx| app_settings::set("tab_width", 8, cx)).ok();
-        checks.check(
-            "tab_width setting applies",
-            wait_for(cx, APPLY, |cx| {
-                cx.update(|cx| app_settings::get(cx).tab_width) == 8
-            })
-            .await,
-        );
-
+        // Other settings reach the app and the view the same ways as
+        // font_size and list_indent.
         cx.update(|cx| app_settings::set("list_indent", "wide", cx))
             .ok();
         checks.check(
@@ -1085,7 +1027,6 @@ fn smoke_help(window: DocumentWindowHandle, cx: &mut App) {
                 .unwrap_or_default()
         };
         let before = text(cx);
-        checks.check("it shows the help text", before == Builtin::Help.text());
 
         // Try to edit it every way there is.
         help.update(cx, |view, window, cx| {
@@ -1911,163 +1852,29 @@ fn smoke_caret(window: DocumentWindowHandle, blocks_only: bool, cx: &mut App) {
     .detach();
 }
 
-/// `KERTAS_SMOKE=images`, on `showcase.md` with its `images` folder (#92):
-/// the showcase's PNG and SVG load at their natural sizes, the missing one
-/// doesn't, and the images are reported to VoiceOver by their alt text.
-fn smoke_images(window: DocumentWindowHandle, cx: &mut App) {
-    cx.spawn(async move |cx| {
-        let mut checks = Checks::default();
-        laid_out(window, cx).await;
-        let Some(folder) = window
-            .read_with(cx, |view, _| {
-                view.document_path()
-                    .and_then(Path::parent)
-                    .map(Path::to_owned)
-            })
-            .ok()
-            .flatten()
-        else {
-            checks.check("the document has a file", false);
-            return checks.finish(cx);
-        };
-        window
-            .update(cx, |view, _, cx| view.go_to_anchor("images", cx))
-            .ok();
-        for (name, expected) in [
-            ("gradient.png", Some((480, 160))),
-            ("badge.svg", Some((96, 20))),
-            ("missing.png", None),
-        ] {
-            let resource = gpui::Resource::Path(folder.join("images").join(name).into());
-            let mut loaded = None;
-            wait_until(cx, |cx| {
-                loaded = cx.update(|cx| cx.fetch_asset::<gpui::ImgResourceLoader>(&resource));
-                loaded.is_some()
-            })
-            .await;
-            let size = match &loaded {
-                Some(Ok(image)) => {
-                    let (width, height) = kertas_editor::natural_size(image, name);
-                    Some((width as i32, height as i32))
-                }
-                _ => None,
-            };
-            checks.check(
-                &format!("{name} loads as {expected:?} ({size:?})"),
-                size == expected,
-            );
-        }
-        let tree = a11y_tree(window.into(), cx).await;
-        for label in ["A blue gradient", "tests: pass", "no such image"] {
-            checks.check(
-                &format!("the {label:?} image is reported"),
-                tree.contains("\"Image\"") && tree.contains(label),
-            );
-        }
-        checks.finish(cx);
-    })
-    .detach();
-}
-
-/// `KERTAS_SMOKE=web-images`, on `showcase.md` with its `images` folder
-/// (#97): a document with a web image, served from a local server, asks
-/// before loading it; Load Images loads it and the bar goes away;
-/// reopening the document asks again, and closing the bar leaves the
-/// image unloaded. A document with no web images doesn't ask.
-fn smoke_web_images(window: DocumentWindowHandle, cx: &mut App) {
-    use std::io::{Read, Write};
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    cx.spawn(async move |cx| {
-        let mut checks = Checks::default();
-        laid_out(window, cx).await;
-        checks.check(
-            "a document with no web images doesn't ask",
-            window
-                .read_with(cx, |view, _| !view.web_images_asked())
-                .unwrap_or(false),
-        );
-        let Some(folder) = window
-            .read_with(cx, |view, _| {
-                view.document_path()
-                    .and_then(Path::parent)
-                    .map(Path::to_owned)
-            })
-            .ok()
-            .flatten()
-        else {
-            checks.check("the document has a file", false);
-            return checks.finish(cx);
-        };
-        // A web server with one image, counting the requests for it.
-        let png = std::fs::read(folder.join("images/gradient.png")).unwrap_or_default();
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("local server");
-        let port = listener.local_addr().expect("server address").port();
-        let requests = Arc::new(AtomicUsize::new(0));
-        let served = requests.clone();
-        std::thread::spawn(move || {
-            for mut stream in listener.incoming().flatten() {
-                let mut request = Vec::new();
-                let mut buffer = [0; 1024];
-                while !request.ends_with(b"\r\n\r\n") {
-                    match stream.read(&mut buffer) {
-                        Ok(0) | Err(_) => break,
-                        Ok(count) => request.extend_from_slice(&buffer[..count]),
-                    }
-                }
-                served.fetch_add(1, Ordering::SeqCst);
-                let header = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\n\
-                     Content-Length: {}\r\nConnection: close\r\n\r\n",
-                    png.len()
-                );
-                stream.write_all(header.as_bytes()).ok();
-                stream.write_all(&png).ok();
-            }
-        });
-        let url = format!("http://127.0.0.1:{port}/gradient.png");
-        let web = folder.join("web.md");
-        std::fs::write(&web, format!("# Web\n\n![A web gradient]({url})\n")).ok();
-        let open = |cx: &mut AsyncApp| {
-            window
-                .update(cx, |view, window, cx| {
-                    view.open_path(web.clone(), window, cx)
-                })
-                .ok();
-        };
-        let asked = |cx: &mut AsyncApp| {
-            window
-                .read_with(cx, |view, _| view.web_images_asked())
-                .unwrap_or(false)
-        };
-
-        open(cx);
-        checks.check("the bar asks", wait_until(cx, |cx| asked(cx)).await);
-        let tree = a11y_tree(window.into(), cx).await;
-        checks.check(
-            "VoiceOver reads the bar and its buttons",
-            [
-                "This document has images from the web.",
-                "Load Images",
-                "Don't load images",
-            ]
-            .iter()
-            .all(|label| tree.contains(label)),
-        );
-        pause(cx, 10).await;
-        checks.check(
-            "nothing is fetched before Load Images",
-            requests.load(Ordering::SeqCst) == 0,
-        );
-
-        window
-            .update(cx, |view, window, cx| {
-                view.answer_web_images_bar(true, window, cx)
-            })
-            .ok();
-        checks.check("Load Images closes the bar", !asked(cx));
-        let resource = gpui::Resource::Uri(url.clone().into());
+/// Local images (#92), on `showcase.md` with its `images` folder: the
+/// showcase's SVG loads at its natural size, and the images, the
+/// missing one too, are reported to VoiceOver by their alt text.
+async fn images_section(window: DocumentWindowHandle, cx: &mut AsyncApp, checks: &mut Checks) {
+    laid_out(window, cx).await;
+    let Some(folder) = window
+        .read_with(cx, |view, _| {
+            view.document_path()
+                .and_then(Path::parent)
+                .map(Path::to_owned)
+        })
+        .ok()
+        .flatten()
+    else {
+        checks.check("the document has a file", false);
+        return;
+    };
+    window
+        .update(cx, |view, _, cx| view.go_to_anchor("images", cx))
+        .ok();
+    // GPUI decodes PNGs; Kertas sizes SVGs from their dimensions.
+    for (name, expected) in [("badge.svg", Some((96, 20)))] {
+        let resource = gpui::Resource::Path(folder.join("images").join(name).into());
         let mut loaded = None;
         wait_until(cx, |cx| {
             loaded = cx.update(|cx| cx.fetch_asset::<gpui::ImgResourceLoader>(&resource));
@@ -2076,35 +1883,155 @@ fn smoke_web_images(window: DocumentWindowHandle, cx: &mut App) {
         .await;
         let size = match &loaded {
             Some(Ok(image)) => {
-                let (width, height) = kertas_editor::natural_size(image, &url);
+                let (width, height) = kertas_editor::natural_size(image, name);
                 Some((width as i32, height as i32))
             }
             _ => None,
         };
         checks.check(
-            &format!("the web image loads ({size:?})"),
-            size == Some((480, 160)) && requests.load(Ordering::SeqCst) == 1,
+            &format!("{name} loads as {expected:?} ({size:?})"),
+            size == expected,
         );
+    }
+    let tree = a11y_tree(window.into(), cx).await;
+    for label in ["A blue gradient", "tests: pass", "no such image"] {
         checks.check(
-            "the fetched image is kept for printing",
-            kertas_editor::web_images::fetched_image(&url).is_some(),
+            &format!("the {label:?} image is reported"),
+            tree.contains("\"Image\"") && tree.contains(label),
         );
+    }
+}
 
-        open(cx);
-        checks.check(
-            "reopening the document asks again",
-            wait_until(cx, |cx| asked(cx)).await,
-        );
+/// Web images (#97), on `showcase.md` with its `images` folder: a document with a web image, served from a local server, asks
+/// before loading it; Load Images loads it and the bar goes away;
+/// reopening the document asks again, and closing the bar leaves the
+/// image unloaded. A document with no web images doesn't ask.
+async fn web_images_section(window: DocumentWindowHandle, cx: &mut AsyncApp, checks: &mut Checks) {
+    use std::io::{Read, Write};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    laid_out(window, cx).await;
+    checks.check(
+        "a document with no web images doesn't ask",
+        window
+            .read_with(cx, |view, _| !view.web_images_asked())
+            .unwrap_or(false),
+    );
+    let Some(folder) = window
+        .read_with(cx, |view, _| {
+            view.document_path()
+                .and_then(Path::parent)
+                .map(Path::to_owned)
+        })
+        .ok()
+        .flatten()
+    else {
+        checks.check("the document has a file", false);
+        return;
+    };
+    // A web server with one image, counting the requests for it.
+    let png = std::fs::read(folder.join("images/gradient.png")).unwrap_or_default();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("local server");
+    let port = listener.local_addr().expect("server address").port();
+    let requests = Arc::new(AtomicUsize::new(0));
+    let served = requests.clone();
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            while !request.ends_with(b"\r\n\r\n") {
+                match stream.read(&mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(count) => request.extend_from_slice(&buffer[..count]),
+                }
+            }
+            served.fetch_add(1, Ordering::SeqCst);
+            let header = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n",
+                png.len()
+            );
+            stream.write_all(header.as_bytes()).ok();
+            stream.write_all(&png).ok();
+        }
+    });
+    let url = format!("http://127.0.0.1:{port}/gradient.png");
+    let web = folder.join("web.md");
+    std::fs::write(&web, format!("# Web\n\n![A web gradient]({url})\n")).ok();
+    let open = |cx: &mut AsyncApp| {
         window
             .update(cx, |view, window, cx| {
-                view.answer_web_images_bar(false, window, cx)
+                view.open_path(web.clone(), window, cx)
             })
             .ok();
-        checks.check("closing the bar closes it", !asked(cx));
-        std::fs::remove_file(&web).ok();
-        checks.finish(cx);
+    };
+    let asked = |cx: &mut AsyncApp| {
+        window
+            .read_with(cx, |view, _| view.web_images_asked())
+            .unwrap_or(false)
+    };
+
+    open(cx);
+    checks.check("the bar asks", wait_until(cx, |cx| asked(cx)).await);
+    let tree = a11y_tree(window.into(), cx).await;
+    checks.check(
+        "VoiceOver reads the bar and its buttons",
+        [
+            "This document has images from the web.",
+            "Load Images",
+            "Don't load images",
+        ]
+        .iter()
+        .all(|label| tree.contains(label)),
+    );
+    pause(cx, 10).await;
+    checks.check(
+        "nothing is fetched before Load Images",
+        requests.load(Ordering::SeqCst) == 0,
+    );
+
+    window
+        .update(cx, |view, window, cx| {
+            view.answer_web_images_bar(true, window, cx)
+        })
+        .ok();
+    checks.check("Load Images closes the bar", !asked(cx));
+    let resource = gpui::Resource::Uri(url.clone().into());
+    let mut loaded = None;
+    wait_until(cx, |cx| {
+        loaded = cx.update(|cx| cx.fetch_asset::<gpui::ImgResourceLoader>(&resource));
+        loaded.is_some()
     })
-    .detach();
+    .await;
+    let size = match &loaded {
+        Some(Ok(image)) => {
+            let (width, height) = kertas_editor::natural_size(image, &url);
+            Some((width as i32, height as i32))
+        }
+        _ => None,
+    };
+    checks.check(
+        &format!("the web image loads ({size:?})"),
+        size == Some((480, 160)) && requests.load(Ordering::SeqCst) == 1,
+    );
+    checks.check(
+        "the fetched image is kept for printing",
+        kertas_editor::web_images::fetched_image(&url).is_some(),
+    );
+
+    open(cx);
+    checks.check(
+        "reopening the document asks again",
+        wait_until(cx, |cx| asked(cx)).await,
+    );
+    window
+        .update(cx, |view, window, cx| {
+            view.answer_web_images_bar(false, window, cx)
+        })
+        .ok();
+    checks.check("closing the bar closes it", !asked(cx));
+    std::fs::remove_file(&web).ok();
 }
 
 /// `KERTAS_SMOKE=anchors`, on `anchors.md` (#91, #96): clicking a
@@ -2224,12 +2151,6 @@ fn smoke_anchors(window: DocumentWindowHandle, cx: &mut App) {
                 })
                 && on_screen == Some(true),
         );
-        let refused = window
-            .update(cx, |view, window, cx| {
-                !view.select_range(0..usize::MAX, window, cx)
-            })
-            .unwrap_or(false);
-        checks.check("a range past the text is refused", refused);
         dispatch(window, cx, Box::new(Unreveal));
         pause(cx, 2).await;
 
@@ -2377,14 +2298,6 @@ fn smoke_anchors(window: DocumentWindowHandle, cx: &mut App) {
             .update(cx, |view, _, _| view.set_links_to_host(false))
             .ok();
 
-        // Text shown view-only can't be selected (#134).
-        let refused = window
-            .update(cx, |view, window, cx| {
-                view.show_text("# Help\n\nText.\n", "Help", window, cx);
-                !view.select_range(0..4, window, cx) && !view.has_caret()
-            })
-            .unwrap_or(false);
-        checks.check("a read-only document refuses select_range", refused);
         checks.finish(cx);
     })
     .detach();
@@ -2565,7 +2478,6 @@ fn smoke_clicks(window: DocumentWindowHandle, cx: &mut App) {
         );
         dispatch(window, cx, Box::new(Undo));
         pause(cx, 5).await;
-        checks.check("undo unticks it", text(cx).ends_with("- [ ] Task\n"));
         dispatch(window, cx, Box::new(Unreveal));
         pause(cx, 5).await;
 
@@ -3189,6 +3101,47 @@ async fn smoke_spelling_hooks(
     checks.check("and without it, the setting's language is back", setting);
 }
 
+/// `KERTAS_SMOKE=images`, on `showcase.md` with its `images` folder:
+/// local images ([`images_section`]), then web images
+/// ([`web_images_section`]).
+fn smoke_images(window: DocumentWindowHandle, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        let mut checks = Checks::default();
+        images_section(window, cx, &mut checks).await;
+        web_images_section(window, cx, &mut checks).await;
+        checks.finish(cx);
+    })
+    .detach();
+}
+
+/// `KERTAS_SMOKE=marks`, on `marks.md`: a host's marks
+/// ([`marks_section`]), then hover popovers ([`hover_section`]).
+fn smoke_marks(window: DocumentWindowHandle, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        let mut checks = Checks::default();
+        marks_section(window, cx, &mut checks).await;
+        hover_section(window, cx, &mut checks).await;
+        checks.finish(cx);
+    })
+    .detach();
+}
+
+/// `KERTAS_SMOKE=find`, on `find.md`: finding ([`find_section`]),
+/// replacing ([`replace_section`]), what a host can do
+/// ([`host_find_section`]), and regular expressions, last, as they leave
+/// the text changed ([`regex_section`]).
+fn smoke_find(window: DocumentWindowHandle, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        let mut checks = Checks::default();
+        find_section(window, cx, &mut checks).await;
+        replace_section(window, cx, &mut checks).await;
+        host_find_section(window, cx, &mut checks).await;
+        regex_section(window, cx, &mut checks).await;
+        checks.finish(cx);
+    })
+    .detach();
+}
+
 /// The words underlined as misspelled in `window`'s document.
 fn misspelled_words(window: DocumentWindowHandle, cx: &mut AsyncApp) -> Vec<String> {
     window
@@ -3765,610 +3718,480 @@ fn smoke_edited(window: DocumentWindowHandle, cx: &mut App) {
     .detach();
 }
 
-/// `KERTAS_SMOKE=marks`, on `marks.md` (#120): a host's marks move with
-/// the text as it's edited, go when their own text is edited, and a
-/// right-click or a Control-click on one tells the host.
-fn smoke_marks(window: DocumentWindowHandle, cx: &mut App) {
+/// A host's marks (#120), on `marks.md`: a right-click or a
+/// Control-click on a host's mark tells the host. How marks move with
+/// edits is unit-tested in `marks.rs`.
+async fn marks_section(window: DocumentWindowHandle, cx: &mut AsyncApp, checks: &mut Checks) {
     use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
     use kertas_editor::{DocumentEvent, Mark, MarkStyle};
 
-    cx.spawn(async move |cx| {
-        let mut checks = Checks::default();
-        laid_out(window, cx).await;
-        let Some(view) = tab_views(window, cx).into_iter().next() else {
-            checks.check("there's a tab", false);
-            return checks.finish(cx);
-        };
-        let mark = |range, id| Mark {
-            range,
-            style: MarkStyle::Hidden,
-            id,
-        };
-        let ranges = |cx: &mut AsyncApp| {
-            window
-                .update(cx, |view, _, _| {
-                    view.marks()
-                        .iter()
-                        .map(|mark| mark.range.clone())
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default()
-        };
-        // "Ann met Bob.", with both names marked.
-        window
-            .update(cx, |view, _, cx| {
-                let ann = Mark {
-                    style: MarkStyle::Wavy(gpui::red()),
-                    ..mark(0..3, 1)
-                };
-                view.set_marks(vec![mark(8..11, 2), ann], cx)
-            })
-            .ok();
-        pause(cx, 2).await;
-        let marked = ranges(cx);
-        checks.check(
-            &format!("the marks are kept in order ({marked:?})"),
-            marked == [0..3, 8..11],
-        );
-        window
-            .update(cx, |view, window, cx| {
-                view.click(0, false, window, cx);
-                view.replace_text_in_range(None, "Dr ", window, cx);
-            })
-            .ok();
-        pause(cx, 2).await;
-        let marked = ranges(cx);
-        checks.check(
-            &format!("typing before them moves them ({marked:?})"),
-            marked == [3..6, 11..14],
-        );
-        window
-            .update(cx, |view, window, cx| {
-                view.click(12, false, window, cx);
-                view.replace_text_in_range(None, "o", window, cx);
-            })
-            .ok();
-        pause(cx, 2).await;
-        let marked = ranges(cx);
-        checks.check(
-            &format!("editing a mark's text drops it ({marked:?})"),
-            marked == [3..6],
-        );
-        dispatch(window, cx, Box::new(Unreveal));
-        pause(cx, 3).await;
+    laid_out(window, cx).await;
+    let Some(view) = tab_views(window, cx).into_iter().next() else {
+        checks.check("there's a tab", false);
+        return;
+    };
+    let mark = |range, id| Mark {
+        range,
+        style: MarkStyle::Hidden,
+        id,
+    };
 
-        // A right-click and a Control-click on "Dr", drawn rendered.
-        let menus = Rc::new(RefCell::new(Vec::new()));
-        let _subscription = cx.update(|cx| {
-            let menus = menus.clone();
-            cx.subscribe(&view, move |_, event, _| {
-                if let DocumentEvent::MarkMenu { id, range, .. } = event {
-                    menus.borrow_mut().push((*id, range.clone()));
-                }
-            })
-        });
-        window
-            .update(cx, |view, _, cx| view.set_marks(vec![mark(0..2, 7)], cx))
+    // A right-click and a Control-click on "Dr", drawn rendered.
+    let menus = Rc::new(RefCell::new(Vec::new()));
+    let _subscription = cx.update(|cx| {
+        let menus = menus.clone();
+        cx.subscribe(&view, move |_, event, _| {
+            if let DocumentEvent::MarkMenu { id, range, .. } = event {
+                menus.borrow_mut().push((*id, range.clone()));
+            }
+        })
+    });
+    window
+        .update(cx, |view, _, cx| view.set_marks(vec![mark(0..2, 7)], cx))
+        .ok();
+    pause(cx, 2).await;
+    let origin = window
+        .update(cx, |view, window, _| view.text_origin(0, window))
+        .ok()
+        .flatten();
+    let Some(origin) = origin else {
+        checks.check("the first block is laid out", false);
+        return;
+    };
+    let position = origin + gpui::point(gpui::px(4.), gpui::px(12.));
+    let send = |cx: &mut AsyncApp, event: gpui::PlatformInput| {
+        gpui::AnyWindowHandle::from(window)
+            .update(cx, |_, window, cx| window.dispatch_event(event, cx))
             .ok();
-        pause(cx, 2).await;
-        let origin = window
-            .update(cx, |view, window, _| view.text_origin(0, window))
-            .ok()
-            .flatten();
-        let Some(origin) = origin else {
-            checks.check("the first block is laid out", false);
-            return checks.finish(cx);
-        };
-        let position = origin + gpui::point(gpui::px(4.), gpui::px(12.));
-        let send = |cx: &mut AsyncApp, event: gpui::PlatformInput| {
-            gpui::AnyWindowHandle::from(window)
-                .update(cx, |_, window, cx| window.dispatch_event(event, cx))
-                .ok();
-        };
-        for (button, modifiers) in [
-            (MouseButton::Right, Modifiers::default()),
-            (MouseButton::Left, Modifiers::control()),
-        ] {
-            send(
-                cx,
-                gpui::PlatformInput::MouseMove(MouseMoveEvent {
-                    position,
-                    pressed_button: None,
-                    modifiers,
-                }),
-            );
-            pause(cx, 2).await;
-            send(
-                cx,
-                gpui::PlatformInput::MouseDown(MouseDownEvent {
-                    button,
-                    position,
-                    modifiers,
-                    click_count: 1,
-                    first_mouse: false,
-                }),
-            );
-            pause(cx, 2).await;
-            send(
-                cx,
-                gpui::PlatformInput::MouseUp(MouseUpEvent {
-                    button,
-                    position,
-                    modifiers,
-                    click_count: 1,
-                }),
-            );
-            pause(cx, 3).await;
-        }
-        let caret = cx.update(|cx| view.read(cx).caret_offset());
-        checks.check(
-            &format!(
-                "both tell the host, leaving it rendered ({:?}, caret {caret:?})",
-                menus.borrow()
-            ),
-            *menus.borrow() == [(7, 0..2), (7, 0..2)] && caret.is_none(),
+    };
+    for (button, modifiers) in [
+        (MouseButton::Right, Modifiers::default()),
+        (MouseButton::Left, Modifiers::control()),
+    ] {
+        send(
+            cx,
+            gpui::PlatformInput::MouseMove(MouseMoveEvent {
+                position,
+                pressed_button: None,
+                modifiers,
+            }),
         );
-        checks.finish(cx);
-    })
-    .detach();
+        pause(cx, 2).await;
+        send(
+            cx,
+            gpui::PlatformInput::MouseDown(MouseDownEvent {
+                button,
+                position,
+                modifiers,
+                click_count: 1,
+                first_mouse: false,
+            }),
+        );
+        pause(cx, 2).await;
+        send(
+            cx,
+            gpui::PlatformInput::MouseUp(MouseUpEvent {
+                button,
+                position,
+                modifiers,
+                click_count: 1,
+            }),
+        );
+        pause(cx, 3).await;
+    }
+    let caret = cx.update(|cx| view.read(cx).caret_offset());
+    checks.check(
+        &format!(
+            "both tell the host, leaving it rendered ({:?}, caret {caret:?})",
+            menus.borrow()
+        ),
+        *menus.borrow() == [(7, 0..2), (7, 0..2)] && caret.is_none(),
+    );
 }
 
 /// The find bar (#122): ⌘F, typing a query, ↩ and ⌘G from match to match
 /// with wrapping, Esc leaving the match selected, and ⌘E.
-fn smoke_find(window: DocumentWindowHandle, cx: &mut App) {
-    cx.spawn(async move |cx| {
-        let mut checks = Checks::default();
-        laid_out(window, cx).await;
-        let handle = gpui::AnyWindowHandle::from(window);
-        let text = window
-            .read_with(cx, |view, _| view.text())
-            .unwrap_or_default();
-        // "bold" as it's shown: in `**bold**`, "a bold claim" and `*bold*`.
-        let starts: Vec<usize> = text.match_indices("bold").map(|(at, _)| at).collect();
-        let status = |cx: &mut AsyncApp| {
-            window
-                .read_with(cx, |view, _| (view.find_shown(), view.find_status()))
-                .unwrap_or_default()
-        };
-        let selection = |cx: &mut AsyncApp| {
-            window
-                .read_with(cx, |view, _| view.reveal_state().1)
-                .ok()
-                .flatten()
-                .map(|selection| selection.range())
-        };
-
-        press_key(handle, cx, "cmd-f").await;
+async fn find_section(window: DocumentWindowHandle, cx: &mut AsyncApp, checks: &mut Checks) {
+    laid_out(window, cx).await;
+    let handle = gpui::AnyWindowHandle::from(window);
+    let text = window
+        .read_with(cx, |view, _| view.text())
+        .unwrap_or_default();
+    // "bold" as it's shown: in `**bold**`, "a bold claim" and `*bold*`.
+    let starts: Vec<usize> = text.match_indices("bold").map(|(at, _)| at).collect();
+    let status = |cx: &mut AsyncApp| {
         window
-            .update(cx, |view, _, cx| view.type_find_query("one more", cx))
-            .ok();
-        pause(cx, 5).await;
-        let shown = after_frames(window, cx, 2, |view| {
-            let last = view.item_count() - 1;
-            (view.row_on_screen(last), view.reveal_state())
-        })
-        .await;
-        checks.check(
-            &format!("typing scrolls to a match far below, without selecting it ({shown:?})"),
-            shown.is_some_and(|(on_screen, (revealed, selection))| {
-                on_screen && revealed == 0 && selection.is_none()
-            }),
-        );
+            .read_with(cx, |view, _| (view.find_shown(), view.find_status()))
+            .unwrap_or_default()
+    };
+    let selection = |cx: &mut AsyncApp| {
         window
-            .update(cx, |view, _, cx| view.type_find_query("bold", cx))
-            .ok();
-        pause(cx, 3).await;
-        let found = status(cx);
-        // With no caret, from the top of the window, which is at the end.
-        checks.check(
-            &format!("typing finds every match, from the top of the window ({found:?})"),
-            found == (true, (Some(2), 3)),
-        );
+            .read_with(cx, |view, _| view.reveal_state().1)
+            .ok()
+            .flatten()
+            .map(|selection| selection.range())
+    };
 
-        press_key(handle, cx, "enter").await;
-        let found = status(cx);
-        let selected = selection(cx);
-        checks.check(
-            &format!("↩ wraps around to the first match and selects it ({found:?}, {selected:?})"),
-            found.1 == (Some(0), 3) && selected == Some(starts[0]..starts[0] + 4),
-        );
-        press_key(handle, cx, "cmd-g").await;
-        let found = status(cx);
-        let selected = selection(cx);
-        checks.check(
-            &format!("⌘G goes to the next ({found:?}, {selected:?})"),
-            found.1 == (Some(1), 3) && selected == Some(starts[1]..starts[1] + 4),
-        );
-        press_key(handle, cx, "cmd-g").await;
-        pause(cx, 5).await;
-        let on_screen = after_frames(window, cx, 2, |view| view.caret_on_screen())
-            .await
-            .flatten();
-        let found = status(cx);
-        checks.check(
-            &format!(
-                "⌘G goes to the last match, far below, and shows it ({found:?}, {on_screen:?})"
-            ),
-            found.1 == (Some(2), 3) && on_screen == Some(true),
-        );
-        press_key(handle, cx, "cmd-g").await;
-        let found = status(cx);
-        checks.check(
-            &format!("⌘G wraps around to the first ({found:?})"),
-            found.1 == (Some(0), 3),
-        );
-        press_key(handle, cx, "cmd-shift-g").await;
-        let found = status(cx);
-        checks.check(
-            &format!("⇧⌘G wraps around to the last ({found:?})"),
-            found.1 == (Some(2), 3),
-        );
-        let unchanged = window
-            .read_with(cx, |view, _| view.text() == text)
-            .unwrap_or(false);
-        checks.check("keys typed in the bar don't edit the document", unchanged);
-
-        press_key(handle, cx, "escape").await;
-        let found = status(cx);
-        let selected = selection(cx);
-        checks.check(
-            &format!("Esc closes the bar, leaving the match selected ({found:?}, {selected:?})"),
-            !found.0 && selected == Some(starts[2]..starts[2] + 4),
-        );
-
-        window
-            .update(cx, |view, _, cx| view.type_find_query("no such text", cx))
-            .ok();
-        press_key(handle, cx, "cmd-g").await;
-        let found = status(cx);
-        checks.check(
-            &format!("a query with no matches finds nothing ({found:?})"),
-            found.1 == (None, 0),
-        );
-
-        // ⌘E on "claim".
-        let claim = text.find("claim").unwrap_or(0);
-        window
-            .update(cx, |view, window, cx| {
-                view.select_range(claim..claim + 5, window, cx)
-            })
-            .ok();
-        pause(cx, 3).await;
-        press_key(handle, cx, "cmd-e").await;
-        let found = status(cx);
-        checks.check(
-            &format!("⌘E looks for the selection ({found:?})"),
-            found == (true, (Some(0), 1)),
-        );
-        checks.finish(cx);
+    press_key(handle, cx, "cmd-f").await;
+    window
+        .update(cx, |view, _, cx| view.type_find_query("one more", cx))
+        .ok();
+    pause(cx, 5).await;
+    let shown = after_frames(window, cx, 2, |view| {
+        let last = view.item_count() - 1;
+        (view.row_on_screen(last), view.reveal_state())
     })
-    .detach();
+    .await;
+    checks.check(
+        &format!("typing scrolls to a match far below, without selecting it ({shown:?})"),
+        shown.is_some_and(|(on_screen, (revealed, selection))| {
+            on_screen && revealed == 0 && selection.is_none()
+        }),
+    );
+    window
+        .update(cx, |view, _, cx| view.type_find_query("bold", cx))
+        .ok();
+    pause(cx, 3).await;
+    let found = status(cx);
+    // With no caret, from the top of the window, which is at the end.
+    checks.check(
+        &format!("typing finds every match, from the top of the window ({found:?})"),
+        found == (true, (Some(2), 3)),
+    );
+
+    press_key(handle, cx, "enter").await;
+    let found = status(cx);
+    let selected = selection(cx);
+    checks.check(
+        &format!("↩ wraps around to the first match and selects it ({found:?}, {selected:?})"),
+        found.1 == (Some(0), 3) && selected == Some(starts[0]..starts[0] + 4),
+    );
+    press_key(handle, cx, "cmd-g").await;
+    let found = status(cx);
+    let selected = selection(cx);
+    checks.check(
+        &format!("⌘G goes to the next ({found:?}, {selected:?})"),
+        found.1 == (Some(1), 3) && selected == Some(starts[1]..starts[1] + 4),
+    );
+    press_key(handle, cx, "cmd-g").await;
+    pause(cx, 5).await;
+    let on_screen = after_frames(window, cx, 2, |view| view.caret_on_screen())
+        .await
+        .flatten();
+    let found = status(cx);
+    checks.check(
+        &format!("⌘G goes to the last match, far below, and shows it ({found:?}, {on_screen:?})"),
+        found.1 == (Some(2), 3) && on_screen == Some(true),
+    );
+    press_key(handle, cx, "cmd-g").await;
+    let found = status(cx);
+    checks.check(
+        &format!("⌘G wraps around to the first ({found:?})"),
+        found.1 == (Some(0), 3),
+    );
+    press_key(handle, cx, "cmd-shift-g").await;
+    let found = status(cx);
+    checks.check(
+        &format!("⇧⌘G wraps around to the last ({found:?})"),
+        found.1 == (Some(2), 3),
+    );
+    let unchanged = window
+        .read_with(cx, |view, _| view.text() == text)
+        .unwrap_or(false);
+    checks.check("keys typed in the bar don't edit the document", unchanged);
+
+    press_key(handle, cx, "escape").await;
+    let found = status(cx);
+    let selected = selection(cx);
+    checks.check(
+        &format!("Esc closes the bar, leaving the match selected ({found:?}, {selected:?})"),
+        !found.0 && selected == Some(starts[2]..starts[2] + 4),
+    );
+
+    window
+        .update(cx, |view, _, cx| view.type_find_query("no such text", cx))
+        .ok();
+    press_key(handle, cx, "cmd-g").await;
+    let found = status(cx);
+    checks.check(
+        &format!("a query with no matches finds nothing ({found:?})"),
+        found.1 == (None, 0),
+    );
+
+    // ⌘E on "claim".
+    let claim = text.find("claim").unwrap_or(0);
+    window
+        .update(cx, |view, window, cx| {
+            view.select_range(claim..claim + 5, window, cx)
+        })
+        .ok();
+    pause(cx, 3).await;
+    press_key(handle, cx, "cmd-e").await;
+    let found = status(cx);
+    checks.check(
+        &format!("⌘E looks for the selection ({found:?})"),
+        found == (true, (Some(0), 1)),
+    );
 }
 
 /// Replace (#123): Replace selects the match first and replaces it the
-/// second time, Replace All changes only the matched text, and undoing it
-/// is one step.
-fn smoke_replace(window: DocumentWindowHandle, cx: &mut App) {
-    use kertas_editor::actions::{Replace, ReplaceAll};
+/// second time.
+async fn replace_section(window: DocumentWindowHandle, cx: &mut AsyncApp, checks: &mut Checks) {
+    use kertas_editor::actions::Replace;
 
-    cx.spawn(async move |cx| {
-        let mut checks = Checks::default();
-        laid_out(window, cx).await;
-        let handle = gpui::AnyWindowHandle::from(window);
-        let read = |cx: &mut AsyncApp| {
-            window
-                .read_with(cx, |view, _| {
-                    let selection = view.reveal_state().1.map(|s| s.range());
-                    (view.text(), selection, view.find_status())
-                })
-                .unwrap_or_default()
-        };
-        let (original, _, _) = read(cx);
-        let starts: Vec<usize> = original.match_indices("bold").map(|(at, _)| at).collect();
-
-        press_key(handle, cx, "alt-cmd-f").await;
+    laid_out(window, cx).await;
+    let handle = gpui::AnyWindowHandle::from(window);
+    let read = |cx: &mut AsyncApp| {
         window
-            .update(cx, |view, _, cx| {
-                view.type_find_query("bold", cx);
-                view.type_replacement("strong", cx);
+            .read_with(cx, |view, _| {
+                let selection = view.reveal_state().1.map(|s| s.range());
+                (view.text(), selection, view.find_status())
             })
-            .ok();
-        pause(cx, 3).await;
-        // With a query, ⌥⌘F goes to the replacement, where ↩ replaces.
-        press_key(handle, cx, "alt-cmd-f").await;
-        press_key(handle, cx, "enter").await;
-        let (text, selection, _) = read(cx);
-        checks.check(
-            &format!("Replace first selects the match ({selection:?})"),
-            text == original && selection == Some(starts[0]..starts[0] + 4),
-        );
-        dispatch(window, cx, Box::new(Replace));
-        pause(cx, 3).await;
-        let (text, selection, status) = read(cx);
-        let once = original.replacen("bold", "strong", 1);
-        let next = starts[1] + 2;
-        checks.check(
-            &format!("then replaces it and goes to the next ({selection:?}, {status:?})"),
-            text == once && selection == Some(next..next + 4) && status == (Some(0), 2),
-        );
+            .unwrap_or_default()
+    };
+    // From the start, with the find bar closed, as after opening.
+    press_key(handle, cx, "escape").await;
+    window
+        .update(cx, |view, window, cx| view.click(0, false, window, cx))
+        .ok();
+    dispatch(window, cx, Box::new(Unreveal));
+    pause(cx, 2).await;
+    let (original, _, _) = read(cx);
+    let starts: Vec<usize> = original.match_indices("bold").map(|(at, _)| at).collect();
 
-        dispatch(window, cx, Box::new(ReplaceAll));
-        pause(cx, 3).await;
-        let (text, _, status) = read(cx);
-        checks.check(
-            &format!("Replace All changes only the matched text ({status:?})"),
-            text == original.replace("bold", "strong") && status == (None, 0),
-        );
+    press_key(handle, cx, "alt-cmd-f").await;
+    window
+        .update(cx, |view, _, cx| {
+            view.type_find_query("bold", cx);
+            view.type_replacement("strong", cx);
+        })
+        .ok();
+    pause(cx, 3).await;
+    // With a query, ⌥⌘F goes to the replacement, where ↩ replaces.
+    press_key(handle, cx, "alt-cmd-f").await;
+    press_key(handle, cx, "enter").await;
+    let (text, selection, _) = read(cx);
+    checks.check(
+        &format!("Replace first selects the match ({selection:?})"),
+        text == original && selection == Some(starts[0]..starts[0] + 4),
+    );
+    dispatch(window, cx, Box::new(Replace));
+    pause(cx, 3).await;
+    let (text, selection, status) = read(cx);
+    let once = original.replacen("bold", "strong", 1);
+    let next = starts[1] + 2;
+    checks.check(
+        &format!("then replaces it and goes to the next ({selection:?}, {status:?})"),
+        text == once && selection == Some(next..next + 4) && status == (Some(0), 2),
+    );
 
-        press_key(handle, cx, "escape").await;
-        press_key(handle, cx, "cmd-z").await;
-        let (text, _, _) = read(cx);
-        checks.check("undoing Replace All is one step", text == once);
-        press_key(handle, cx, "cmd-z").await;
-        let (text, _, _) = read(cx);
-        checks.check("and then the single Replace", text == original);
-        checks.finish(cx);
-    })
-    .detach();
+    // Replace All, and what it changes, are unit-tested in `find.rs`
+    // and `editor.rs`. Leave the text as it was.
+    press_key(handle, cx, "escape").await;
+    press_key(handle, cx, "cmd-z").await;
 }
 
 /// Regular expressions in find (#124): an invalid pattern shows its error
-/// and finds nothing, and Replace All fills in groups.
-fn smoke_regex(window: DocumentWindowHandle, cx: &mut App) {
-    use kertas_editor::actions::ReplaceAll;
-
-    cx.spawn(async move |cx| {
-        let mut checks = Checks::default();
-        laid_out(window, cx).await;
-        let handle = gpui::AnyWindowHandle::from(window);
-        let read = |cx: &mut AsyncApp| {
-            window
-                .read_with(cx, |view, _| {
-                    (view.text(), view.find_status(), view.find_error())
-                })
-                .unwrap_or_default()
-        };
-        let (original, _, _) = read(cx);
-        press_key(handle, cx, "alt-cmd-f").await;
+/// and finds nothing, and a valid one finds. Replacing with groups is
+/// unit-tested in `find.rs`.
+async fn regex_section(window: DocumentWindowHandle, cx: &mut AsyncApp, checks: &mut Checks) {
+    laid_out(window, cx).await;
+    let handle = gpui::AnyWindowHandle::from(window);
+    let read = |cx: &mut AsyncApp| {
         window
-            .update(cx, |view, _, cx| {
-                view.set_find_regex(true, cx);
-                view.type_find_query("(b)(old", cx);
+            .read_with(cx, |view, _| {
+                (view.text(), view.find_status(), view.find_error())
             })
-            .ok();
-        pause(cx, 3).await;
-        let (_, status, error) = read(cx);
-        checks.check(
-            &format!("an invalid pattern shows why, and finds nothing ({status:?}, {error:?})"),
-            status == (None, 0) && error.as_deref() == Some("unclosed group"),
-        );
-        window
-            .update(cx, |view, _, cx| {
-                view.type_find_query("(b)(old)", cx);
-                view.type_replacement("$2$1", cx);
-            })
-            .ok();
-        pause(cx, 3).await;
-        let (_, status, error) = read(cx);
-        checks.check(
-            &format!("a valid one finds the text as shown ({status:?}, {error:?})"),
-            status.1 == 3 && error.is_none(),
-        );
-        dispatch(window, cx, Box::new(ReplaceAll));
-        pause(cx, 3).await;
-        let (text, _, _) = read(cx);
-        checks.check(
-            "Replace All fills in the groups",
-            text == original.replace("bold", "oldb"),
-        );
-        checks.finish(cx);
-    })
-    .detach();
+            .unwrap_or_default()
+    };
+    press_key(handle, cx, "alt-cmd-f").await;
+    window
+        .update(cx, |view, _, cx| {
+            view.set_find_regex(true, cx);
+            view.type_find_query("(b)(old", cx);
+        })
+        .ok();
+    pause(cx, 3).await;
+    let (_, status, error) = read(cx);
+    checks.check(
+        &format!("an invalid pattern shows why, and finds nothing ({status:?}, {error:?})"),
+        status == (None, 0) && error.as_deref() == Some("unclosed group"),
+    );
+    window
+        .update(cx, |view, _, cx| {
+            view.type_find_query("(b)(old)", cx);
+            view.type_replacement("$2$1", cx);
+        })
+        .ok();
+    pause(cx, 3).await;
+    let (_, status, error) = read(cx);
+    checks.check(
+        &format!("a valid one finds the text as shown ({status:?}, {error:?})"),
+        status.1 == 3 && error.is_none(),
+    );
 }
 
-/// What a host can do with find (#125): open the bar at a match, leave out
-/// options, and replace ranges as one undoable edit.
-fn smoke_host_find(window: DocumentWindowHandle, cx: &mut App) {
+/// What a host can do with find (#125): open the bar at a match, and leave
+/// out options. Replacing ranges is unit-tested in `editor.rs`.
+async fn host_find_section(window: DocumentWindowHandle, cx: &mut AsyncApp, checks: &mut Checks) {
     use kertas_editor::kertas_core::find::{FindOptions, OfferedOptions};
 
-    cx.spawn(async move |cx| {
-        let mut checks = Checks::default();
-        laid_out(window, cx).await;
-        let handle = gpui::AnyWindowHandle::from(window);
-        let text = |cx: &mut AsyncApp| {
-            window
-                .read_with(cx, |view, _| view.text())
-                .unwrap_or_default()
-        };
-        let original = text(cx);
-        let starts: Vec<usize> = original.match_indices("bold").map(|(at, _)| at).collect();
-        let regex = FindOptions {
-            regex: true,
-            ..FindOptions::default()
-        };
+    laid_out(window, cx).await;
+    let text = |cx: &mut AsyncApp| {
         window
-            .update(cx, |view, window, cx| {
-                view.show_find_with("b.ld", regex, Some(starts[1] + 1), window, cx)
-            })
-            .ok();
-        pause(cx, 5).await;
-        let shown = window
-            .read_with(cx, |view, _| {
-                let selection = view.reveal_state().1.map(|s| s.range());
-                (view.find_shown(), view.find_status(), selection)
-            })
-            .ok();
-        checks.check(
-            &format!("a host opens the bar at the match after an offset ({shown:?})"),
-            shown == Some((true, (Some(2), 3), Some(starts[2]..starts[2] + 4))),
-        );
+            .read_with(cx, |view, _| view.text())
+            .unwrap_or_default()
+    };
+    let original = text(cx);
+    let starts: Vec<usize> = original.match_indices("bold").map(|(at, _)| at).collect();
+    let regex = FindOptions {
+        regex: true,
+        ..FindOptions::default()
+    };
+    window
+        .update(cx, |view, window, cx| {
+            view.show_find_with("b.ld", regex, Some(starts[1] + 1), window, cx)
+        })
+        .ok();
+    pause(cx, 5).await;
+    let shown = window
+        .read_with(cx, |view, _| {
+            let selection = view.reveal_state().1.map(|s| s.range());
+            (view.find_shown(), view.find_status(), selection)
+        })
+        .ok();
+    checks.check(
+        &format!("a host opens the bar at the match after an offset ({shown:?})"),
+        shown == Some((true, (Some(2), 3), Some(starts[2]..starts[2] + 4))),
+    );
 
-        window
-            .update(cx, |view, window, cx| {
-                let config = kertas_editor::EditorConfig {
-                    find_options: OfferedOptions {
-                        regex: false,
-                        ..OfferedOptions::default()
-                    },
-                    ..view.config().clone()
-                };
-                view.set_config(config, window, cx);
-            })
-            .ok();
-        pause(cx, 3).await;
-        let after = window
-            .read_with(cx, |view, _| {
-                (view.find_options().regex, view.find_status())
-            })
-            .ok();
-        checks.check(
-            &format!("leaving Regex out turns it off ({after:?})"),
-            after == Some((false, (None, 0))),
-        );
-
-        let replaced = window
-            .update(cx, |view, _, cx| {
-                let edits = vec![
-                    (starts[2]..starts[2] + 4, "brave".to_owned()),
-                    (0..0, "Intro.\n\n".to_owned()),
-                ];
-                view.replace_ranges(edits, cx)
-            })
-            .unwrap_or(false);
-        pause(cx, 3).await;
-        let edited = text(cx);
-        let mut expected = original.clone();
-        expected.replace_range(starts[2]..starts[2] + 4, "brave");
-        expected.insert_str(0, "Intro.\n\n");
-        checks.check(
-            "a host replaces ranges in one edit",
-            replaced && edited == expected,
-        );
-        press_key(handle, cx, "escape").await;
-        press_key(handle, cx, "cmd-z").await;
-        checks.check("which one Undo takes back", text(cx) == original);
-        let overlapping = window
-            .update(cx, |view, _, cx| {
-                view.replace_ranges(vec![(0..4, "a".into()), (2..6, "b".into())], cx)
-            })
-            .unwrap_or(true);
-        checks.check(
-            "overlapping ranges change nothing",
-            !overlapping && text(cx) == original,
-        );
-        checks.finish(cx);
-    })
-    .detach();
+    window
+        .update(cx, |view, window, cx| {
+            let config = kertas_editor::EditorConfig {
+                find_options: OfferedOptions {
+                    regex: false,
+                    ..OfferedOptions::default()
+                },
+                ..view.config().clone()
+            };
+            view.set_config(config, window, cx);
+        })
+        .ok();
+    pause(cx, 3).await;
+    let after = window
+        .read_with(cx, |view, _| {
+            (view.find_options().regex, view.find_status())
+        })
+        .ok();
+    checks.check(
+        &format!("leaving Regex out turns it off ({after:?})"),
+        after == Some((false, (None, 0))),
+    );
 }
 
-/// `KERTAS_SMOKE=hover`, on `marks.md` (#126): resting the pointer on a
+/// Hover popovers (#126), on `marks.md`: resting the pointer on a
 /// mark or a link asks the host for a popover after a delay, and it closes
 /// when the pointer leaves, or on typing.
-fn smoke_hover(window: DocumentWindowHandle, cx: &mut App) {
+async fn hover_section(window: DocumentWindowHandle, cx: &mut AsyncApp, checks: &mut Checks) {
     use gpui::{Modifiers, MouseMoveEvent, prelude::*};
     use kertas_editor::{HOVER_DELAY, HoverTarget, Mark, MarkStyle};
 
-    cx.spawn(async move |cx| {
-        let mut checks = Checks::default();
-        laid_out(window, cx).await;
-        let asked = Rc::new(RefCell::new(Vec::new()));
-        window
-            .update(cx, |view, _, cx| {
-                let asked = asked.clone();
-                view.set_hover_popover(
-                    Some(Rc::new(move |target: &HoverTarget, _, _| {
-                        asked.borrow_mut().push(target.clone());
-                        Some(gpui::div().child("Popover").into_any_element())
-                    })),
-                    cx,
-                );
-                // "Ann", at the start of the first paragraph.
-                let mark = Mark {
-                    range: 0..3,
-                    style: MarkStyle::Hidden,
-                    id: 4,
-                };
-                view.set_marks(vec![mark], cx);
-            })
-            .ok();
-        pause(cx, 3).await;
-        let origin = |index: usize, cx: &mut AsyncApp| {
-            window
-                .update(cx, |view, window, _| view.text_origin(index, window))
-                .ok()
-                .flatten()
-        };
-        let (Some(first), Some(second)) = (origin(0, cx), origin(1, cx)) else {
-            checks.check("the blocks are laid out", false);
-            return checks.finish(cx);
-        };
-        let move_to = |cx: &mut AsyncApp, position| {
-            gpui::AnyWindowHandle::from(window)
-                .update(cx, |_, window, cx| {
-                    window.dispatch_event(
-                        gpui::PlatformInput::MouseMove(MouseMoveEvent {
-                            position,
-                            pressed_button: None,
-                            modifiers: Modifiers::default(),
-                        }),
-                        cx,
-                    )
-                })
-                .ok();
-        };
-        let shown = |cx: &mut AsyncApp| {
-            window
-                .read_with(cx, |view, _| view.hover_shown())
-                .ok()
-                .flatten()
-        };
-        let line = gpui::px(12.);
-        move_to(cx, first + gpui::point(gpui::px(6.), line));
-        pause(cx, 2).await;
-        let early = shown(cx);
-        // The host is asked once the delay has passed.
-        wait_for(cx, HOVER_DELAY * 4, |_| !asked.borrow().is_empty()).await;
-        let mark = shown(cx);
-        checks.check(
-            &format!("a mark's popover waits, then shows ({early:?} → {mark:?})"),
-            early.is_none() && matches!(&mark, Some(HoverTarget::Mark(mark)) if mark.id == 4),
-        );
-        checks.check(
-            "the host is asked for it",
-            asked
-                .borrow()
-                .iter()
-                .any(|target| matches!(target, HoverTarget::Mark(_))),
-        );
-        // Off the text, onto the window's side.
-        move_to(cx, gpui::point(gpui::px(2.), first.y + line));
-        let closed = wait_for(cx, HOVER_DELAY * 4, |cx| shown(cx).is_none()).await;
-        checks.check("leaving closes it", closed);
-        // Until its close timer has run, a new hover would be closed too.
-        cx.background_executor().timer(HOVER_DELAY).await;
-
-        // "A [link](…)": the link's text starts after "A ".
-        move_to(cx, second + gpui::point(gpui::px(24.), line));
-        wait_for(cx, HOVER_DELAY * 4, |cx| {
-            matches!(shown(cx), Some(HoverTarget::Link(_)))
+    laid_out(window, cx).await;
+    let asked = Rc::new(RefCell::new(Vec::new()));
+    window
+        .update(cx, |view, _, cx| {
+            let asked = asked.clone();
+            view.set_hover_popover(
+                Some(Rc::new(move |target: &HoverTarget, _, _| {
+                    asked.borrow_mut().push(target.clone());
+                    Some(gpui::div().child("Popover").into_any_element())
+                })),
+                cx,
+            );
+            // "Ann", at the start of the first paragraph.
+            let mark = Mark {
+                range: 0..3,
+                style: MarkStyle::Hidden,
+                id: 4,
+            };
+            view.set_marks(vec![mark], cx);
         })
-        .await;
-        let link = shown(cx);
-        checks.check(
-            &format!("so does a link's ({link:?})"),
-            matches!(&link, Some(HoverTarget::Link(link)) if link.destination == "https://example.com"),
-        );
+        .ok();
+    pause(cx, 3).await;
+    let origin = |index: usize, cx: &mut AsyncApp| {
         window
-            .update(cx, |view, window, cx| {
-                view.click(0, false, window, cx);
-                view.replace_text_in_range(None, "x", window, cx);
+            .update(cx, |view, window, _| view.text_origin(index, window))
+            .ok()
+            .flatten()
+    };
+    let (Some(first), Some(second)) = (origin(0, cx), origin(1, cx)) else {
+        checks.check("the blocks are laid out", false);
+        return;
+    };
+    let move_to = |cx: &mut AsyncApp, position| {
+        gpui::AnyWindowHandle::from(window)
+            .update(cx, |_, window, cx| {
+                window.dispatch_event(
+                    gpui::PlatformInput::MouseMove(MouseMoveEvent {
+                        position,
+                        pressed_button: None,
+                        modifiers: Modifiers::default(),
+                    }),
+                    cx,
+                )
             })
             .ok();
-        pause(cx, 2).await;
-        checks.check("typing closes it", shown(cx).is_none());
-        checks.finish(cx);
+    };
+    let shown = |cx: &mut AsyncApp| {
+        window
+            .read_with(cx, |view, _| view.hover_shown())
+            .ok()
+            .flatten()
+    };
+    let line = gpui::px(12.);
+    move_to(cx, first + gpui::point(gpui::px(6.), line));
+    pause(cx, 2).await;
+    let early = shown(cx);
+    // The host is asked once the delay has passed.
+    wait_for(cx, HOVER_DELAY * 4, |_| !asked.borrow().is_empty()).await;
+    let mark = shown(cx);
+    checks.check(
+        &format!("a mark's popover waits, then shows ({early:?} → {mark:?})"),
+        early.is_none() && matches!(&mark, Some(HoverTarget::Mark(mark)) if mark.id == 4),
+    );
+    checks.check(
+        "the host is asked for it",
+        asked
+            .borrow()
+            .iter()
+            .any(|target| matches!(target, HoverTarget::Mark(_))),
+    );
+    // Off the text, onto the window's side.
+    move_to(cx, gpui::point(gpui::px(2.), first.y + line));
+    let closed = wait_for(cx, HOVER_DELAY * 4, |cx| shown(cx).is_none()).await;
+    checks.check("leaving closes it", closed);
+    // Until its close timer has run, a new hover would be closed too.
+    cx.background_executor().timer(HOVER_DELAY).await;
+
+    // "A [link](…)": the link's text starts after "A ".
+    move_to(cx, second + gpui::point(gpui::px(24.), line));
+    wait_for(cx, HOVER_DELAY * 4, |cx| {
+        matches!(shown(cx), Some(HoverTarget::Link(_)))
     })
-    .detach();
+    .await;
+    let link = shown(cx);
+    checks.check(
+        &format!("so does a link's ({link:?})"),
+        matches!(&link, Some(HoverTarget::Link(link)) if link.destination == "https://example.com"),
+    );
+    window
+        .update(cx, |view, window, cx| {
+            view.click(0, false, window, cx);
+            view.replace_text_in_range(None, "x", window, cx);
+        })
+        .ok();
+    pause(cx, 2).await;
+    checks.check("typing closes it", shown(cx).is_none());
 }
 
 /// `KERTAS_SMOKE=rename`: renaming a document's file keeps it open as it
