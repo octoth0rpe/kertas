@@ -85,8 +85,8 @@ struct HiddenSettings(&'static [&'static str]);
 
 impl Global for HiddenSettings {}
 
-/// The settings changed from the View menu only, which the window doesn't
-/// show, to keep it short.
+/// The settings changed from the View menu or the file only, which the
+/// window doesn't show, to keep it short.
 const MENU_ONLY: &[&str] = &[
     "fade_other_blocks",
     "typewriter_scrolling",
