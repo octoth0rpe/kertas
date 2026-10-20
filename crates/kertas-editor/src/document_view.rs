@@ -15,6 +15,7 @@ mod files;
 mod find;
 mod heights;
 mod hover;
+mod images;
 mod input;
 mod line_scroll;
 mod marking;
@@ -24,6 +25,7 @@ mod spelling;
 
 pub use files::HeadingTarget;
 pub use hover::{HOVER_DELAY, HoverPopover, HoverTarget};
+pub use images::{AddedImages, is_image_file};
 pub use render::bar_button;
 
 use std::cell::RefCell;
@@ -253,6 +255,12 @@ pub enum DocumentEvent {
     /// host keeps its words. It's the word as it's looked up, without a
     /// possessive ending.
     AddWord { word: String },
+    /// Images were pasted or dropped onto the document, to go in at `at`,
+    /// an offset in its text: the caret's, a selection having been
+    /// deleted, or where they were dropped (see
+    /// [`DocumentView::set_accepts_images`]). The host keeps them where it
+    /// keeps its images, and puts the Markdown that shows them in.
+    ImagesAdded { images: AddedImages, at: usize },
 }
 
 pub struct DocumentView {
@@ -298,6 +306,8 @@ pub struct DocumentView {
     spelling_menu: Option<spelling::SpellingMenu>,
     /// What the host set about spelling (#143).
     host_spelling: spelling::HostSpelling,
+    /// Whether the host takes pasted and dropped images (#155).
+    accepts_images: bool,
     /// What the host shows when the pointer rests on a link or a mark
     /// (#126).
     hover_popover: Option<HoverPopover>,
@@ -375,6 +385,7 @@ impl DocumentView {
             misspelled: Default::default(),
             spelling_menu: None,
             host_spelling: Default::default(),
+            accepts_images: false,
             hover_popover: None,
             hover: None,
             hover_epoch: 0,
