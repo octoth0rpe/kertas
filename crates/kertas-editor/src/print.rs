@@ -230,7 +230,7 @@ impl Prepared {
             settings.list_indent,
         );
         let utf16 = utf16_offsets(&layout.text);
-        let text = attributed(&layout, &utf16, settings, paper.width - 2. * MARGIN, mtm);
+        let text = attributed(&layout, &utf16, settings, page_size(paper), mtm);
         let mut breaks: Vec<usize> = options
             .page_breaks
             .iter()
@@ -304,6 +304,13 @@ const MAX_PAGES: usize = 20_000;
 
 /// The strip at the foot of a numbered page that holds its number.
 const FOOTER: f64 = 24.;
+
+/// Room left on a page beside the tallest image, for the spacing of the
+/// paragraph it's in and the end of its line.
+const IMAGE_LEADING: f64 = 48.;
+
+/// How tall a printed line is, for the height of what's on it.
+const LINE_HEIGHT: f64 = 1.15;
 
 /// The size of what a page prints inside the margins, which AppKit prints
 /// a view in slices of.
@@ -459,9 +466,10 @@ fn attributed(
     layout: &PrintLayout,
     utf16_at: &[usize],
     settings: &TextSettings,
-    width: f64,
+    page: CGSize,
     mtm: MainThreadMarker,
 ) -> Retained<NSMutableAttributedString> {
+    let width = page.width;
     let palette = Palette::light();
     let text = &layout.text;
     let utf16 = |byte: usize| utf16_at[byte];
@@ -563,7 +571,7 @@ fn attributed(
         style.setHeadIndent(paragraph.indent);
         style.setParagraphSpacing(paragraph.space_after);
         style.setParagraphSpacingBefore(paragraph.space_before);
-        style.setLineHeightMultiple(1.15);
+        style.setLineHeightMultiple(LINE_HEIGHT);
         style.setAlignment(match paragraph.alignment {
             Alignment::Natural => NSTextAlignment::Natural,
             Alignment::Center => NSTextAlignment::Center,
@@ -659,7 +667,11 @@ fn attributed(
         }
     }
 
-    // Images at their natural size, shrunk to fit the page.
+    // Images at their natural size, shrunk to fit the page: its width, and
+    // its height less a page number's strip and a paragraph's spacing, as
+    // an image can't be split across pages. Its line is taller than it, as
+    // every line is.
+    let height = (page.height - FOOTER - IMAGE_LEADING) / LINE_HEIGHT;
     for image in &layout.images {
         let picture = match &image.location {
             ImageLocation::File(path) => NSImage::initWithContentsOfFile(
@@ -682,7 +694,9 @@ fn attributed(
             .iter()
             .find(|paragraph| paragraph.range.contains(&image.range.start))
             .map_or(0., |paragraph| paragraph.indent);
-        let scale = ((width - indent) / size.width).min(1.);
+        let scale = ((width - indent) / size.width)
+            .min(height / size.height)
+            .min(1.);
         let attachment = NSTextAttachment::new();
         attachment.setImage(Some(&picture));
         attachment.setBounds(CGRect::new(
