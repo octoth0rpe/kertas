@@ -168,10 +168,18 @@ fn watch_until_stopped(
 ) {
     let mut pending = false;
     loop {
-        let watched: Vec<_> = watched()
-            .into_iter()
-            .map(|(path, flags)| (open_for_events(&path), flags))
+        let paths = watched();
+        let watched: Vec<_> = paths
+            .iter()
+            .map(|(path, flags)| (open_for_events(path), *flags))
             .collect();
+        let close = || {
+            for fd in watched.iter().filter_map(|&(fd, _)| fd) {
+                // SAFETY: `fd` was opened above and is closed once; closing
+                // it also removes its kqueue registration.
+                unsafe { libc::close(fd) };
+            }
+        };
         let changes: Vec<libc::kevent> = watched
             .iter()
             .filter_map(|&(fd, flags)| fd.map(|fd| vnode_event(fd, flags)))
@@ -188,6 +196,17 @@ fn watch_until_stopped(
                 std::ptr::null(),
             )
         };
+        // A file replaced between being opened and watched would be
+        // watched no more, its events lost before it was: start again.
+        let replaced = paths
+            .iter()
+            .zip(&watched)
+            .any(|((path, _), &(fd, _))| !still_at(path, fd));
+        if replaced {
+            close();
+            pending = true;
+            continue;
+        }
         if std::mem::take(&mut pending) && changed.unbounded_send(()).is_err() {
             break;
         }
@@ -196,11 +215,7 @@ fn watch_until_stopped(
         // call blocks until an event arrives.
         let received =
             unsafe { libc::kevent(queue, std::ptr::null(), 0, &mut event, 1, std::ptr::null()) };
-        for fd in watched.iter().filter_map(|&(fd, _)| fd) {
-            // SAFETY: `fd` was opened above and is closed once; closing it
-            // also removes its kqueue registration.
-            unsafe { libc::close(fd) };
-        }
+        close();
         if received < 0 {
             // A signal interrupted the wait: just wait again.
             if std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
@@ -223,6 +238,25 @@ fn open_for_events(path: &Path) -> Option<i32> {
     // out of child processes the app starts.
     let fd = unsafe { libc::open(path.as_ptr(), libc::O_EVTONLY | libc::O_CLOEXEC) };
     (fd >= 0).then_some(fd)
+}
+
+/// Whether `path` is still the file `fd` was opened on, or still missing
+/// if it wasn't there to open.
+fn still_at(path: &Path, fd: Option<i32>) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    let now = std::fs::metadata(path).ok();
+    let Some(fd) = fd else {
+        return now.is_none();
+    };
+    let mut opened = std::mem::MaybeUninit::<libc::stat>::uninit();
+    // SAFETY: `fd` is open, and `opened` has room for the result.
+    if unsafe { libc::fstat(fd, opened.as_mut_ptr()) } != 0 {
+        return false;
+    }
+    // SAFETY: fstat succeeded, so it filled `opened` in.
+    let opened = unsafe { opened.assume_init() };
+    now.is_some_and(|now| now.dev() == opened.st_dev as u64 && now.ino() == opened.st_ino)
 }
 
 fn vnode_event(fd: i32, flags: u32) -> libc::kevent {
