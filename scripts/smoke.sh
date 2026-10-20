@@ -72,10 +72,7 @@ run windows showcase.md
 run settings showcase.md
 run settings-window showcase.md
 run help showcase.md
-run reveal showcase.md
-run clicks clicks.md
 run anchors anchors.md
-run footnotes footnotes.md
 run reading anchors.md
 run scrollbar 10k.md
 run scrollbar-drag showcase.md
