@@ -98,7 +98,7 @@ scripts/bundle-macos.sh --install
 open ~/Applications/Kertas.app
 ```
 
-`rustup toolchain install` installs the Rust version that `rust-toolchain.toml` pins. The `export PATH` line lasts only for that Terminal window, since Homebrew doesn't put rustup on the `PATH`. The first build downloads every dependency and takes several minutes. The `main` branch is always the latest release, and each release also has a tag, such as `v0.4.0`. To update later, open a new Terminal window, run the `export PATH` line, then in `kertas` run `git pull` and `scripts/bundle-macos.sh --install`.
+`rustup toolchain install` installs the Rust version that `rust-toolchain.toml` pins. The `export PATH` line lasts only for that Terminal window, since Homebrew doesn't put rustup on the `PATH`. The first build downloads every dependency and takes several minutes. The `main` branch is always the latest release, and each release also has a tag, such as `v0.5.0`. To update later, open a new Terminal window, run the `export PATH` line, then in `kertas` run `git pull` and `scripts/bundle-macos.sh --install`.
 
 For development:
 

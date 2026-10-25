@@ -2,14 +2,20 @@
 
 What's new in each version of Kertas, newest first.
 
-## Unreleased
+## 0.5.0 — 2026-10-25
 
+- **Spell checking.** Misspelled words get a wavy underline a moment after you stop typing. Only prose is checked, not code, web addresses or front matter. Right-click a word for suggestions, **Ignore**, **Add for This Document** or **Add to Dictionary**, and **View → Check Spelling** turns it off and on.
+- **Spelling** in **Kertas → Settings…** chooses the language: English (US) or English (UK), or another language from a Hunspell dictionary you put in the dictionaries folder (**Open Dictionaries Folder**). A language without a region, such as `en`, uses one of its regions' dictionaries.
 - **Edit → Find (⌘F)** finds text in the document. Every match is highlighted, ⌘G and ⇧⌘G go from one to the next, and **Match Case** and **Whole Words** narrow the search. It finds the text as you see it, so **bold** finds "bold" in `**bold**`.
 - **Edit → Find and Replace (⌥⌘F)** replaces matches one at a time, or all at once with **Replace All**, which one Undo takes back. Only the matched text changes: the formatting around it, and every other byte of the file, stay as they were.
 - **Regex** in the find bar searches with a regular expression, and a replacement can use its groups, as `$1` or `${name}`. A pattern with a mistake says what's wrong in the bar.
 - **`fade_other_blocks = true`** in the settings file draws every block but the one you're editing faded, to keep your eye on what you're writing. Faded text stays readable in every theme, so some themes fade less than others. It's off unless you turn it on.
 - **View → Typewriter Scrolling** keeps the line you're typing on in the middle of the window, scrolling the text up as you write. You can still scroll away, and the next keystroke brings it back.
+- **Tabs are drawn by Kertas**, all in one window. **⇧⌘]** and **⇧⌘[** go to the next and previous tab, you can drag a tab along the strip to move it, and **⇧⌘W** closes the window, asking about each document with unsaved changes.
 - The active tab is underlined in the theme's accent color, so it's easier to tell from the others.
+- An empty file opens with the caret in it, ready for typing.
+- Printed images are shrunk to fit the page's height as well as its width.
+- A change to the settings file or a theme made just after another one is no longer sometimes missed.
 
 ## 0.4.0 — 2026-10-16
 
