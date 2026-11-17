@@ -2,6 +2,10 @@
 
 What's new in each version of Kertas, newest first.
 
+## 0.6.0 — Unreleased
+
+- **Tabs in the title bar**, as compact as iTerm2's, leaving more of the window for the document.
+
 ## 0.5.0 — 2026-10-25
 
 - **Spell checking.** Misspelled words get a wavy underline a moment after you stop typing. Only prose is checked, not code, web addresses or front matter. Right-click a word for suggestions, **Ignore**, **Add for This Document** or **Add to Dictionary**, and **View → Check Spelling** turns it off and on.
