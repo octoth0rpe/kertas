@@ -183,7 +183,7 @@
 | proc-macro2 | 1.0.107 | MIT OR Apache-2.0 |
 | profiling | 1.0.18 | MIT OR Apache-2.0 |
 | profiling-procmacros | 1.0.18 | MIT OR Apache-2.0 |
-| pulldown-cmark | 0.13.4 | MIT |
+| pulldown-cmark | 0.13.6 | MIT |
 | pulp | 0.22.3 | MIT |
 | pulp-wasm-simd-flag | 0.1.1 | MIT |
 | pxfm | 0.1.30 | BSD-3-Clause OR Apache-2.0 |

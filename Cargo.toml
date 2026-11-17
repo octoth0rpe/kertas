@@ -20,7 +20,7 @@ kertas-ui = { path = "crates/kertas-ui" }
 gpui = { git = "https://github.com/zed-industries/zed", rev = "c66312b200d113694fca08c1d468669028a09a0e" }
 # `runtime_shaders` compiles Metal shaders at runtime, so building doesn't require full Xcode.
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "c66312b200d113694fca08c1d468669028a09a0e", features = ["font-kit", "runtime_shaders"] }
-pulldown-cmark = { version = "0.13.4", default-features = false }
+pulldown-cmark = { version = "0.13.6", default-features = false }
 ropey = "1.6"
 unicode-segmentation = "1"
 # Find, and its Regex option. Already in the tree through GPUI.

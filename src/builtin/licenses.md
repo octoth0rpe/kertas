@@ -2934,7 +2934,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ````
 
-**pulldown-cmark 0.13.4** (MIT License)
+**pulldown-cmark 0.13.6** (MIT License)
 
 ````
 The MIT License
