@@ -1,6 +1,7 @@
 //! The parts of Kertas's windows that other apps share, so their windows
 //! look and work like Kertas's: [`tabs`], a single-line [`text_field`], a
-//! [`context_menu`], and the [`Theme`] they're drawn in.
+//! [`context_menu`], controls for settings windows ([`form`]), and the
+//! [`Theme`] they're drawn in.
 //!
 //! [`tabs::Tabs`] holds any view that implements [`tabs::TabItem`], one
 //! shown at a time; [`tabs::tab_strip`] and [`tabs::tab`] draw an app's
@@ -18,6 +19,7 @@
 //! settings a [`Theme`] is made from.
 
 pub mod context_menu;
+pub mod form;
 pub mod tabs;
 pub mod text_field;
 pub mod theme;
