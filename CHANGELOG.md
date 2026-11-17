@@ -2,9 +2,10 @@
 
 What's new in each version of Kertas, newest first.
 
-## 0.6.0 — Unreleased
+## 0.6.0 — 2026-11-17
 
-- **Tabs in the title bar**, as compact as iTerm2's, leaving more of the window for the document.
+- **Tabs in the title bar**, as compact as iTerm2's, leaving more of the window for the document. With one document, the bar shows its name as the window's title. With two or more, they share the bar's width, and the active tab opens into the page below it. Hover over a tab for its close button.
+- Drag a tab along the bar to move it, as before, and drag the bar's empty space to move the window. Double-clicking it zooms the window, as your Dock settings say.
 
 ## 0.5.0 — 2026-10-25
 
