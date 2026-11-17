@@ -46,7 +46,7 @@ const MAX_TAB_WIDTH: f32 = 240.;
 /// the start, and to keep the title centered.
 const TITLE_BAR_CLOSE_WIDTH: f32 = 28.;
 /// The empty space after the tabs in the title bar, which moves the window.
-const TITLE_BAR_END_WIDTH: f32 = 40.;
+pub const TITLE_BAR_END_WIDTH: f32 = 40.;
 
 actions!(
     kertas,

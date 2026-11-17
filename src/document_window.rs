@@ -19,7 +19,8 @@ use crate::app_settings::{self, AppSettings};
 use crate::builtin::Builtin;
 use crate::{windows, zoom};
 use kertas_editor::Theme;
-use kertas_editor::tabs::{DocumentTabs, TabsEvent};
+use kertas_editor::kertas_ui::title_bar;
+use kertas_editor::tabs::{DocumentTabs, StripStyle, TabsEvent};
 use kertas_editor::{DocumentEvent, DocumentView, problems_bar};
 
 actions!(kertas, [New, Open, Print, CloseWindow, Quit]);
@@ -282,6 +283,31 @@ impl Render for DocumentWindow {
         // The bars are sized in rems too, so they zoom with the text.
         window.set_rem_size(px(size as f32));
         let problems_bar = self.render_settings_problems(theme, cx);
+        // The tabs are in the title bar, as iTerm2's are, where Kertas
+        // draws it: on macOS, and on Linux where it draws the frame.
+        let in_title_bar = title_bar::is_drawn_by_app(window);
+        let style = if in_title_bar {
+            StripStyle::TitleBar
+        } else {
+            StripStyle::Inline
+        };
+        if self.tabs.read(cx).strip_style() != style {
+            self.tabs
+                .update(cx, |tabs, cx| tabs.set_strip_style(style, cx));
+        }
+        let title_bar = in_title_bar.then(|| {
+            let tabs = self.tabs.update(cx, |tabs, cx| tabs.title_bar_tabs(cx));
+            let inset = title_bar::traffic_light_inset(window);
+            title_bar::bar(theme)
+                .when(inset > px(0.), |this| {
+                    this.child(
+                        title_bar::bottom_line(title_bar::drag_area("traffic-lights"), theme)
+                            .flex_none()
+                            .w(inset),
+                    )
+                })
+                .child(tabs)
+        });
         // Zoom In, Zoom Out and Reset Zoom, while each is possible.
         zoom::handle_actions(div(), cx)
             .size_full()
@@ -293,6 +319,7 @@ impl Render for DocumentWindow {
             .flex_col()
             .on_action(cx.listener(Self::print))
             .on_action(cx.listener(Self::close_window))
+            .children(title_bar)
             .child(div().flex_1().min_h(px(0.)).child(self.tabs.clone()))
             .children(problems_bar)
     }

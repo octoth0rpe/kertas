@@ -14,9 +14,10 @@
 use std::path::{Path, PathBuf};
 
 use gpui::{
-    App, Bounds, Context, Entity, Global, PathPromptOptions, TitlebarOptions, Window, WindowBounds,
-    WindowOptions, point, prelude::*, px, size,
+    App, Bounds, Context, Entity, Global, PathPromptOptions, Window, WindowBounds, WindowOptions,
+    point, prelude::*, px, size,
 };
+use kertas_editor::kertas_ui::title_bar;
 
 use kertas_core::settings::Layout;
 use kertas_core::titles;
@@ -217,14 +218,14 @@ fn new_window(
     };
     let window = cx
         .open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(TitlebarOptions {
-                    title: Some("Kertas".into()),
+            // Kertas draws the title bar, with the tabs in it.
+            title_bar::window_options(
+                "Kertas",
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
-                }),
-                ..Default::default()
-            },
+                },
+            ),
             |window, cx| cx.new(|cx| DocumentWindow::new(window, cx)),
         )
         .ok()?;
