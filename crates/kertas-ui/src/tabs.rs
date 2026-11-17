@@ -20,6 +20,12 @@
 //!
 //! An app's own tab strips, such as one switching between panels, can look
 //! the same: [`tab_strip`] is the bar, and [`tab`] each tab in it.
+//!
+//! The strip can be in the window's title bar instead
+//! ([`StripStyle::TitleBar`]), as iTerm2's compact tabs are: the app draws
+//! the title bar ([`crate::title_bar`]) and puts
+//! [`Tabs::title_bar_tabs`] in it. One tab shows as the window's title;
+//! two or more share the bar's width.
 
 use std::fmt;
 
@@ -29,13 +35,18 @@ use gpui::{
     Task, Window, actions, div, prelude::*, px,
 };
 
-use crate::Theme;
+use crate::{Theme, title_bar};
 use kertas_core::titles;
 
 /// How tall a strip of tabs is.
 pub const STRIP_HEIGHT: f32 = 30.;
 const MIN_TAB_WIDTH: f32 = 100.;
 const MAX_TAB_WIDTH: f32 = 240.;
+/// Room at each side of a tab in the title bar: for its close button at
+/// the start, and to keep the title centered.
+const TITLE_BAR_CLOSE_WIDTH: f32 = 28.;
+/// The empty space after the tabs in the title bar, which moves the window.
+const TITLE_BAR_END_WIDTH: f32 = 40.;
 
 actions!(
     kertas,
@@ -227,6 +238,18 @@ struct Tab<T> {
     _subscription: Subscription,
 }
 
+/// Where [`Tabs`] shows its tabs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StripStyle {
+    /// In a strip above the active view, while there are two or more.
+    #[default]
+    Inline,
+    /// In the window's title bar, which the app draws, with
+    /// [`Tabs::title_bar_tabs`] in it. The tabs show nothing above the
+    /// active view.
+    TitleBar,
+}
+
 pub struct Tabs<T: TabItem> {
     tabs: Vec<Tab<T>>,
     active: usize,
@@ -236,6 +259,7 @@ pub struct Tabs<T: TabItem> {
     scroll_handle: ScrollHandle,
     /// Whether the strip is hidden, whatever the number of tabs.
     strip_hidden: bool,
+    strip_style: StripStyle,
 }
 
 impl<T: TabItem> EventEmitter<TabsEvent<T>> for Tabs<T> {}
@@ -255,7 +279,22 @@ impl<T: TabItem> Tabs<T> {
             confirming: false,
             scroll_handle: ScrollHandle::new(),
             strip_hidden: false,
+            strip_style: StripStyle::Inline,
         }
+    }
+
+    /// Shows the tabs in a strip above the active view, or in the title
+    /// bar, where the app puts [`title_bar_tabs`](Self::title_bar_tabs).
+    pub fn set_strip_style(&mut self, style: StripStyle, cx: &mut Context<Self>) {
+        if style != self.strip_style {
+            self.strip_style = style;
+            cx.notify();
+        }
+    }
+
+    /// Where the tabs are shown.
+    pub fn strip_style(&self) -> StripStyle {
+        self.strip_style
     }
 
     /// Hides the strip of tabs, or shows it again, as when a host app
@@ -619,6 +658,197 @@ impl<T: TabItem> Tabs<T> {
     }
 }
 
+impl<T: TabItem> Tabs<T> {
+    /// The tabs, for the app's title bar ([`crate::title_bar::bar`]), as
+    /// iTerm2's compact tabs are: they fill what the bar has left. One
+    /// tab shows as the window's title, centered, which moves the window
+    /// when dragged, as a title bar does. Two or more share the width; the
+    /// active one is drawn in the view's background, open to it below,
+    /// and each has a close button while the pointer is over it. Empty
+    /// space after them moves the window.
+    pub fn title_bar_tabs(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(active) = self.active_view() else {
+            return div().flex_1().into_any_element();
+        };
+        let theme = TabItem::theme(active.read(cx), cx);
+        if self.strip_hidden || self.tabs.len() == 1 {
+            let dirty = TabItem::is_dirty(active.read(cx), cx);
+            let title = self.title(self.active, cx).unwrap_or_default();
+            return title_bar::bottom_line(title_bar::drag_area("title"), theme)
+                .flex_1()
+                .min_w(px(0.))
+                .px_3()
+                .flex()
+                .items_center()
+                .justify_center()
+                .gap_1()
+                .text_size(px(12.))
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .child(div().truncate().child(title))
+                .when(dirty, |this| {
+                    this.aria_description("Edited")
+                        .child(div().text_color(theme.muted_text).child("●"))
+                })
+                .into_any_element();
+        }
+
+        let count = self.tabs.len();
+        let strip = cx.entity().entity_id();
+        let this = cx.weak_entity();
+        let tabs = self.tabs.iter().enumerate().map(|(index, tab)| {
+            let active = index == self.active;
+            let dirty = TabItem::is_dirty(tab.view.read(cx), cx);
+            let title: SharedString = self.title(index, cx).unwrap_or_default().into();
+            let close_name = if dirty {
+                format!("Close {title}, which has unsaved changes")
+            } else {
+                format!("Close {title}")
+            };
+            let dragged = DraggedTab {
+                strip,
+                index,
+                title: title.clone(),
+                theme,
+            };
+            let group = SharedString::from(format!("title-bar-tab-{index}"));
+            div()
+                .id(("tab", index))
+                .group(group.clone())
+                .role(Role::Tab)
+                .aria_label(title.clone())
+                .aria_selected(active)
+                .aria_position_in_set(index + 1)
+                .aria_size_of_set(count)
+                .when(dirty, |this| this.aria_description("Edited"))
+                .on_a11y_action(AccessibleAction::Click, {
+                    let this = this.clone();
+                    move |_, window, cx| {
+                        this.update(cx, |this, cx| this.select(index, window, cx))
+                            .ok();
+                    }
+                })
+                .relative()
+                .h_full()
+                // All the same width, sharing the bar, then the bar
+                // scrolls.
+                .flex_1()
+                .flex_basis(px(0.))
+                .min_w(px(MIN_TAB_WIDTH))
+                .px(px(TITLE_BAR_CLOSE_WIDTH))
+                .flex()
+                .items_center()
+                .justify_center()
+                .border_l_1()
+                .border_color(theme.rule)
+                .text_size(px(12.))
+                .when(active, |this| {
+                    // No line below: it opens into the view. The padding
+                    // keeps its title level with the others'.
+                    this.bg(theme.background).text_color(theme.text).pb(px(1.))
+                })
+                .when(!active, |this| {
+                    this.border_b_1()
+                        .text_color(theme.muted_text)
+                        .hover(|style| style.text_color(theme.text))
+                })
+                .focus_visible(move |style| style.border_1().border_color(theme.caret))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _, window, cx| {
+                        if index != this.active {
+                            this.select(index, window, cx);
+                        }
+                    }),
+                )
+                .on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))
+                .can_drop(move |dragged, _, _| {
+                    dragged
+                        .downcast_ref::<DraggedTab>()
+                        .is_some_and(|dragged| dragged.strip == strip)
+                })
+                .drag_over::<DraggedTab>(move |style, _, _, _| {
+                    style.border_l_2().border_color(theme.text)
+                })
+                .on_drop(cx.listener(move |this, dragged: &DraggedTab, _, cx| {
+                    this.move_tab(dragged.index, index, cx);
+                }))
+                .child(div().min_w(px(0.)).truncate().child(title))
+                .child(
+                    div()
+                        .id(("close-tab", index))
+                        .role(Role::Button)
+                        .aria_label(SharedString::from(close_name))
+                        .on_a11y_action(AccessibleAction::Click, {
+                            let this = this.clone();
+                            move |_, window, cx| {
+                                this.update(cx, |this, cx| this.close(index, window, cx))
+                                    .ok();
+                            }
+                        })
+                        .absolute()
+                        .left(px(6.))
+                        .top_0()
+                        .bottom_0()
+                        .my_auto()
+                        .size(px(16.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded_sm()
+                        .text_color(theme.muted_text)
+                        .hover(|style| style.bg(theme.rule).text_color(theme.text))
+                        // Shown while the pointer is over the tab, or
+                        // always, as a dot, while it has unsaved changes.
+                        .when(!dirty, |this| {
+                            this.opacity(0.)
+                                .group_hover(group, |style| style.opacity(1.))
+                        })
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _, window, cx| {
+                                this.close(index, window, cx);
+                                cx.stop_propagation();
+                            }),
+                        )
+                        .child(if dirty { "●" } else { "×" }),
+                )
+        });
+
+        div()
+            .id("title-bar-tabs")
+            .role(Role::TabList)
+            .aria_label(T::STRIP_LABEL)
+            .flex_1()
+            .min_w(px(0.))
+            .h_full()
+            .flex()
+            .overflow_x_scroll()
+            .track_scroll(&self.scroll_handle)
+            .children(tabs)
+            // After the last tab: dropping a tab here moves it to the end,
+            // and dragging moves the window.
+            .child(
+                title_bar::bottom_line(title_bar::drag_area("tabs-end"), theme)
+                    .flex_none()
+                    .w(px(TITLE_BAR_END_WIDTH))
+                    .border_l_1()
+                    .can_drop(move |dragged, _, _| {
+                        dragged
+                            .downcast_ref::<DraggedTab>()
+                            .is_some_and(|dragged| dragged.strip == strip)
+                    })
+                    .drag_over::<DraggedTab>(move |style, _, _, _| {
+                        style.border_l_2().border_color(theme.text)
+                    })
+                    .on_drop(cx.listener(move |this, dragged: &DraggedTab, _, cx| {
+                        let last = this.tabs.len().saturating_sub(1);
+                        this.move_tab(dragged.index, last, cx);
+                    })),
+            )
+            .into_any_element()
+    }
+}
+
 impl<T: TabItem> Focusable for Tabs<T> {
     /// The active view's focus.
     fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
@@ -633,7 +863,11 @@ impl<T: TabItem> Render for Tabs<T> {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active = self.active_view().cloned();
         let strip = match &active {
-            Some(view) if self.tabs.len() > 1 && !self.strip_hidden => {
+            Some(view)
+                if self.tabs.len() > 1
+                    && !self.strip_hidden
+                    && self.strip_style == StripStyle::Inline =>
+            {
                 let theme = TabItem::theme(view.read(cx), cx);
                 Some(self.render_strip(theme, cx))
             }

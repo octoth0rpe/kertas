@@ -5,6 +5,8 @@
 //! [`tabs::Tabs`] holds any view that implements [`tabs::TabItem`], one
 //! shown at a time; [`tabs::tab_strip`] and [`tabs::tab`] draw an app's
 //! own strips, such as one switching between panels, the same way.
+//! [`title_bar`] is a title bar the app draws, so the tabs can be in it,
+//! as iTerm2's compact tabs are.
 //!
 //! A [`Theme`] is a color theme's light or dark colors
 //! ([`kertas_core::themes`]). A view is given one, or asks
@@ -19,6 +21,7 @@ pub mod context_menu;
 pub mod tabs;
 pub mod text_field;
 pub mod theme;
+pub mod title_bar;
 
 pub use gpui;
 pub use gpui_platform;
