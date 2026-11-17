@@ -30,7 +30,8 @@
 //! reports problems ([`problems_bar`]), and help texts ([`help`]).
 //!
 //! [`tabs::DocumentTabs`] holds several document views in one window, as
-//! tabs.
+//! tabs. [`tabs::Tabs`] holds any view that implements [`tabs::TabItem`],
+//! so an app can show its own views in tabs that look and work the same.
 //!
 //! A document view has a find bar (⌘F, ⌥⌘F to replace too). A host can
 //! open it at a match with [`DocumentView::show_find_with`], choose which
