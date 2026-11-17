@@ -34,7 +34,8 @@ use kertas_editor::actions::{
     Save, SelectAll, Undo, Unreveal,
 };
 use kertas_editor::gpui::Entity;
-use kertas_editor::tabs::{CloseTab, SelectTab1};
+use kertas_editor::kertas_ui::title_bar;
+use kertas_editor::tabs::{CloseTab, SelectTab1, TITLE_BAR_END_WIDTH};
 
 mod steps;
 
@@ -469,15 +470,25 @@ fn smoke_tabs(window: DocumentWindowHandle, cx: &mut App) {
             );
         }
 
-        // Drag the first tab onto the third. The tabs share the strip's
-        // width, less the space kept after them, up to their widest.
-        let width = window
+        // Drag the first tab onto the third. In the title bar, the tabs
+        // share its width equally, after the traffic lights and less the
+        // space kept after them.
+        let (width, inset) = window
             .0
-            .update(cx, |_, window, _| f32::from(window.viewport_size().width))
-            .unwrap_or(900.);
-        let tab_width = ((width - 24.) / 4.).min(240.);
-        let center =
-            |index: usize| gpui::point(gpui::px(tab_width * (index as f32 + 0.5)), gpui::px(15.));
+            .update(cx, |_, window, _| {
+                (
+                    f32::from(window.viewport_size().width),
+                    f32::from(title_bar::traffic_light_inset(window)),
+                )
+            })
+            .unwrap_or((900., 0.));
+        let tab_width = (width - inset - TITLE_BAR_END_WIDTH) / 4.;
+        let center = |index: usize| {
+            gpui::point(
+                gpui::px(inset + tab_width * (index as f32 + 0.5)),
+                gpui::px(title_bar::HEIGHT / 2.),
+            )
+        };
         let before = tab_views(window, cx);
         mouse_drag(window, cx, center(0), center(2)).await;
         let after = tab_views(window, cx);
