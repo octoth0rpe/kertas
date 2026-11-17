@@ -11,11 +11,11 @@ publish = false
 # put in its own windows. It re-exports GPUI, so the app uses the same one.
 [dependencies]
 kertas-core.workspace = true
+# Tabs, the text field, the context menu and the theme's colors.
+kertas-ui.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
 futures.workspace = true
-# Moving by grapheme in text fields.
-unicode-segmentation.workspace = true
 # Editing the settings file in place, keeping its comments.
 toml_edit.workspace = true
 

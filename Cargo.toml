@@ -1,7 +1,7 @@
 [workspace]
-members = [".", "crates/kertas-core", "crates/kertas-editor"]
+members = [".", "crates/kertas-core", "crates/kertas-editor", "crates/kertas-ui"]
 # So cargo test, clippy and build cover every crate.
-default-members = [".", "crates/kertas-core", "crates/kertas-editor"]
+default-members = [".", "crates/kertas-core", "crates/kertas-editor", "crates/kertas-ui"]
 resolver = "3"
 
 [workspace.package]
@@ -14,6 +14,7 @@ repository = "https://github.com/octoth0rpe/kertas"
 [workspace.dependencies]
 kertas-core = { path = "crates/kertas-core" }
 kertas-editor = { path = "crates/kertas-editor" }
+kertas-ui = { path = "crates/kertas-ui" }
 # GPUI is pinned to a Zed commit.
 # Bump deliberately and expect breaking changes.
 gpui = { git = "https://github.com/zed-industries/zed", rev = "c66312b200d113694fca08c1d468669028a09a0e" }

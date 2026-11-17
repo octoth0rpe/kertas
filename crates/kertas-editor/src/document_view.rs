@@ -119,9 +119,9 @@ pub fn key_bindings() -> Vec<KeyBinding> {
     .collect()
 }
 
-/// How long the caret stays on, and then off, while blinking. Public so
-/// other text controls in a host app can blink in step with the editor.
-pub const CARET_BLINK_INTERVAL: Duration = Duration::from_millis(530);
+/// How long the caret stays on, and then off, while blinking: the same as
+/// the text field's, so other text controls blink in step with the editor.
+pub use kertas_ui::CARET_BLINK_INTERVAL;
 
 /// How long the text must stay unchanged before [`DocumentEvent::Edited`]
 /// is sent.

@@ -151,6 +151,9 @@ pub fn init(folder: PathBuf, defaults: Settings, cx: &mut App) {
     let state = load(path.clone(), cx);
     apply_appearance(&state.settings, cx);
     cx.set_global(state);
+    // Text fields and other views without a theme of their own follow the
+    // settings' theme.
+    kertas_ui::theme::set_window_theme(window_theme, cx);
     zoom::init(cx);
 
     // Watching needs the folder to exist, though the file is only created

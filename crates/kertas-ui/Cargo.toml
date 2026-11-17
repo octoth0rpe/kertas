@@ -1,0 +1,24 @@
+[package]
+name = "kertas-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+# The parts of Kertas's windows that other apps share: tabs, the text
+# field, the context menu and the theme's colors. It re-exports GPUI, so
+# an app uses the same one.
+[dependencies]
+kertas-core.workspace = true
+gpui.workspace = true
+gpui_platform.workspace = true
+# Moving by grapheme in text fields.
+unicode-segmentation.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true
