@@ -8,8 +8,8 @@
 //! items, ↩ or Space chooses one, and Esc or a click outside closes it,
 //! giving the keyboard back. Its owner keeps it while it's open, renders it
 //! as a child, and lets go of it when it's [`Dismissed`]. VoiceOver reads
-//! it as a menu of items, each of which it can press. Its keys are among
-//! [`crate::key_bindings`].
+//! it as a menu of items, each of which it can press. Its keys are
+//! [`key_bindings`], which are among kertas-editor's `key_bindings` too.
 
 use std::rc::Rc;
 

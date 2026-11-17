@@ -21,8 +21,9 @@
 //! one document view and nothing else.
 //!
 //! This crate re-exports [`gpui`] and [`gpui_platform`], so an app uses
-//! the same GPUI as the view, and [`kertas_core`], whose settings and
-//! themes an [`EditorConfig`] is made from.
+//! the same GPUI as the view, [`kertas_core`], whose settings and
+//! themes an [`EditorConfig`] is made from, and [`kertas_ui`], whose
+//! tabs, text field, context menu and [`Theme`] it uses.
 //!
 //! An app can also share Kertas's settings, from its own settings file
 //! ([`app_settings`]), and with them zooming ([`zoom`]), the View menu
@@ -30,8 +31,9 @@
 //! reports problems ([`problems_bar`]), and help texts ([`help`]).
 //!
 //! [`tabs::DocumentTabs`] holds several document views in one window, as
-//! tabs. [`tabs::Tabs`] holds any view that implements [`tabs::TabItem`],
-//! so an app can show its own views in tabs that look and work the same.
+//! tabs. They're kertas-ui's [`tabs::Tabs`], which hold any view that
+//! implements [`tabs::TabItem`], so an app can show its own views in tabs
+//! that look and work the same.
 //!
 //! A document view has a find bar (⌘F, ⌥⌘F to replace too). A host can
 //! open it at a match with [`DocumentView::show_find_with`], choose which
@@ -50,7 +52,6 @@
 
 pub mod app_settings;
 mod assets;
-pub mod context_menu;
 mod document_view;
 mod editor_config;
 pub mod file_watch;
@@ -66,7 +67,6 @@ mod revealed_block;
 pub mod settings_window;
 mod spelling;
 pub mod tabs;
-pub mod text_field;
 mod text_style;
 mod theme;
 pub mod view_menu;
@@ -77,6 +77,9 @@ pub mod zoom;
 pub use gpui;
 pub use gpui_platform;
 pub use kertas_core;
+pub use kertas_ui;
+/// kertas-ui's, here too so an app can use either path.
+pub use kertas_ui::{context_menu, text_field};
 
 pub use assets::Assets;
 pub use document_view::{

@@ -1,0 +1,689 @@
+//! Tabs: several views in one window, one shown at a time, with a strip of
+//! tabs above it while there are two or more.
+//!
+//! [`Tabs`] holds any view that is a [`TabItem`]: it says what its tab is
+//! called and whether it has unsaved changes, and answers when its tab is
+//! left or closed. Kertas's document views are tab items too
+//! (`kertas_editor::tabs::DocumentTabs`).
+//!
+//! An app puts a [`Tabs`] in its window, adds views to it with
+//! [`Tabs::add`], and binds its keys with [`key_bindings`]:
+//! the next and previous tab, ⌘1 to ⌘9, and ⌘W to close a tab. Tabs can
+//! be reordered by dragging them along the strip.
+//!
+//! It tells the app what happens with [`TabsEvent`]s, passing on its
+//! views' events. Closing the last tab leaves it empty;
+//! the app decides what that means, such as closing the window. To close
+//! the window, the app asks [`Tabs::ready_to_close`] and, if that says
+//! no, [`Tabs::confirm_close`], which asks about each tab with unsaved
+//! changes in turn.
+//!
+//! An app's own tab strips, such as one switching between panels, can look
+//! the same: [`tab_strip`] is the bar, and [`tab`] each tab in it.
+
+use std::fmt;
+
+use gpui::{
+    AccessibleAction, AnyElement, App, Context, Div, ElementId, Entity, EventEmitter, Focusable,
+    KeyBinding, MouseButton, Render, Role, ScrollHandle, SharedString, Stateful, Subscription,
+    Task, Window, actions, div, prelude::*, px,
+};
+
+use crate::Theme;
+use kertas_core::titles;
+
+/// How tall a strip of tabs is.
+pub const STRIP_HEIGHT: f32 = 30.;
+const MIN_TAB_WIDTH: f32 = 100.;
+const MAX_TAB_WIDTH: f32 = 240.;
+
+actions!(
+    kertas,
+    [
+        NextTab,
+        PreviousTab,
+        CloseTab,
+        SelectTab1,
+        SelectTab2,
+        SelectTab3,
+        SelectTab4,
+        SelectTab5,
+        SelectTab6,
+        SelectTab7,
+        SelectTab8,
+        SelectTab9,
+    ]
+);
+
+/// A strip of tabs, `label` for VoiceOver, for an app's own tabs, as
+/// [`Tabs`] draws its: add [`tab`]s to it.
+pub fn tab_strip(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    theme: Theme,
+) -> Stateful<Div> {
+    div()
+        .id(id)
+        .role(Role::TabList)
+        .aria_label(label)
+        .flex_none()
+        .flex()
+        .h(px(STRIP_HEIGHT))
+        .w_full()
+        .bg(theme.table_header_background)
+        .border_b_1()
+        .border_color(theme.rule)
+}
+
+/// A tab called `label`, the `index`th of `count` in its [`tab_strip`],
+/// as [`Tabs`] draws its: the active one stands out, with a bar
+/// of the accent color along its bottom. The app sizes it and says what
+/// choosing it does; to reach it with the keyboard, the app makes it
+/// focusable, and it's outlined while it has the keyboard.
+pub fn tab(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    active: bool,
+    (index, count): (usize, usize),
+    theme: Theme,
+) -> Stateful<Div> {
+    let label = label.into();
+    div()
+        .id(id)
+        .role(Role::Tab)
+        .aria_label(label.clone())
+        .aria_selected(active)
+        .aria_position_in_set(index + 1)
+        .aria_size_of_set(count)
+        .relative()
+        .h_full()
+        .px_3()
+        .flex()
+        .items_center()
+        .gap_2()
+        .border_r_1()
+        .border_color(theme.rule)
+        .text_size(px(12.))
+        .line_height(px(STRIP_HEIGHT))
+        .when(active, |this| {
+            this.bg(theme.background).text_color(theme.text).child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .h(px(2.))
+                    .bg(theme.caret),
+            )
+        })
+        .when(!active, |this| {
+            this.text_color(theme.muted_text)
+                .hover(|style| style.text_color(theme.text))
+        })
+        .focus_visible(move |style| style.border_1().border_color(theme.caret))
+        .child(div().flex_1().min_w(px(0.)).truncate().child(label))
+}
+
+/// Key bindings for tabs (macOS conventions; Ctrl rather than ⌘
+/// elsewhere).
+pub fn key_bindings() -> Vec<KeyBinding> {
+    vec![
+        KeyBinding::new("secondary-shift-]", NextTab, None),
+        KeyBinding::new("secondary-shift-[", PreviousTab, None),
+        KeyBinding::new("ctrl-tab", NextTab, None),
+        KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
+        KeyBinding::new("secondary-w", CloseTab, None),
+        KeyBinding::new("secondary-1", SelectTab1, None),
+        KeyBinding::new("secondary-2", SelectTab2, None),
+        KeyBinding::new("secondary-3", SelectTab3, None),
+        KeyBinding::new("secondary-4", SelectTab4, None),
+        KeyBinding::new("secondary-5", SelectTab5, None),
+        KeyBinding::new("secondary-6", SelectTab6, None),
+        KeyBinding::new("secondary-7", SelectTab7, None),
+        KeyBinding::new("secondary-8", SelectTab8, None),
+        KeyBinding::new("secondary-9", SelectTab9, None),
+    ]
+}
+
+/// A view that can be shown in [`Tabs`].
+///
+/// Only [`title`](TabItem::title) and [`theme`](TabItem::theme) have to be
+/// given. A view with unsaved changes says so with
+/// [`is_dirty`](TabItem::is_dirty), and answers
+/// [`ready_to_close`](TabItem::ready_to_close) and
+/// [`confirm_close`](TabItem::confirm_close) as a document view does.
+pub trait TabItem: Render + Focusable + EventEmitter<Self::Event> {
+    /// The events the view sends, passed on as [`TabsEvent::Item`].
+    type Event: Clone + 'static;
+
+    /// The strip's name, for VoiceOver.
+    const STRIP_LABEL: &'static str = "Tabs";
+
+    /// The tab's name. A view without one has no title yet.
+    fn title(&self, cx: &App) -> Option<String>;
+
+    /// The colors the strip is drawn in while this view is active.
+    fn theme(&self, cx: &App) -> Theme;
+
+    /// Whether the view has unsaved changes, shown on its tab.
+    fn is_dirty(&self, _: &App) -> bool {
+        false
+    }
+
+    /// Its tab is no longer the active one.
+    fn hidden(&mut self, _: &mut Window, _: &mut Context<Self>) {}
+
+    /// Whether it can close straight away, without asking.
+    fn ready_to_close(&mut self, _: &mut Window, _: &mut Context<Self>) -> bool {
+        true
+    }
+
+    /// Asks about closing it; resolves to whether it may close.
+    fn confirm_close(&mut self, _: &mut Window, _: &mut Context<Self>) -> Task<bool> {
+        Task::ready(true)
+    }
+}
+
+/// What [`Tabs`] tells the app.
+pub enum TabsEvent<T: TabItem> {
+    /// Another tab is now the active one, or a tab was added (and made
+    /// active).
+    ActiveChanged,
+    /// A tab's view sent this event.
+    Item(Entity<T>, T::Event),
+    /// A tab was closed. If it was the last one, the tabs are now empty.
+    Closed(Entity<T>),
+    /// The tabs were reordered by dragging.
+    Reordered,
+}
+
+impl<T: TabItem> Clone for TabsEvent<T> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::ActiveChanged => Self::ActiveChanged,
+            Self::Item(view, event) => Self::Item(view.clone(), event.clone()),
+            Self::Closed(view) => Self::Closed(view.clone()),
+            Self::Reordered => Self::Reordered,
+        }
+    }
+}
+
+impl<T: TabItem> fmt::Debug for TabsEvent<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ActiveChanged => f.write_str("ActiveChanged"),
+            Self::Item(view, _) => write!(f, "Item({:?}, ..)", view.entity_id()),
+            Self::Closed(view) => write!(f, "Closed({:?})", view.entity_id()),
+            Self::Reordered => f.write_str("Reordered"),
+        }
+    }
+}
+
+struct Tab<T> {
+    view: Entity<T>,
+    /// Shown after the view's title, to tell it from other open views
+    /// with the same title.
+    title_hint: Option<String>,
+    _subscription: Subscription,
+}
+
+pub struct Tabs<T: TabItem> {
+    tabs: Vec<Tab<T>>,
+    active: usize,
+    /// Whether a close is waiting for its "save changes?" answer, so
+    /// another isn't started.
+    confirming: bool,
+    scroll_handle: ScrollHandle,
+    /// Whether the strip is hidden, whatever the number of tabs.
+    strip_hidden: bool,
+}
+
+impl<T: TabItem> EventEmitter<TabsEvent<T>> for Tabs<T> {}
+
+impl<T: TabItem> Default for Tabs<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T: TabItem> Tabs<T> {
+    /// No tabs yet.
+    pub fn new() -> Self {
+        Self {
+            tabs: Vec::new(),
+            active: 0,
+            confirming: false,
+            scroll_handle: ScrollHandle::new(),
+            strip_hidden: false,
+        }
+    }
+
+    /// Hides the strip of tabs, or shows it again, as when a host app
+    /// hides everything but the document. The tabs' keys still work.
+    pub fn set_strip_hidden(&mut self, hidden: bool, cx: &mut Context<Self>) {
+        if hidden != self.strip_hidden {
+            self.strip_hidden = hidden;
+            cx.notify();
+        }
+    }
+
+    /// Adds `view` as the last tab, and makes it the active one.
+    pub fn add(&mut self, view: Entity<T>, window: &mut Window, cx: &mut Context<Self>) {
+        let subscription = cx.subscribe_in(&view, window, |_, view, event, _, cx| {
+            // The strip shows titles and unsaved changes.
+            cx.notify();
+            cx.emit(TabsEvent::Item(view.clone(), event.clone()));
+        });
+        self.tabs.push(Tab {
+            view,
+            title_hint: None,
+            _subscription: subscription,
+        });
+        let index = self.tabs.len() - 1;
+        if index == 0 {
+            self.show_active(window, cx);
+        } else {
+            self.activate(index, window, cx);
+        }
+    }
+
+    /// The views, in tab order.
+    pub fn views(&self) -> impl Iterator<Item = &Entity<T>> {
+        self.tabs.iter().map(|tab| &tab.view)
+    }
+
+    pub fn len(&self) -> usize {
+        self.tabs.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.tabs.is_empty()
+    }
+
+    /// The position of the active tab. It's 0 when there are no tabs.
+    pub fn active_index(&self) -> usize {
+        self.active
+    }
+
+    /// The active tab's view, unless there are no tabs.
+    pub fn active_view(&self) -> Option<&Entity<T>> {
+        self.tabs.get(self.active).map(|tab| &tab.view)
+    }
+
+    /// The position of `view`'s tab, if it's in one.
+    pub fn position(&self, view: &Entity<T>) -> Option<usize> {
+        self.tabs.iter().position(|tab| &tab.view == view)
+    }
+
+    /// Sets the text shown after `view`'s title in its tab, to tell it from
+    /// other open views with the same title (see
+    /// [`kertas_core::titles`]).
+    pub fn set_title_hint(
+        &mut self,
+        view: &Entity<T>,
+        hint: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| &tab.view == view)
+            && tab.title_hint != hint
+        {
+            tab.title_hint = hint;
+            cx.notify();
+        }
+    }
+
+    /// The title of the tab at `index`: its view's title, and its title
+    /// hint if it has one.
+    pub fn title(&self, index: usize, cx: &App) -> Option<String> {
+        let tab = self.tabs.get(index)?;
+        let name = tab.view.read(cx).title(cx)?;
+        Some(titles::title(&name, tab.title_hint.as_deref()))
+    }
+
+    /// Makes the tab at `index` the active one, and focuses its view.
+    /// Does nothing if there's no such tab.
+    pub fn activate(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get(index) else {
+            return;
+        };
+        if index == self.active {
+            tab.view.focus_handle(cx).focus(window, cx);
+            return;
+        }
+        if let Some(previous) = self.tabs.get(self.active) {
+            previous
+                .view
+                .update(cx, |view, cx| TabItem::hidden(view, window, cx));
+        }
+        self.active = index;
+        self.show_active(window, cx);
+    }
+
+    /// Focuses the active tab's view, scrolls the strip to its tab, and
+    /// reports it.
+    fn show_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tabs.get(self.active) {
+            tab.view.focus_handle(cx).focus(window, cx);
+            self.scroll_handle.scroll_to_item(self.active);
+        }
+        cx.emit(TabsEvent::ActiveChanged);
+        cx.notify();
+    }
+
+    /// Moves the tab at `from` to `to`, keeping the same tab active.
+    pub fn move_tab(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        if from >= self.tabs.len() || to >= self.tabs.len() || from == to {
+            return;
+        }
+        let active = self.tabs[self.active].view.clone();
+        let tab = self.tabs.remove(from);
+        self.tabs.insert(to, tab);
+        self.active = self.position(&active).unwrap_or(0);
+        self.scroll_handle.scroll_to_item(self.active);
+        cx.emit(TabsEvent::Reordered);
+        cx.notify();
+    }
+
+    /// Closes the tab at `index`, asking about unsaved changes first.
+    pub fn close(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(view) = self.tabs.get(index).map(|tab| tab.view.clone()) else {
+            return;
+        };
+        if self.confirming {
+            return;
+        }
+        if view.update(cx, |view, cx| TabItem::ready_to_close(view, window, cx)) {
+            self.remove(&view, window, cx);
+            return;
+        }
+        // Ask on the tab being closed.
+        self.activate(index, window, cx);
+        self.confirming = true;
+        let confirmed = view.update(cx, |view, cx| TabItem::confirm_close(view, window, cx));
+        cx.spawn_in(window, async move |this, cx| {
+            let confirmed = confirmed.await;
+            this.update_in(cx, |this, window, cx| {
+                this.confirming = false;
+                if confirmed {
+                    this.remove(&view, window, cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Removes `view`'s tab without asking. The tab to its right becomes
+    /// the active one, or the one to its left if it was the last.
+    fn remove(&mut self, view: &Entity<T>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(index) = self.position(view) else {
+            return;
+        };
+        let active = self.tabs.get(self.active).map(|tab| tab.view.clone());
+        self.tabs.remove(index);
+        cx.emit(TabsEvent::Closed(view.clone()));
+        if self.tabs.is_empty() {
+            self.active = 0;
+        } else if active.as_ref() == Some(view) {
+            self.active = index.min(self.tabs.len() - 1);
+            self.show_active(window, cx);
+        } else {
+            self.active = active
+                .and_then(|active| self.position(&active))
+                .unwrap_or(0);
+        }
+        cx.notify();
+    }
+
+    /// Whether every tab can close straight away: none has unsaved
+    /// changes, or autosave just saved them. If not, ask with
+    /// [`Tabs::confirm_close`].
+    pub fn ready_to_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        // Every tab gets the chance to autosave, so no `all`.
+        self.tabs.iter().fold(true, |ready, tab| {
+            let tab_ready = tab
+                .view
+                .update(cx, |view, cx| TabItem::ready_to_close(view, window, cx));
+            ready && tab_ready
+        })
+    }
+
+    /// Asks about each tab with unsaved changes in turn, switching to it
+    /// first. Resolves to whether they may all close: each one was saved,
+    /// or the user chose not to save it. Stops at the first Cancel. The
+    /// tabs stay open; closing them, with the window, is up to the app.
+    pub fn confirm_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<bool> {
+        if self.confirming {
+            return Task::ready(false);
+        }
+        self.confirming = true;
+        cx.spawn_in(window, async move |this, cx| {
+            let mut asked = Vec::new();
+            let all = loop {
+                // The next tab, in order, that can't close yet.
+                let next = this.update_in(cx, |this, window, cx| {
+                    let index = (0..this.tabs.len()).find(|&index| {
+                        let view = this.tabs[index].view.clone();
+                        !asked.contains(&view)
+                            && !view
+                                .update(cx, |view, cx| TabItem::ready_to_close(view, window, cx))
+                    })?;
+                    let view = this.tabs[index].view.clone();
+                    this.activate(index, window, cx);
+                    asked.push(view.clone());
+                    Some(view.update(cx, |view, cx| TabItem::confirm_close(view, window, cx)))
+                });
+                match next {
+                    Ok(Some(confirmed)) => {
+                        if !confirmed.await {
+                            break false;
+                        }
+                    }
+                    Ok(None) => break true,
+                    Err(_) => break false,
+                }
+            };
+            this.update(cx, |this, _| this.confirming = false).ok();
+            all
+        })
+    }
+
+    fn select(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.activate(index, window, cx);
+    }
+
+    fn next_tab(&mut self, _: &NextTab, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.tabs.is_empty() {
+            self.activate((self.active + 1) % self.tabs.len(), window, cx);
+        }
+    }
+
+    fn previous_tab(&mut self, _: &PreviousTab, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.tabs.is_empty() {
+            let count = self.tabs.len();
+            self.activate((self.active + count - 1) % count, window, cx);
+        }
+    }
+
+    fn close_tab(&mut self, _: &CloseTab, window: &mut Window, cx: &mut Context<Self>) {
+        self.close(self.active, window, cx);
+    }
+
+    fn render_strip(&self, theme: Theme, cx: &mut Context<Self>) -> AnyElement {
+        let count = self.tabs.len();
+        let strip = cx.entity().entity_id();
+        let this = cx.weak_entity();
+        let tabs = self.tabs.iter().enumerate().map(|(index, tab)| {
+            let active = index == self.active;
+            let dirty = TabItem::is_dirty(tab.view.read(cx), cx);
+            let title: SharedString = self.title(index, cx).unwrap_or_default().into();
+            let close_name = if dirty {
+                format!("Close {title}, which has unsaved changes")
+            } else {
+                format!("Close {title}")
+            };
+            let dragged = DraggedTab {
+                strip,
+                index,
+                title: title.clone(),
+                theme,
+            };
+            self::tab(("tab", index), title.clone(), active, (index, count), theme)
+                .when(dirty, |this| this.aria_description("Edited"))
+                .on_a11y_action(AccessibleAction::Click, {
+                    let this = this.clone();
+                    move |_, window, cx| {
+                        this.update(cx, |this, cx| this.select(index, window, cx))
+                            .ok();
+                    }
+                })
+                // As wide as they can be, shrinking as tabs are added,
+                // then the strip scrolls.
+                .flex_shrink(1.)
+                .flex_basis(px(MAX_TAB_WIDTH))
+                .min_w(px(MIN_TAB_WIDTH))
+                .max_w(px(MAX_TAB_WIDTH))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _, window, cx| {
+                        if index != this.active {
+                            this.select(index, window, cx);
+                        }
+                    }),
+                )
+                .on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))
+                .can_drop(move |dragged, _, _| {
+                    dragged
+                        .downcast_ref::<DraggedTab>()
+                        .is_some_and(|dragged| dragged.strip == strip)
+                })
+                .drag_over::<DraggedTab>(move |style, _, _, _| {
+                    style.border_l_2().border_color(theme.text)
+                })
+                .on_drop(cx.listener(move |this, dragged: &DraggedTab, _, cx| {
+                    this.move_tab(dragged.index, index, cx);
+                }))
+                .child(
+                    div()
+                        .id(("close-tab", index))
+                        .role(Role::Button)
+                        .aria_label(SharedString::from(close_name))
+                        .on_a11y_action(AccessibleAction::Click, {
+                            let this = this.clone();
+                            move |_, window, cx| {
+                                this.update(cx, |this, cx| this.close(index, window, cx))
+                                    .ok();
+                            }
+                        })
+                        .flex_none()
+                        .w(px(14.))
+                        .text_center()
+                        .rounded_sm()
+                        .hover(|style| style.bg(theme.rule))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _, window, cx| {
+                                this.close(index, window, cx);
+                                cx.stop_propagation();
+                            }),
+                        )
+                        .child(if dirty { "●" } else { "×" }),
+                )
+        });
+
+        tab_strip("tabs", T::STRIP_LABEL, theme)
+            .overflow_x_scroll()
+            .track_scroll(&self.scroll_handle)
+            .children(tabs)
+            // Dropping past the last tab moves the tab to the end.
+            .child(
+                div()
+                    .id("tabs-end")
+                    .flex_1()
+                    .min_w(px(24.))
+                    .h_full()
+                    .can_drop(move |dragged, _, _| {
+                        dragged
+                            .downcast_ref::<DraggedTab>()
+                            .is_some_and(|dragged| dragged.strip == strip)
+                    })
+                    .drag_over::<DraggedTab>(move |style, _, _, _| {
+                        style.border_l_2().border_color(theme.text)
+                    })
+                    .on_drop(cx.listener(move |this, dragged: &DraggedTab, _, cx| {
+                        let last = this.tabs.len().saturating_sub(1);
+                        this.move_tab(dragged.index, last, cx);
+                    })),
+            )
+            .into_any_element()
+    }
+}
+
+impl<T: TabItem> Focusable for Tabs<T> {
+    /// The active view's focus.
+    fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
+        match self.active_view() {
+            Some(view) => view.focus_handle(cx),
+            None => cx.focus_handle(),
+        }
+    }
+}
+
+impl<T: TabItem> Render for Tabs<T> {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let active = self.active_view().cloned();
+        let strip = match &active {
+            Some(view) if self.tabs.len() > 1 && !self.strip_hidden => {
+                let theme = TabItem::theme(view.read(cx), cx);
+                Some(self.render_strip(theme, cx))
+            }
+            _ => None,
+        };
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .on_action(cx.listener(Self::next_tab))
+            .on_action(cx.listener(Self::previous_tab))
+            .on_action(cx.listener(Self::close_tab))
+            .on_action(cx.listener(|this, _: &SelectTab1, window, cx| this.select(0, window, cx)))
+            .on_action(cx.listener(|this, _: &SelectTab2, window, cx| this.select(1, window, cx)))
+            .on_action(cx.listener(|this, _: &SelectTab3, window, cx| this.select(2, window, cx)))
+            .on_action(cx.listener(|this, _: &SelectTab4, window, cx| this.select(3, window, cx)))
+            .on_action(cx.listener(|this, _: &SelectTab5, window, cx| this.select(4, window, cx)))
+            .on_action(cx.listener(|this, _: &SelectTab6, window, cx| this.select(5, window, cx)))
+            .on_action(cx.listener(|this, _: &SelectTab7, window, cx| this.select(6, window, cx)))
+            .on_action(cx.listener(|this, _: &SelectTab8, window, cx| this.select(7, window, cx)))
+            .on_action(cx.listener(|this, _: &SelectTab9, window, cx| this.select(8, window, cx)))
+            .children(strip)
+            .child(div().flex_1().min_h(px(0.)).children(active))
+    }
+}
+
+/// A tab being dragged along the strip, and the image that follows the
+/// mouse.
+#[derive(Clone)]
+struct DraggedTab {
+    /// The strip it came from, so it can't be dropped on another.
+    strip: gpui::EntityId,
+    index: usize,
+    title: SharedString,
+    theme: Theme,
+}
+
+impl Render for DraggedTab {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .h(px(STRIP_HEIGHT))
+            .max_w(px(MAX_TAB_WIDTH))
+            .px_3()
+            .bg(self.theme.background)
+            .text_color(self.theme.text)
+            .border_1()
+            .border_color(self.theme.rule)
+            .text_size(px(12.))
+            .line_height(px(STRIP_HEIGHT))
+            .truncate()
+            .child(self.title.clone())
+    }
+}

@@ -18,8 +18,7 @@ use gpui::{
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::CARET_BLINK_INTERVAL;
-use crate::app_settings;
-use crate::theme::Theme;
+use crate::theme::{self, Theme};
 
 actions!(
     text_field,
@@ -48,7 +47,8 @@ const KEY_CONTEXT: &str = "TextField";
 const CARET_INSET: f32 = 2.;
 
 /// The keys a text field handles while it has focus. They're part of
-/// [`crate::key_bindings`].
+/// kertas-editor's `key_bindings`; an app without document views binds
+/// them itself.
 pub fn key_bindings() -> Vec<KeyBinding> {
     let context = Some(KEY_CONTEXT);
     vec![
@@ -130,8 +130,8 @@ impl TextField {
         }
     }
 
-    /// Draws the field in `theme`'s colors, rather than the app settings'
-    /// theme, to match a document view drawn in them.
+    /// Draws the field in `theme`'s colors, rather than the app's
+    /// ([`theme::window_theme`]), to match a document view drawn in them.
     pub fn set_theme(&mut self, theme: Theme, cx: &mut Context<Self>) {
         if self.theme != Some(theme) {
             self.theme = Some(theme);
@@ -142,7 +142,7 @@ impl TextField {
     /// The colors the field is drawn in.
     fn theme(&self, window: &Window, cx: &App) -> Theme {
         self.theme
-            .unwrap_or_else(|| app_settings::window_theme(window, cx))
+            .unwrap_or_else(|| theme::window_theme(window, cx))
     }
 
     /// Shows the caret and starts blinking it again, so it stays solid
