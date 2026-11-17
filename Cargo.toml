@@ -65,3 +65,11 @@ objc2-uniform-type-identifiers = { version = "0.3", default-features = false, fe
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSArray", "NSBundle", "NSData", "NSDictionary", "NSDistributedNotificationCenter", "NSError", "NSNotification", "NSOperation", "NSString", "NSURL", "NSUserDefaults"] }
 block2 = "0.6"
 libc.workspace = true
+
+[profile.dev]
+# Line numbers in backtraces, without full debug info, keeps target/ small.
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+# No debug info for dependencies.
+debug = false
