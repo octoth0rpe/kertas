@@ -130,7 +130,7 @@ impl DocumentWindow {
     fn tabs_event(
         &mut self,
         _: &Entity<DocumentTabs>,
-        event: &TabsEvent,
+        event: &TabsEvent<DocumentView>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -149,26 +149,26 @@ impl DocumentWindow {
             }
             // Every other tab's title too, since they may share a name
             // (#95).
-            TabsEvent::Document(_, DocumentEvent::TitleChanged) => {
+            TabsEvent::Item(_, DocumentEvent::TitleChanged) => {
                 self.apply_title(window, cx);
                 cx.defer(windows::refresh_titles);
             }
-            TabsEvent::Document(_, DocumentEvent::DirtyChanged(_)) => {
+            TabsEvent::Item(_, DocumentEvent::DirtyChanged(_)) => {
                 self.apply_title(window, cx);
                 cx.notify();
             }
             // Kertas shows nothing that follows the text or the caret.
-            TabsEvent::Document(_, DocumentEvent::Edited | DocumentEvent::CaretMoved) => {}
+            TabsEvent::Item(_, DocumentEvent::Edited | DocumentEvent::CaretMoved) => {}
             // Kertas follows links itself and marks nothing, so it never
             // gets these.
-            TabsEvent::Document(
+            TabsEvent::Item(
                 _,
                 DocumentEvent::LinkClicked { .. }
                 | DocumentEvent::MarkMenu { .. }
                 | DocumentEvent::AddWord { .. }
                 | DocumentEvent::ImagesAdded { .. },
             ) => {}
-            TabsEvent::Document(_, DocumentEvent::OpenFile { path, anchor }) => {
+            TabsEvent::Item(_, DocumentEvent::OpenFile { path, anchor }) => {
                 let (path, anchor) = (path.clone(), anchor.clone());
                 cx.defer(move |cx| windows::open_path_at(path, anchor, cx));
             }

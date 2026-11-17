@@ -19,9 +19,11 @@ unicode-segmentation.workspace = true
 # Editing the settings file in place, keeping its comments.
 toml_edit.workspace = true
 
-[target.'cfg(target_os = "macos")'.dependencies]
-# Watching files with kqueue (src/file_watch.rs).
+[target.'cfg(unix)'.dependencies]
+# Watching files with kqueue or inotify (src/file_watch.rs).
 libc.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
 # The alert sound for a link to a heading that doesn't exist, and
 # printing (src/print.rs). Same versions GPUI uses.
 objc2 = "0.6"

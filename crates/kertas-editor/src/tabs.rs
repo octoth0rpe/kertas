@@ -1,20 +1,26 @@
-//! Tabbed documents: several document views in one window, one shown at a
-//! time, with a strip of tabs above it while there are two or more.
+//! Tabs: several views in one window, one shown at a time, with a strip of
+//! tabs above it while there are two or more.
 //!
-//! An app puts a [`DocumentTabs`] in its window, adds document views to it
-//! with [`DocumentTabs::add`], and binds its keys with [`key_bindings`]:
+//! [`Tabs`] holds any view that is a [`TabItem`]: it says what its tab is
+//! called and whether it has unsaved changes, and answers when its tab is
+//! left or closed. [`DocumentTabs`] holds document views.
+//!
+//! An app puts a [`Tabs`] in its window, adds views to it with
+//! [`Tabs::add`], and binds its keys with [`key_bindings`]:
 //! the next and previous tab, ⌘1 to ⌘9, and ⌘W to close a tab. Tabs can
 //! be reordered by dragging them along the strip.
 //!
 //! It tells the app what happens with [`TabsEvent`]s, passing on its
-//! documents' [`DocumentEvent`]s. Closing the last tab leaves it empty;
+//! views' events (a document view's [`DocumentEvent`]s). Closing the last tab leaves it empty;
 //! the app decides what that means, such as closing the window. To close
-//! the window, the app asks [`DocumentTabs::ready_to_close`] and, if that
-//! says no, [`DocumentTabs::confirm_close`], which asks about each tab
-//! with unsaved changes in turn.
+//! the window, the app asks [`Tabs::ready_to_close`] and, if that says
+//! no, [`Tabs::confirm_close`], which asks about each tab with unsaved
+//! changes in turn.
 //!
 //! An app's own tab strips, such as one switching between panels, can look
 //! the same: [`tab_strip`] is the bar, and [`tab`] each tab in it.
+
+use std::fmt;
 
 use gpui::{
     AccessibleAction, AnyElement, App, Context, Div, ElementId, Entity, EventEmitter, Focusable,
@@ -49,7 +55,7 @@ actions!(
 );
 
 /// A strip of tabs, `label` for VoiceOver, for an app's own tabs, as
-/// [`DocumentTabs`] draws its: add [`tab`]s to it.
+/// [`Tabs`] draws its: add [`tab`]s to it.
 pub fn tab_strip(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
@@ -69,7 +75,7 @@ pub fn tab_strip(
 }
 
 /// A tab called `label`, the `index`th of `count` in its [`tab_strip`],
-/// as [`DocumentTabs`] draws its: the active one stands out, with a bar
+/// as [`Tabs`] draws its: the active one stands out, with a bar
 /// of the accent color along its bottom. The app sizes it and says what
 /// choosing it does; to reach it with the keyboard, the app makes it
 /// focusable, and it's outlined while it has the keyboard.
@@ -117,50 +123,145 @@ pub fn tab(
         .child(div().flex_1().min_w(px(0.)).truncate().child(label))
 }
 
-/// Key bindings for tabs (macOS conventions).
+/// Key bindings for tabs (macOS conventions; Ctrl rather than ⌘
+/// elsewhere).
 pub fn key_bindings() -> Vec<KeyBinding> {
     vec![
-        KeyBinding::new("cmd-shift-]", NextTab, None),
-        KeyBinding::new("cmd-shift-[", PreviousTab, None),
+        KeyBinding::new("secondary-shift-]", NextTab, None),
+        KeyBinding::new("secondary-shift-[", PreviousTab, None),
         KeyBinding::new("ctrl-tab", NextTab, None),
         KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
-        KeyBinding::new("cmd-w", CloseTab, None),
-        KeyBinding::new("cmd-1", SelectTab1, None),
-        KeyBinding::new("cmd-2", SelectTab2, None),
-        KeyBinding::new("cmd-3", SelectTab3, None),
-        KeyBinding::new("cmd-4", SelectTab4, None),
-        KeyBinding::new("cmd-5", SelectTab5, None),
-        KeyBinding::new("cmd-6", SelectTab6, None),
-        KeyBinding::new("cmd-7", SelectTab7, None),
-        KeyBinding::new("cmd-8", SelectTab8, None),
-        KeyBinding::new("cmd-9", SelectTab9, None),
+        KeyBinding::new("secondary-w", CloseTab, None),
+        KeyBinding::new("secondary-1", SelectTab1, None),
+        KeyBinding::new("secondary-2", SelectTab2, None),
+        KeyBinding::new("secondary-3", SelectTab3, None),
+        KeyBinding::new("secondary-4", SelectTab4, None),
+        KeyBinding::new("secondary-5", SelectTab5, None),
+        KeyBinding::new("secondary-6", SelectTab6, None),
+        KeyBinding::new("secondary-7", SelectTab7, None),
+        KeyBinding::new("secondary-8", SelectTab8, None),
+        KeyBinding::new("secondary-9", SelectTab9, None),
     ]
 }
 
-/// What [`DocumentTabs`] tells the app.
-#[derive(Debug, Clone)]
-pub enum TabsEvent {
+/// A view that can be shown in [`Tabs`].
+///
+/// Only [`title`](TabItem::title) and [`theme`](TabItem::theme) have to be
+/// given. A view with unsaved changes says so with
+/// [`is_dirty`](TabItem::is_dirty), and answers
+/// [`ready_to_close`](TabItem::ready_to_close) and
+/// [`confirm_close`](TabItem::confirm_close) as a document view does.
+pub trait TabItem: Render + Focusable + EventEmitter<Self::Event> {
+    /// The events the view sends, passed on as [`TabsEvent::Item`].
+    type Event: Clone + 'static;
+
+    /// The strip's name, for VoiceOver.
+    const STRIP_LABEL: &'static str = "Tabs";
+
+    /// The tab's name. A view without one has no title yet.
+    fn title(&self, cx: &App) -> Option<String>;
+
+    /// The colors the strip is drawn in while this view is active.
+    fn theme(&self, cx: &App) -> Theme;
+
+    /// Whether the view has unsaved changes, shown on its tab.
+    fn is_dirty(&self, _: &App) -> bool {
+        false
+    }
+
+    /// Its tab is no longer the active one.
+    fn hidden(&mut self, _: &mut Window, _: &mut Context<Self>) {}
+
+    /// Whether it can close straight away, without asking.
+    fn ready_to_close(&mut self, _: &mut Window, _: &mut Context<Self>) -> bool {
+        true
+    }
+
+    /// Asks about closing it; resolves to whether it may close.
+    fn confirm_close(&mut self, _: &mut Window, _: &mut Context<Self>) -> Task<bool> {
+        Task::ready(true)
+    }
+}
+
+impl TabItem for DocumentView {
+    type Event = DocumentEvent;
+
+    const STRIP_LABEL: &'static str = "Documents";
+
+    fn title(&self, _: &App) -> Option<String> {
+        self.display_name()
+    }
+
+    fn theme(&self, _: &App) -> Theme {
+        DocumentView::theme(self)
+    }
+
+    fn is_dirty(&self, _: &App) -> bool {
+        DocumentView::is_dirty(self)
+    }
+
+    fn hidden(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Leaving a tab autosaves it, as leaving a window does.
+        DocumentView::hidden(self, window, cx);
+    }
+
+    fn ready_to_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        DocumentView::ready_to_close(self, window, cx)
+    }
+
+    fn confirm_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<bool> {
+        DocumentView::confirm_close(self, window, cx)
+    }
+}
+
+/// What [`Tabs`] tells the app.
+pub enum TabsEvent<T: TabItem> {
     /// Another tab is now the active one, or a tab was added (and made
     /// active).
     ActiveChanged,
-    /// A tab's document sent this event.
-    Document(Entity<DocumentView>, DocumentEvent),
+    /// A tab's view sent this event.
+    Item(Entity<T>, T::Event),
     /// A tab was closed. If it was the last one, the tabs are now empty.
-    Closed(Entity<DocumentView>),
+    Closed(Entity<T>),
     /// The tabs were reordered by dragging.
     Reordered,
 }
 
-struct Tab {
-    view: Entity<DocumentView>,
-    /// Shown after the document's name, to tell it from other open
-    /// documents with the same name.
+impl<T: TabItem> Clone for TabsEvent<T> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::ActiveChanged => Self::ActiveChanged,
+            Self::Item(view, event) => Self::Item(view.clone(), event.clone()),
+            Self::Closed(view) => Self::Closed(view.clone()),
+            Self::Reordered => Self::Reordered,
+        }
+    }
+}
+
+impl<T: TabItem> fmt::Debug for TabsEvent<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ActiveChanged => f.write_str("ActiveChanged"),
+            Self::Item(view, _) => write!(f, "Item({:?}, ..)", view.entity_id()),
+            Self::Closed(view) => write!(f, "Closed({:?})", view.entity_id()),
+            Self::Reordered => f.write_str("Reordered"),
+        }
+    }
+}
+
+struct Tab<T> {
+    view: Entity<T>,
+    /// Shown after the view's title, to tell it from other open views
+    /// with the same title.
     title_hint: Option<String>,
     _subscription: Subscription,
 }
 
-pub struct DocumentTabs {
-    tabs: Vec<Tab>,
+/// Tabs holding document views.
+pub type DocumentTabs = Tabs<DocumentView>;
+
+pub struct Tabs<T: TabItem> {
+    tabs: Vec<Tab<T>>,
     active: usize,
     /// Whether a close is waiting for its "save changes?" answer, so
     /// another isn't started.
@@ -170,15 +271,15 @@ pub struct DocumentTabs {
     strip_hidden: bool,
 }
 
-impl EventEmitter<TabsEvent> for DocumentTabs {}
+impl<T: TabItem> EventEmitter<TabsEvent<T>> for Tabs<T> {}
 
-impl Default for DocumentTabs {
+impl<T: TabItem> Default for Tabs<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl DocumentTabs {
+impl<T: TabItem> Tabs<T> {
     /// No tabs yet.
     pub fn new() -> Self {
         Self {
@@ -200,11 +301,11 @@ impl DocumentTabs {
     }
 
     /// Adds `view` as the last tab, and makes it the active one.
-    pub fn add(&mut self, view: Entity<DocumentView>, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn add(&mut self, view: Entity<T>, window: &mut Window, cx: &mut Context<Self>) {
         let subscription = cx.subscribe_in(&view, window, |_, view, event, _, cx| {
             // The strip shows titles and unsaved changes.
             cx.notify();
-            cx.emit(TabsEvent::Document(view.clone(), event.clone()));
+            cx.emit(TabsEvent::Item(view.clone(), event.clone()));
         });
         self.tabs.push(Tab {
             view,
@@ -219,8 +320,8 @@ impl DocumentTabs {
         }
     }
 
-    /// The documents, in tab order.
-    pub fn views(&self) -> impl Iterator<Item = &Entity<DocumentView>> {
+    /// The views, in tab order.
+    pub fn views(&self) -> impl Iterator<Item = &Entity<T>> {
         self.tabs.iter().map(|tab| &tab.view)
     }
 
@@ -237,22 +338,22 @@ impl DocumentTabs {
         self.active
     }
 
-    /// The active tab's document, unless there are no tabs.
-    pub fn active_view(&self) -> Option<&Entity<DocumentView>> {
+    /// The active tab's view, unless there are no tabs.
+    pub fn active_view(&self) -> Option<&Entity<T>> {
         self.tabs.get(self.active).map(|tab| &tab.view)
     }
 
     /// The position of `view`'s tab, if it's in one.
-    pub fn position(&self, view: &Entity<DocumentView>) -> Option<usize> {
+    pub fn position(&self, view: &Entity<T>) -> Option<usize> {
         self.tabs.iter().position(|tab| &tab.view == view)
     }
 
-    /// Sets the text shown after `view`'s name in its tab, to tell it from
-    /// other open documents with the same name (see
+    /// Sets the text shown after `view`'s title in its tab, to tell it from
+    /// other open views with the same title (see
     /// [`kertas_core::titles`]).
     pub fn set_title_hint(
         &mut self,
-        view: &Entity<DocumentView>,
+        view: &Entity<T>,
         hint: Option<String>,
         cx: &mut Context<Self>,
     ) {
@@ -264,15 +365,15 @@ impl DocumentTabs {
         }
     }
 
-    /// The title of the tab at `index`: its document's name, and its title
+    /// The title of the tab at `index`: its view's title, and its title
     /// hint if it has one.
     pub fn title(&self, index: usize, cx: &App) -> Option<String> {
         let tab = self.tabs.get(index)?;
-        let name = tab.view.read(cx).display_name()?;
+        let name = tab.view.read(cx).title(cx)?;
         Some(titles::title(&name, tab.title_hint.as_deref()))
     }
 
-    /// Makes the tab at `index` the active one, and focuses its document.
+    /// Makes the tab at `index` the active one, and focuses its view.
     /// Does nothing if there's no such tab.
     pub fn activate(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(tab) = self.tabs.get(index) else {
@@ -283,14 +384,15 @@ impl DocumentTabs {
             return;
         }
         if let Some(previous) = self.tabs.get(self.active) {
-            // Leaving a tab autosaves it, as leaving a window does.
-            previous.view.update(cx, |view, cx| view.hidden(window, cx));
+            previous
+                .view
+                .update(cx, |view, cx| TabItem::hidden(view, window, cx));
         }
         self.active = index;
         self.show_active(window, cx);
     }
 
-    /// Focuses the active tab's document, scrolls the strip to its tab, and
+    /// Focuses the active tab's view, scrolls the strip to its tab, and
     /// reports it.
     fn show_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(tab) = self.tabs.get(self.active) {
@@ -323,14 +425,14 @@ impl DocumentTabs {
         if self.confirming {
             return;
         }
-        if view.update(cx, |view, cx| view.ready_to_close(window, cx)) {
+        if view.update(cx, |view, cx| TabItem::ready_to_close(view, window, cx)) {
             self.remove(&view, window, cx);
             return;
         }
         // Ask on the tab being closed.
         self.activate(index, window, cx);
         self.confirming = true;
-        let confirmed = view.update(cx, |view, cx| view.confirm_close(window, cx));
+        let confirmed = view.update(cx, |view, cx| TabItem::confirm_close(view, window, cx));
         cx.spawn_in(window, async move |this, cx| {
             let confirmed = confirmed.await;
             this.update_in(cx, |this, window, cx| {
@@ -346,7 +448,7 @@ impl DocumentTabs {
 
     /// Removes `view`'s tab without asking. The tab to its right becomes
     /// the active one, or the one to its left if it was the last.
-    fn remove(&mut self, view: &Entity<DocumentView>, window: &mut Window, cx: &mut Context<Self>) {
+    fn remove(&mut self, view: &Entity<T>, window: &mut Window, cx: &mut Context<Self>) {
         let Some(index) = self.position(view) else {
             return;
         };
@@ -368,13 +470,13 @@ impl DocumentTabs {
 
     /// Whether every tab can close straight away: none has unsaved
     /// changes, or autosave just saved them. If not, ask with
-    /// [`DocumentTabs::confirm_close`].
+    /// [`Tabs::confirm_close`].
     pub fn ready_to_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         // Every tab gets the chance to autosave, so no `all`.
         self.tabs.iter().fold(true, |ready, tab| {
             let tab_ready = tab
                 .view
-                .update(cx, |view, cx| view.ready_to_close(window, cx));
+                .update(cx, |view, cx| TabItem::ready_to_close(view, window, cx));
             ready && tab_ready
         })
     }
@@ -396,12 +498,13 @@ impl DocumentTabs {
                     let index = (0..this.tabs.len()).find(|&index| {
                         let view = this.tabs[index].view.clone();
                         !asked.contains(&view)
-                            && !view.update(cx, |view, cx| view.ready_to_close(window, cx))
+                            && !view
+                                .update(cx, |view, cx| TabItem::ready_to_close(view, window, cx))
                     })?;
                     let view = this.tabs[index].view.clone();
                     this.activate(index, window, cx);
                     asked.push(view.clone());
-                    Some(view.update(cx, |view, cx| view.confirm_close(window, cx)))
+                    Some(view.update(cx, |view, cx| TabItem::confirm_close(view, window, cx)))
                 });
                 match next {
                     Ok(Some(confirmed)) => {
@@ -445,7 +548,7 @@ impl DocumentTabs {
         let this = cx.weak_entity();
         let tabs = self.tabs.iter().enumerate().map(|(index, tab)| {
             let active = index == self.active;
-            let dirty = tab.view.read(cx).is_dirty();
+            let dirty = TabItem::is_dirty(tab.view.read(cx), cx);
             let title: SharedString = self.title(index, cx).unwrap_or_default().into();
             let close_name = if dirty {
                 format!("Close {title}, which has unsaved changes")
@@ -521,7 +624,7 @@ impl DocumentTabs {
                 )
         });
 
-        tab_strip("tabs", "Documents", theme)
+        tab_strip("tabs", T::STRIP_LABEL, theme)
             .overflow_x_scroll()
             .track_scroll(&self.scroll_handle)
             .children(tabs)
@@ -549,8 +652,8 @@ impl DocumentTabs {
     }
 }
 
-impl Focusable for DocumentTabs {
-    /// The active document's focus.
+impl<T: TabItem> Focusable for Tabs<T> {
+    /// The active view's focus.
     fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
         match self.active_view() {
             Some(view) => view.focus_handle(cx),
@@ -559,12 +662,12 @@ impl Focusable for DocumentTabs {
     }
 }
 
-impl Render for DocumentTabs {
+impl<T: TabItem> Render for Tabs<T> {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active = self.active_view().cloned();
         let strip = match &active {
             Some(view) if self.tabs.len() > 1 && !self.strip_hidden => {
-                let theme = view.read(cx).theme();
+                let theme = TabItem::theme(view.read(cx), cx);
                 Some(self.render_strip(theme, cx))
             }
             _ => None,
